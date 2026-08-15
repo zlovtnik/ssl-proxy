@@ -1,0 +1,60 @@
+service:
+  extensions: [jaeger_storage, jaeger_query, healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+
+extensions:
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: 0.0.0.0:13133
+  jaeger_query:
+    storage:
+      traces: badger_store
+      metrics: prometheus_metrics
+    http:
+      endpoint: 0.0.0.0:16686
+  jaeger_storage:
+    backends:
+      badger_store:
+        badger:
+          directories:
+            keys: /badger/key
+            values: /badger/value
+          ephemeral: false
+          ttl:
+            spans: 168h
+    metric_backends:
+      prometheus_metrics:
+        prometheus:
+          endpoint: http://ssl-proxy-telemetry-prometheus:9090
+          normalize_calls: true
+          normalize_duration: true
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: badger_store

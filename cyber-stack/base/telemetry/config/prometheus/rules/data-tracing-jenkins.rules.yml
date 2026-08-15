@@ -1,0 +1,206 @@
+groups:
+  - name: redpanda-and-tidb
+    rules:
+      - alert: RedpandaUnavailable
+        expr: up{service="redpanda"} == 0
+        for: 2m
+        labels: {severity: critical, service: redpanda}
+        annotations:
+          summary: "Redpanda metrics endpoint is unavailable"
+          diagnostic: "Prometheus cannot scrape the broker administration endpoint."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda"
+      - alert: RedpandaUnderReplicatedPartitions
+        expr: sum(vectorized_cluster_partition_under_replicated_replicas) > 0
+        for: 5m
+        labels: {severity: critical, service: redpanda}
+        annotations:
+          summary: "Redpanda has under-replicated partitions"
+          diagnostic: "At least one partition replica has remained under-replicated for five minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-replication"
+      - alert: RedpandaRequestErrors
+        expr: sum(rate(vectorized_kafka_rpc_dispatch_handler_error_total[5m])) > 0
+        for: 5m
+        labels: {severity: warning, service: redpanda}
+        annotations:
+          summary: "Redpanda request errors are increasing"
+          diagnostic: "Kafka RPC handlers are recording sustained errors."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-errors"
+      - alert: RedpandaReactorStalls
+        expr: increase(vectorized_reactor_stalls_total[5m]) > 0
+        labels: {severity: warning, service: redpanda}
+        annotations:
+          summary: "Redpanda reactor stalls detected"
+          diagnostic: "The broker recorded reactor stalls during the last five minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-stalls"
+      - alert: RedpandaRequestLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(vectorized_kafka_rpc_dispatch_handler_latency_seconds_bucket[5m]))) > 1
+        for: 10m
+        labels: {severity: warning, service: redpanda}
+        annotations:
+          summary: "Redpanda request p95 latency exceeds one second"
+          diagnostic: "Kafka RPC dispatch latency has remained elevated for ten minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-latency"
+      - alert: RedpandaResourcePressure
+        expr: (1 - vectorized_storage_disk_free_space_bytes / clamp_min(vectorized_storage_disk_total_space_bytes, 1) > 0.85) or (vectorized_memory_allocated_memory / clamp_min(vectorized_memory_total_memory, 1) > 0.85)
+        for: 10m
+        labels: {severity: warning, service: redpanda}
+        annotations:
+          summary: "Redpanda disk or memory utilization exceeds 85%"
+          diagnostic: "A broker resource has remained above the warning saturation threshold."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-capacity"
+      - alert: TiDBUnavailable
+        expr: up{service="tidb"} == 0
+        for: 2m
+        labels: {severity: critical, service: tidb}
+        annotations:
+          summary: "TiDB metrics endpoint is unavailable"
+          diagnostic: "Neither the bundled endpoint nor the production host bridge is delivering TiDB metrics."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tidb-data-services"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#tidb"
+      - alert: TiDBConnectionsHigh
+        expr: tidb_server_connections / clamp_min(tidb_server_max_connections, 1) > 0.8
+        for: 10m
+        labels: {severity: warning, service: tidb}
+        annotations:
+          summary: "TiDB connection utilization is above 80%"
+          diagnostic: "Active database connections are approaching the configured limit."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tidb-data-services"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#tidb-connections"
+      - alert: TiDBQueryLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(tidb_server_handle_query_duration_seconds_bucket[5m]))) > 1
+        for: 10m
+        labels: {severity: warning, service: tidb}
+        annotations:
+          summary: "TiDB p95 query latency exceeds one second"
+          diagnostic: "Query handling latency has remained elevated for ten minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tidb-data-services"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#tidb-latency"
+      - alert: TiDBErrorsOrDeadlocks
+        expr: sum(rate(tidb_server_query_total{result!="OK"}[5m])) > 0 or sum(rate(tidb_server_deadlock_total[5m])) > 0
+        for: 10m
+        labels: {severity: warning, service: tidb}
+        annotations:
+          summary: "TiDB errors or deadlocks are elevated"
+          diagnostic: "TiDB has reported unsuccessful queries or deadlocks for ten minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tidb-data-services"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#tidb-errors"
+
+  - name: tracing-and-jaeger
+    rules:
+      - alert: TraceExportFailures
+        expr: rate(otelcol_exporter_send_failed_spans[5m]) > 0 or rate(otelcol_processor_dropped_spans[5m]) > 0
+        for: 2m
+        labels: {severity: critical, service: tracing}
+        annotations:
+          summary: "Trace spans are being dropped or rejected"
+          diagnostic: "The collector reports failed exports or processor drops."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tracing-jaeger"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#trace-export"
+      - alert: JaegerMemoryWarning
+        expr: container:memory_limit_utilization:ratio{pod=~"ssl-proxy-telemetry-jaeger.*"} > 0.8
+        for: 10m
+        labels: {severity: warning, service: jaeger}
+        annotations:
+          summary: "Jaeger memory utilization exceeds 80%"
+          diagnostic: "Jaeger is approaching its container memory limit."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tracing-jaeger"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#jaeger-memory"
+      - alert: JaegerMemoryCritical
+        expr: container:memory_limit_utilization:ratio{pod=~"ssl-proxy-telemetry-jaeger.*"} > 0.9
+        for: 5m
+        labels: {severity: critical, service: jaeger}
+        annotations:
+          summary: "Jaeger memory utilization exceeds 90%"
+          diagnostic: "Jaeger is at high risk of another OOM termination."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tracing-jaeger"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#jaeger-memory"
+      - alert: ExpectedServiceTracesAbsent
+        expr: sum(rate(traces_span_metrics_calls_total{service_name="atheros-search"}[15m])) == 0 or absent_over_time(traces_span_metrics_calls_total{service_name="atheros-search"}[15m])
+        for: 15m
+        labels: {severity: warning, service: tracing}
+        annotations:
+          summary: "No recent traces from Atheros Search"
+          diagnostic: "An expected active service has emitted no spans for fifteen minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tracing-jaeger"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#traces-absent"
+      - alert: ExpectedOctopusTracesAbsent
+        expr: sum(rate(traces_span_metrics_calls_total{service_name="java-coordinator"}[15m])) == 0 or absent_over_time(traces_span_metrics_calls_total{service_name="java-coordinator"}[15m])
+        for: 15m
+        labels: {severity: warning, service: tracing}
+        annotations:
+          summary: "No recent traces from Octopus"
+          diagnostic: "The expected active coordinator has emitted no spans for fifteen minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tracing-jaeger"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#traces-absent"
+      - alert: JaegerRestartOrOOM
+        expr: increase(kube_pod_container_status_restarts_total{pod=~"ssl-proxy-telemetry-jaeger.*"}[10m]) > 0 or kube_pod_container_status_last_terminated_reason{pod=~"ssl-proxy-telemetry-jaeger.*",reason="OOMKilled"} == 1
+        for: 5m
+        labels: {severity: critical, service: jaeger}
+        annotations:
+          summary: "Jaeger restarted or was OOM-killed"
+          diagnostic: "The Jaeger v2 process is unstable or exceeded its memory limit."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tracing-jaeger"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#jaeger-restarts"
+      - alert: JaegerStoragePressure
+        expr: pvc:utilization:ratio{persistentvolumeclaim="ssl-proxy-telemetry-jaeger-v2-data"} > 0.85
+        for: 10m
+        labels: {severity: warning, service: jaeger}
+        annotations:
+          summary: "Jaeger storage utilization exceeds 85%"
+          diagnostic: "The seven-day Badger trace store is approaching its PVC capacity."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tracing-jaeger"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#jaeger-storage"
+
+  - name: jenkins
+    rules:
+      - alert: JenkinsEndpointDown
+        expr: up{service="jenkins"} == 0
+        for: 2m
+        labels: {severity: critical, service: jenkins}
+        annotations:
+          summary: "Jenkins metrics endpoint is down"
+          diagnostic: "The private Jenkins controller cannot be scraped using the read-only identity."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/jenkins-builds"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#jenkins"
+      - alert: JenkinsNoOnlineExecutor
+        expr: sum(default_jenkins_executors_available) < 1
+        for: 5m
+        labels: {severity: critical, service: jenkins}
+        annotations:
+          summary: "Jenkins has no online executor"
+          diagnostic: "No executor is available to run the ssl-proxy image pipeline."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/jenkins-builds"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#jenkins-executor"
+      - alert: JenkinsQueueStuck
+        expr: jenkins_queue_stuck_value > 0
+        for: 5m
+        labels: {severity: warning, service: jenkins}
+        annotations:
+          summary: "Jenkins has a stuck queue item"
+          diagnostic: "The controller has continuously classified at least one queued item as stuck."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/jenkins-builds"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#jenkins-queue"
+      - alert: JenkinsBuildLikelyStuck
+        expr: sum(default_jenkins_executors_busy) > 0
+        for: 1h
+        labels: {severity: warning, service: jenkins}
+        annotations:
+          summary: "Jenkins build appears stuck"
+          diagnostic: "All observed build activity has kept an executor occupied for more than one hour."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/jenkins-builds"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#jenkins-stuck"
+      - alert: JenkinsQueueBlocked
+        expr: jenkins_queue_blocked_value > 0
+        for: 5m
+        labels: {severity: warning, service: jenkins}
+        annotations:
+          summary: "Jenkins queue is blocked"
+          diagnostic: "At least one queued item cannot currently be assigned to an executor."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/jenkins-builds"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#jenkins-queue"

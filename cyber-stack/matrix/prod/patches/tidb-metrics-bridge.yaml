@@ -1,0 +1,11 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-telemetry-tidb-metrics-bridge
+  namespace: ssl-proxy
+spec:
+  replicas: 1
+  template:
+    spec:
+      nodeSelector:
+        ssl-proxy.io/tidb-host: "true"

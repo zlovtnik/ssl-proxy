@@ -10,12 +10,16 @@
 
 use std::{
     convert::Infallible,
+    fs::{self, OpenOptions},
+    io::{self, Write},
     net::SocketAddr,
+    os::unix::fs::PermissionsExt,
+    path::Path,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, OnceLock,
     },
-    time::Instant,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use http_body_util::Full;
@@ -38,6 +42,7 @@ static REDPANDA_REQUEST_TOTAL: AtomicU64 = AtomicU64::new(0);
 static REDPANDA_REQUEST_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static REDPANDA_REQUEST_DURATION_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static REDPANDA_REQUEST_LAST_DURATION_MS: AtomicU64 = AtomicU64::new(0);
+static TEXTFILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn shared_stats() -> SharedStats {
     let _ = STARTED_AT.set(Instant::now());
@@ -106,6 +111,71 @@ pub fn spawn_metrics_server(
     });
 }
 
+pub fn spawn_metrics_textfile_writer(
+    path: std::path::PathBuf,
+    stats: SharedStats,
+    publish_state: SharedPublishState,
+) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let snapshot = stats.snapshot();
+            let (cb_state, journal_bytes) = publish_state_snapshot(&publish_state);
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let body = render_metrics_body(&snapshot, cb_state, journal_bytes, timestamp);
+            if let Err(error) = write_textfile_atomic(&path, body.as_bytes()) {
+                warn!(%error, path = %path.display(), "atheros sensor textfile write failed");
+            }
+        }
+    });
+}
+
+fn write_textfile_atomic(path: &Path, body: &[u8]) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "textfile path has no parent")
+    })?;
+    fs::create_dir_all(parent)?;
+    let sequence = TEXTFILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid textfile name"))?;
+    let temporary = parent.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        sequence
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(body)?;
+        file.set_permissions(fs::Permissions::from_mode(0o644))?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn publish_state_snapshot(publish_state: &SharedPublishState) -> (u8, u64) {
+    let publish_state = publish_state.lock().unwrap();
+    let cb_state = match publish_state.circuit_breaker_state {
+        CircuitBreakerState::Closed => 0,
+        CircuitBreakerState::HalfOpen => 1,
+        CircuitBreakerState::Open => 2,
+    };
+    (cb_state, publish_state.journal_bytes())
+}
+
 /// Serves Prometheus text format (version 0.0.4) with counters (packets_seen, decoded_frames,
 /// unsupported_frames, malformed_frames, audit_window_drops, capture_errors, pipeline_errors,
 /// mac_lookup_failures, channel_hop_count), gauges (bandwidth_window_lag_ms,
@@ -122,23 +192,24 @@ async fn serve_metrics(
         return Ok(response);
     }
     let stats = stats.snapshot();
-    let (cb_state, journal_bytes) = {
-        let publish_state = publish_state.lock().unwrap();
-        let cb_state = match publish_state.circuit_breaker_state {
-            CircuitBreakerState::Closed => 0,
-            CircuitBreakerState::HalfOpen => 1,
-            CircuitBreakerState::Open => 2,
-        };
-        (cb_state, publish_state.journal_bytes())
-    };
-    let body = render_metrics_body(&stats, cb_state, journal_bytes);
+    let (cb_state, journal_bytes) = publish_state_snapshot(&publish_state);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let body = render_metrics_body(&stats, cb_state, journal_bytes, timestamp);
     Ok(Response::builder()
         .header("content-type", "text/plain; version=0.0.4")
         .body(Full::from(Bytes::from(body)))
         .unwrap())
 }
 
-fn render_metrics_body(stats: &CaptureStatsSnapshot, cb_state: u8, journal_bytes: u64) -> String {
+fn render_metrics_body(
+    stats: &CaptureStatsSnapshot,
+    cb_state: u8,
+    journal_bytes: u64,
+    textfile_timestamp_seconds: u64,
+) -> String {
     let lag_line = match stats.bandwidth_window_lag_ms {
         Some(ms) => format!("atheros_bandwidth_window_lag_ms {ms}\n"),
         None => String::new(),
@@ -150,6 +221,8 @@ fn render_metrics_body(stats: &CaptureStatsSnapshot, cb_state: u8, journal_bytes
     format!(
         "# TYPE atheros_up gauge\natheros_up 1\n\
          # TYPE atheros_uptime_seconds gauge\natheros_uptime_seconds {uptime}\n\
+         # HELP atheros_sensor_textfile_timestamp_seconds Unix timestamp of the latest complete textfile snapshot.\n\
+         # TYPE atheros_sensor_textfile_timestamp_seconds gauge\natheros_sensor_textfile_timestamp_seconds {textfile_timestamp_seconds}\n\
          # TYPE atheros_packets_seen counter\natheros_packets_seen {}\n\
          # TYPE atheros_decoded_frames counter\natheros_decoded_frames {}\n\
          # TYPE atheros_unsupported_frames counter\natheros_unsupported_frames {}\n\
@@ -213,11 +286,34 @@ mod tests {
         stats.set_probe_accumulator_len(9);
         stats.set_memory_backlog_len(3);
 
-        let body = render_metrics_body(&stats.snapshot(), 2, 4096);
+        let body = render_metrics_body(&stats.snapshot(), 2, 4096, 1_700_000_000);
 
         assert!(body.contains("atheros_malformed_frames 7\n"));
         assert!(body.contains("atheros_probe_accumulator_len 9\n"));
         assert!(body.contains("atheros_journal_bytes 4096\n"));
         assert!(body.contains("atheros_circuit_breaker_state 2\n"));
+        assert!(body.contains("atheros_sensor_textfile_timestamp_seconds 1700000000\n"));
+    }
+
+    #[test]
+    fn textfile_write_is_atomic_and_stale_detectable() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("atheros_sensor.prom");
+        write_textfile_atomic(
+            &path,
+            b"atheros_sensor_textfile_timestamp_seconds 1700000000\n",
+        )
+        .unwrap();
+
+        let rendered = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            rendered,
+            "atheros_sensor_textfile_timestamp_seconds 1700000000\n"
+        );
+        assert!(fs::read_dir(directory.path()).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp")));
     }
 }

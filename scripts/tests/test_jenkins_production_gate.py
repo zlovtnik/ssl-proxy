@@ -108,6 +108,77 @@ class JenkinsProductionGateTest(unittest.TestCase):
             re.compile(r"^credentials-binding:728\.v902a_273b_8947$", re.MULTILINE),
         )
 
+    def test_observability_plugins_and_readonly_identity_are_pinned(self) -> None:
+        plugins = (REPOSITORY_ROOT / "docker/jenkins/plugins.txt").read_text(
+            encoding="utf-8"
+        )
+        casc = (REPOSITORY_ROOT / "docker/jenkins/casc/jenkins.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("prometheus:856.vc9e3d6e4b_b_9e", plugins)
+        self.assertIn("matrix-auth:3.3", plugins)
+        self.assertIn("projectMatrix:", casc)
+        self.assertIn('name: "prometheus"', casc)
+        self.assertIn('- "Overall/Read"', casc)
+        self.assertIn('- "Metrics/View"', casc)
+        self.assertIn("permissions(['Job/Read'])", casc)
+        self.assertNotIn("loggedInUsersCanDoAnything", casc)
+
+    def test_compose_mounts_prometheus_scrape_password(self) -> None:
+        compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
+            encoding="utf-8"
+        )
+        environment_example = (REPOSITORY_ROOT / ".env.example").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("      - jenkins-prometheus-password", compose)
+        self.assertIn(
+            "file: ${JENKINS_PROMETHEUS_PASSWORD_FILE:-./secrets/jenkins-prometheus-password}",
+            compose,
+        )
+        self.assertIn("JENKINS_PROMETHEUS_PASSWORD_FILE=", environment_example)
+
+    def test_observability_queries_match_captured_prometheus_fixture(self) -> None:
+        fixture = (
+            REPOSITORY_ROOT / "docker/jenkins/fixtures/prometheus.txt"
+        ).read_text(encoding="utf-8")
+        dashboard = (
+            REPOSITORY_ROOT
+            / "cyber-stack/base/telemetry/config/grafana/dashboards/jenkins-builds.json"
+        ).read_text(encoding="utf-8")
+        rules = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                REPOSITORY_ROOT
+                / "cyber-stack/base/telemetry/config/prometheus/rules"
+            ).glob("*.yml")
+        )
+        expected_metrics = {
+            "default_jenkins_up",
+            "default_jenkins_uptime",
+            "default_jenkins_executors_available",
+            "default_jenkins_executors_busy",
+            "jenkins_queue_size_value",
+            "jenkins_queue_blocked_value",
+            "jenkins_queue_pending_value",
+            "jenkins_queue_buildable_value",
+            "jenkins_queue_stuck_value",
+            "jenkins_job_scheduled_total",
+            "jenkins_job_building_duration",
+            "jenkins_job_waiting_duration",
+            "jenkins_executor_in_use_value",
+            "jenkins_executor_free_value",
+        }
+
+        for metric in expected_metrics:
+            self.assertRegex(fixture, rf"(?m)^{metric}(?:\{{| )")
+            self.assertIn(metric, dashboard + rules)
+
+        self.assertNotIn("default_jenkins_builds_", dashboard + rules)
+        self.assertNotIn("default_jenkins_queue_", dashboard + rules)
+
     def test_compose_mounts_required_readonly_kubeconfig_secret(self) -> None:
         compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
             encoding="utf-8"

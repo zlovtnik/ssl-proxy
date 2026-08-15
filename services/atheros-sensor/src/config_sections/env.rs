@@ -8,6 +8,8 @@ use crate::audit::AuditWindow;
 use crate::state_key::DetectorLimits;
 
 pub const DEFAULT_PUBLISH_JOURNAL_PATH: &str = "/tmp/atheros-sensor-publish-journal.jsonl";
+pub const DEFAULT_METRICS_TEXTFILE_PATH: &str =
+    "/var/lib/node_exporter/textfile_collector/atheros_sensor.prom";
 
 #[derive(Clone)]
 pub struct AppConfig {
@@ -32,6 +34,7 @@ pub struct AppConfig {
     pub handshake_ttl_secs: u64,
     pub authorized_network_cache_ttl_secs: u64,
     pub metrics_port: Option<u16>,
+    pub metrics_textfile_path: PathBuf,
     pub shutdown_grace_secs: u64,
     pub audit_layer_stream: AuditLayerStream,
     pub memory_backlog_size: NonZeroUsize,
@@ -220,6 +223,12 @@ impl AppConfig {
             .max(1),
             metrics_port: parse_optional_u16("ATH_SENSOR_METRICS_PORT")
                 .map_err(ConfigError::InvalidMetricsPort)?,
+            metrics_textfile_path: std::env::var("ATH_SENSOR_METRICS_TEXTFILE_PATH")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_METRICS_TEXTFILE_PATH)),
             shutdown_grace_secs: parse_u64("ATH_SENSOR_SHUTDOWN_GRACE_SECS", 5)
                 .unwrap_or(5)
                 .max(1),

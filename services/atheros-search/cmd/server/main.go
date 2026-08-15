@@ -20,6 +20,7 @@ import (
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/embed"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/health"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/metrics"
+	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/observability"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/search"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/worker"
 )
@@ -49,6 +50,17 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	tracerProvider, err := observability.InitTracing(ctx, "atheros-search")
+	if err != nil {
+		logger.Fatal().Err(err).Msg("configure OTLP tracing")
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracerProvider.Shutdown(shutdownCtx); err != nil {
+			logger.Warn().Err(err).Msg("trace provider shutdown failed")
+		}
+	}()
 
 	pool, err := db.NewPool(ctx, db.Options{
 		DSN:                  cfg.TiDBDSN,

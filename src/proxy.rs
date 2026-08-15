@@ -69,6 +69,23 @@ fn decompose_uri(uri: &axum::http::Uri) -> (String, Vec<String>) {
         .collect();
     (path, keys)
 }
+
+fn request_target<B>(request: &Request<B>) -> Option<(String, u16)> {
+    if let Some(authority) = request.uri().authority() {
+        return Some((
+            authority.host().to_string(),
+            authority.port_u16().unwrap_or(80),
+        ));
+    }
+
+    let authority: axum::http::uri::Authority =
+        request.headers().get("host")?.to_str().ok()?.parse().ok()?;
+    Some((
+        authority.host().to_string(),
+        authority.port_u16().unwrap_or(80),
+    ))
+}
+
 /// Handle a single non-CONNECT HTTP/1.1 proxy request.
 ///
 /// Performs host blocklist checking, rewrites absolute-form URIs to origin-form,
@@ -112,24 +129,11 @@ pub async fn handler(
     );
 
     // Check blocklist using the host from the URI or Host header.
-    let hostname = req
-        .uri()
-        .host()
-        .or_else(|| req.headers().get("host").and_then(|v| v.to_str().ok()))
-        .unwrap_or("");
-    let hostname = if hostname.starts_with('[') {
-        hostname
-            .trim_start_matches('[')
-            .split(']')
-            .next()
-            .unwrap_or("")
-    } else {
-        hostname.split(':').next().unwrap_or("")
-    }
-    .to_string();
+    let (hostname, target_port) = request_target(&req).ok_or(StatusCode::BAD_REQUEST)?;
     if hostname.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    state.record_classification(crate::tunnel::classify(&hostname, target_port, None));
     if blocklist::is_blocked(&hostname, &state) {
         #[derive(Serialize)]
         struct HttpBlockedExtra {
@@ -440,5 +444,38 @@ pub async fn handler(
             );
             Err(StatusCode::BAD_GATEWAY)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::request_target;
+    use axum::http::Request;
+
+    #[test]
+    fn absolute_form_http_target_preserves_non_default_port_for_classification() {
+        let request = Request::builder()
+            .uri("http://example.invalid:8080/resource")
+            .body(())
+            .expect("absolute-form request should be valid");
+
+        let (hostname, port) = request_target(&request).expect("target should parse");
+        assert_eq!(hostname, "example.invalid");
+        assert_eq!(port, 8080);
+        assert_eq!(crate::tunnel::classify(&hostname, port, None), "unknown");
+    }
+
+    #[test]
+    fn http_target_defaults_to_port_80() {
+        let request = Request::builder()
+            .uri("/resource")
+            .header("host", "example.invalid")
+            .body(())
+            .expect("origin-form request should be valid");
+
+        assert_eq!(
+            request_target(&request),
+            Some(("example.invalid".to_string(), 80))
+        );
     }
 }

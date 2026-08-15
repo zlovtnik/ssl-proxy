@@ -29,6 +29,12 @@ spec:
           imagePullPolicy: Always
           args:
             - "--config=/etc/otelcol/config.yaml"
+          env:
+            - name: ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: ENVIRONMENT
           ports:
             - containerPort: 4317
               name: otlp-grpc
@@ -101,3 +107,34 @@ spec:
       port: 8889
       targetPort: prom-exporter
       protocol: TCP
+    - name: health
+      port: 13133
+      targetPort: health
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-telemetry-otel-collector
+  namespace: ssl-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-otel-collector
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - {protocol: TCP, port: 4317}
+        - {protocol: TCP, port: 4318}
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-prometheus}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-blackbox-exporter}
+      ports:
+        - {protocol: TCP, port: 8888}
+        - {protocol: TCP, port: 8889}
+        - {protocol: TCP, port: 13133}

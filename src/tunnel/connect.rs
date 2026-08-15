@@ -60,6 +60,7 @@ pub async fn handle(
 
     let (hostname_owned, port) = parse_host_port(&host);
     let category = classify(&hostname_owned, port, None);
+    state.record_classification(category);
 
     let upgrade_fut = hyper::upgrade::on(&mut req);
     let hostname = hostname_owned.as_str();

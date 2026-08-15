@@ -86,14 +86,15 @@ struct RelaySettings {
 }
 
 impl RelaySettings {
-    fn from_config(config: &WireGuardConfig) -> Self {
-        Self {
-            obfuscation: config.packet_obfuscation(),
+    fn from_config(config: &WireGuardConfig) -> io::Result<Self> {
+        Ok(Self {
+            obfuscation: config.packet_obfuscation()
+                .map_err(|e| io::Error::other(e.to_string()))?,
             idle_timeout: Duration::from_secs(config.obfuscation_session_idle_secs),
             max_datagram_bytes: config.obfuscation_max_datagram_bytes,
             udp_socket_buffer_bytes: config.udp_socket_buffer_bytes,
             probe_block: read_probe_block_config(),
-        }
+        })
     }
 
     fn test_default(obfuscation: WgPacketObfuscation, idle_timeout: Duration) -> Self {
@@ -406,7 +407,7 @@ pub async fn spawn_with_metrics(
     spawn_with_settings_and_metrics(
         public_addr,
         internal_addr,
-        RelaySettings::from_config(config),
+        RelaySettings::from_config(config)?,
         shutdown,
         metrics,
     )

@@ -7,7 +7,7 @@ use crate::wg_packet_obfuscation::{decode_packet, encode_packet};
 
 fn test_settings(magic_byte: Option<u8>, idle_timeout: Duration) -> WgPacketObfuscation {
     let _ = idle_timeout;
-    WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), magic_byte)
+    WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), magic_byte).unwrap()
 }
 
 #[test]
@@ -107,7 +107,7 @@ async fn relay_forwards_plaintext_to_internal_listener_and_replies() {
     let client = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .unwrap();
-    let encoded = encode_packet(b"handshake-init", &obfuscation);
+    let encoded = encode_packet(b"handshake-init", &obfuscation).unwrap();
     client.send_to(&encoded, public_addr).await.unwrap();
 
     let mut buf = [0u8; 2048];
@@ -163,11 +163,11 @@ async fn relay_uses_distinct_upstream_ports_per_client() {
         .unwrap();
 
     client_one
-        .send_to(&encode_packet(b"peer-one", &obfuscation), public_addr)
+        .send_to(&encode_packet(b"peer-one", &obfuscation).unwrap(), public_addr)
         .await
         .unwrap();
     client_two
-        .send_to(&encode_packet(b"peer-two", &obfuscation), public_addr)
+        .send_to(&encode_packet(b"peer-two", &obfuscation).unwrap(), public_addr)
         .await
         .unwrap();
 
@@ -279,7 +279,7 @@ async fn relay_evicts_idle_sessions_and_recreates_upstream_socket() {
         .await
         .unwrap();
     client
-        .send_to(&encode_packet(b"first-packet", &obfuscation), public_addr)
+        .send_to(&encode_packet(b"first-packet", &obfuscation).unwrap(), public_addr)
         .await
         .unwrap();
     let mut buf = [0u8; 2048];
@@ -291,7 +291,7 @@ async fn relay_evicts_idle_sessions_and_recreates_upstream_socket() {
     sleep(Duration::from_millis(250)).await;
 
     client
-        .send_to(&encode_packet(b"second-packet", &obfuscation), public_addr)
+        .send_to(&encode_packet(b"second-packet", &obfuscation).unwrap(), public_addr)
         .await
         .unwrap();
     timeout(Duration::from_secs(1), client.recv_from(&mut buf))

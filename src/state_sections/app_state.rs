@@ -18,6 +18,7 @@ impl AppState {
             tunnels_opened: AtomicU64::new(0),
             blocked_count: AtomicU64::new(0),
             allowed_count: AtomicU64::new(0),
+            classification_counts: std::array::from_fn(|_| AtomicU64::new(0)),
             obfuscated_count: AtomicU64::new(0),
             host_stats_dropped: AtomicU64::new(0),
             blocklist: ArcSwap::from_pointee(seed),
@@ -250,6 +251,22 @@ impl AppState {
 
     pub fn record_allowed(&self) {
         self.allowed_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_classification(&self, category: &str) {
+        let index = match category {
+            "ads_tracker" => 0,
+            "analytics" => 1,
+            "cdn" => 2,
+            "essential_api" => 3,
+            "auth" => 4,
+            _ => 5,
+        };
+        self.classification_counts[index].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn classification_counts_snapshot(&self) -> [u64; 6] {
+        std::array::from_fn(|index| self.classification_counts[index].load(Ordering::Relaxed))
     }
 
     pub fn record_peer_block(&self, wg_pubkey: Option<&str>, approx_bytes: u64) {

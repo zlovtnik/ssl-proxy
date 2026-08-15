@@ -124,6 +124,7 @@ pub async fn ready(State(state): State<SharedState>) -> impl IntoResponse {
 fn render_metrics_body(state: &crate::state::AppState) -> String {
     let publisher = state.publisher.health_snapshot();
     let wg_relay = state.wg_relay_metrics.snapshot();
+    let classifications = state.classification_counts_snapshot();
     format!(
         concat!(
             "# HELP ssl_proxy_up Process health status.\n",
@@ -150,6 +151,14 @@ fn render_metrics_body(state: &crate::state::AppState) -> String {
             "# HELP ssl_proxy_obfuscated_total Total obfuscated proxy flows.\n",
             "# TYPE ssl_proxy_obfuscated_total counter\n",
             "ssl_proxy_obfuscated_total {obfuscated}\n",
+            "# HELP ssl_proxy_classifications_total Total proxy classifications by bounded category.\n",
+            "# TYPE ssl_proxy_classifications_total counter\n",
+            "ssl_proxy_classifications_total{{category=\"ads_tracker\"}} {class_ads_tracker}\n",
+            "ssl_proxy_classifications_total{{category=\"analytics\"}} {class_analytics}\n",
+            "ssl_proxy_classifications_total{{category=\"cdn\"}} {class_cdn}\n",
+            "ssl_proxy_classifications_total{{category=\"essential_api\"}} {class_essential_api}\n",
+            "ssl_proxy_classifications_total{{category=\"auth\"}} {class_auth}\n",
+            "ssl_proxy_classifications_total{{category=\"unknown\"}} {class_unknown}\n",
             "# HELP ssl_proxy_host_stats_dropped_total Total dropped host-stat updates.\n",
             "# TYPE ssl_proxy_host_stats_dropped_total counter\n",
             "ssl_proxy_host_stats_dropped_total {host_stats_dropped}\n",
@@ -206,6 +215,12 @@ fn render_metrics_body(state: &crate::state::AppState) -> String {
         blocked = state.blocked_count.load(Ordering::Relaxed),
         allowed = state.allowed_count.load(Ordering::Relaxed),
         obfuscated = state.obfuscated_count.load(Ordering::Relaxed),
+        class_ads_tracker = classifications[0],
+        class_analytics = classifications[1],
+        class_cdn = classifications[2],
+        class_essential_api = classifications[3],
+        class_auth = classifications[4],
+        class_unknown = classifications[5],
         host_stats_dropped = state.host_stats_dropped.load(Ordering::Relaxed),
         hosts_tracked = state.host_stats.len(),
         peers_tracked = state.peer_counters.len(),

@@ -1,0 +1,46 @@
+groups:
+  - name: availability-recording
+    interval: 30s
+    rules:
+      - record: service:probe_availability:ratio_rate1h
+        expr: avg_over_time(probe_success{job="blackbox-service-catalog"}[1h])
+      - record: service:probe_availability:ratio_rate24h
+        expr: avg_over_time(probe_success{job="blackbox-service-catalog"}[24h])
+      - record: service:probe_availability:ratio_rate7d
+        expr: avg_over_time(probe_success{job="blackbox-service-catalog"}[7d])
+      - record: workload:deployment_ready:ratio
+        expr: kube_deployment_status_replicas_available / clamp_min(kube_deployment_spec_replicas, 1)
+      - record: workload:statefulset_ready:ratio
+        expr: kube_statefulset_status_replicas_ready / clamp_min(kube_statefulset_replicas, 1)
+      - record: workload:daemonset_ready:ratio
+        expr: kube_daemonset_status_number_ready / clamp_min(kube_daemonset_status_desired_number_scheduled, 1)
+      - record: service:http_requests:rate5m
+        expr: sum by (service, operation) (rate(http_server_request_duration_seconds_count[5m]))
+      - record: service:http_errors:ratio_rate5m
+        expr: sum by (service, operation) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m])) / clamp_min(sum by (service, operation) (rate(http_server_request_duration_seconds_count[5m])), 0.001)
+      - record: service:http_latency:p95_5m
+        expr: histogram_quantile(0.95, sum by (le, service, operation) (rate(http_server_request_duration_seconds_bucket[5m])))
+      - record: octopus:ingest_processed:rate5m
+        expr: sum(rate(coordinator_ingest_processed_total_count[5m]))
+      - record: octopus:pending_ledger:current
+        expr: max(coordinator_pending_ledger_count_value)
+      - record: athsearch:requests:rate5m
+        expr: sum by (kind, mode, status) (rate(athsearch_search_requests_total[5m]))
+      - record: athsearch:latency:p95_5m
+        expr: histogram_quantile(0.95, sum by (le, kind, mode) (rate(athsearch_search_latency_ms_bucket[5m])))
+      - record: jenkins:build_duration:p95
+        expr: max(jenkins_job_building_duration{quantile="0.95"})
+
+  - name: capacity-recording
+    interval: 30s
+    rules:
+      - record: node:cpu_utilization:ratio_rate5m
+        expr: 1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
+      - record: node:memory_utilization:ratio
+        expr: 1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+      - record: node:filesystem_utilization:ratio
+        expr: 1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})
+      - record: pvc:utilization:ratio
+        expr: 1 - (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes)
+      - record: container:memory_limit_utilization:ratio
+        expr: container_memory_working_set_bytes{container!="",image!=""} / on (namespace, pod, container) clamp_min(kube_pod_container_resource_limits{resource="memory"}, 1)

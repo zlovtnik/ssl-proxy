@@ -1,0 +1,52 @@
+- targets: ["http://ssl-proxy-proxy-observability:9098/ready"]
+  labels: {service: ssl-proxy, module: http_2xx}
+- targets: ["http://ssl-proxy-java-coordinator:8080/ready"]
+  labels: {service: octopus, module: http_2xx}
+- targets: ["http://ssl-proxy-atheros-search:8080/readyz"]
+  labels: {service: atheros-search, module: http_2xx}
+- targets: ["http://ssl-proxy-atheros-search-ui:8080/healthz"]
+  labels: {service: atheros-search-ui, module: http_2xx}
+- targets: ["http://ssl-proxy-schema-migrator-backend:8080/health"]
+  labels: {service: schema-migrator-backend, module: http_2xx}
+- targets: ["http://ssl-proxy-schema-migrator-ui/"]
+  labels: {service: schema-migrator-ui, module: http_2xx}
+- targets: ["http://ssl-proxy-schema-migrator-keycloak:9000/health/ready"]
+  labels: {service: keycloak, module: http_2xx}
+- targets: ["http://ssl-proxy-schema-migrator-traefik:8082/ping"]
+  labels: {service: schema-migrator-traefik, module: http_2xx}
+- targets: ["http://ssl-proxy-minio:9000/minio/health/ready"]
+  labels: {service: minio, module: http_2xx}
+- targets: ["http://ssl-proxy-redpanda:9644/v1/status/ready"]
+  labels: {service: redpanda, module: http_2xx}
+- targets: ["ssl-proxy-redis-runtime:6379"]
+  labels: {service: redis, module: tcp_connect}
+- targets: ["http://ssl-proxy-telemetry-prometheus:9090/-/ready"]
+  labels: {service: prometheus, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-alertmanager:9093/-/ready"]
+  labels: {service: alertmanager, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-grafana:3000/api/health"]
+  labels: {service: grafana, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-loki:3100/ready"]
+  labels: {service: loki, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-alloy:12345/-/ready"]
+  labels: {service: alloy, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-otel-collector:13133/"]
+  labels: {service: otel-collector, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-jaeger:13133/"]
+  labels: {service: jaeger, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-pushgateway:9091/-/ready"]
+  labels: {service: pushgateway, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-kube-state-metrics:8080/healthz"]
+  labels: {service: kube-state-metrics, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-blackbox-exporter:9115/-/healthy"]
+  labels: {service: blackbox-exporter, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-node-exporter:9100/metrics"]
+  labels: {service: node-exporter, module: http_2xx}
+- targets: ["http://ssl-proxy-telemetry-cadvisor:18080/healthz"]
+  labels: {service: cadvisor, module: http_2xx}
+- targets: ["192.168.1.242:8083"]
+  labels: {service: jenkins, module: tcp_connect, external: "true"}
+- targets: ["192.168.1.242:5000"]
+  labels: {service: registry, module: tcp_connect, external: "true"}
+- targets: ["192.168.1.242:4000"]
+  labels: {service: tidb-external, module: tcp_connect, external: "true"}

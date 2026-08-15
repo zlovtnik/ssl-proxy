@@ -169,16 +169,16 @@ fn encode_framed_prepositioned(
         .copy_from_slice(&(packet_len as u16).to_be_bytes());
     buffer[payload_start + packet_len..body_start + body_len].fill(0);
 
-    write_frame_header(buffer, settings, &state.session_salt, counter, epoch);
+    write_frame_header(buffer, settings, &state.session_salt, counter, epoch)?;
 
     match settings.encryption_mode {
         EncryptionMode::Xor => {
-            let mask = framed_xor_mask(settings, &state.session_salt, direction, epoch);
+            let mask = framed_xor_mask(settings, &state.session_salt, direction, epoch)?;
             apply_xor_mask(&mut buffer[body_start..body_start + body_len], &*mask);
         }
         EncryptionMode::Aead => {
             let cipher = {
-                let key = derive_key(settings, &state.session_salt, direction, epoch, b"aead");
+                let key = derive_key(settings, &state.session_salt, direction, epoch, b"aead")?;
                 XChaCha20Poly1305::new_from_slice(&*key)
                     .map_err(|_| PacketEncodeError::AeadEncrypt)?
             };
@@ -256,12 +256,14 @@ fn decode_framed_in_place_view(
     let body_end = packet_len - tag_len;
     match frame_mode {
         EncryptionMode::Xor => {
-            let mask = framed_xor_mask(settings, &salt, direction, epoch);
+            let mask = framed_xor_mask(settings, &salt, direction, epoch)
+                .map_err(|_| PacketDecodeError::KeyDerivation)?;
             apply_xor_mask(&mut buffer[body_start..body_end], &*mask);
         }
         EncryptionMode::Aead => {
             let cipher = {
-                let key = derive_key(settings, &salt, direction, epoch, b"aead");
+                let key = derive_key(settings, &salt, direction, epoch, b"aead")
+                    .map_err(|_| PacketDecodeError::KeyDerivation)?;
                 XChaCha20Poly1305::new_from_slice(&*key)
                     .map_err(|_| PacketDecodeError::AuthFailed)?
             };
@@ -359,14 +361,14 @@ fn write_frame_header(
     salt: &[u8; FRAME_SALT_LEN],
     counter: u64,
     epoch: u32,
-) {
+) -> Result<(), PacketEncodeError> {
     buffer[0] = FRAME_VERSION;
     buffer[1] = frame_flags(settings);
     let marker_position = marker_position(settings, salt, counter, buffer[1]);
     buffer[2] = (marker_position as u8) ^ marker_mask(settings, salt, counter);
     buffer[3..19].copy_from_slice(salt);
     buffer[19..27].copy_from_slice(
-        &mask_frame_counter(settings, salt, counter, epoch).to_be_bytes(),
+        &mask_frame_counter(settings, salt, counter, epoch)?.to_be_bytes(),
     );
     buffer[27..31].copy_from_slice(&epoch.to_be_bytes());
     fill_marker_zone(
@@ -376,6 +378,7 @@ fn write_frame_header(
         counter,
         marker_position,
     );
+    Ok(())
 }
 
 fn frame_flags(settings: &WgPacketObfuscation) -> u8 {
@@ -546,7 +549,7 @@ fn framed_xor_mask(
     salt: &[u8; FRAME_SALT_LEN],
     direction: PacketDirection,
     epoch: u32,
-) -> Zeroizing<[u8; 32]> {
+) -> Result<Zeroizing<[u8; 32]>, PacketEncodeError> {
     derive_key(settings, salt, direction, epoch, b"xor")
 }
 
@@ -565,7 +568,7 @@ fn derive_key(
     direction: PacketDirection,
     epoch: u32,
     purpose: &[u8],
-) -> Zeroizing<[u8; 32]> {
+) -> Result<Zeroizing<[u8; 32]>, PacketEncodeError> {
     let hk = Hkdf::<Sha256>::new(Some(salt), settings.key.as_slice());
     let mut key = [0u8; 32];
     let mut info = Vec::with_capacity(64);
@@ -576,8 +579,8 @@ fn derive_key(
     info.push(b'/');
     info.extend_from_slice(&epoch.to_be_bytes());
     hk.expand(&info, &mut key)
-        .expect("32-byte HKDF output is valid for SHA-256");
-    Zeroizing::new(key)
+        .map_err(|_| PacketEncodeError::KeyDerivation)?;
+    Ok(Zeroizing::new(key))
 }
 
 fn mask_frame_counter(
@@ -585,8 +588,8 @@ fn mask_frame_counter(
     salt: &[u8; FRAME_SALT_LEN],
     counter: u64,
     epoch: u32,
-) -> u64 {
-    counter ^ frame_counter_mask(settings, salt, epoch)
+) -> Result<u64, PacketEncodeError> {
+    Ok(counter ^ frame_counter_mask(settings, salt, epoch)?)
 }
 
 fn read_frame_counter(
@@ -597,7 +600,8 @@ fn read_frame_counter(
     flags: u8,
 ) -> Result<u64, PacketDecodeError> {
     let encoded_counter = read_u64_at(buffer, 19);
-    let masked_counter = encoded_counter ^ frame_counter_mask(settings, salt, epoch);
+    let masked_counter = encoded_counter
+        ^ frame_counter_mask(settings, salt, epoch).map_err(|_| PacketDecodeError::KeyDerivation)?;
     match validate_marker(buffer, settings, salt, masked_counter, flags) {
         Ok(()) => Ok(masked_counter),
         Err(masked_error) => {
@@ -615,17 +619,17 @@ fn frame_counter_mask(
     settings: &WgPacketObfuscation,
     salt: &[u8; FRAME_SALT_LEN],
     epoch: u32,
-) -> u64 {
+) -> Result<u64, PacketEncodeError> {
     let key = derive_key(
         settings,
         salt,
         PacketDirection::Bidirectional,
         epoch,
         b"counter",
-    );
+    )?;
     let mut bytes = [0u8; 8];
     bytes.copy_from_slice(&key[..8]);
-    u64::from_be_bytes(bytes)
+    Ok(u64::from_be_bytes(bytes))
 }
 
 fn frame_nonce(salt: &[u8; FRAME_SALT_LEN], counter: u64) -> [u8; 24] {

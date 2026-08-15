@@ -1,0 +1,188 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: "${ENVIRONMENT}"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["ssl-proxy-telemetry-alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: ssl-proxy-proxy
+    static_configs:
+      - targets: ["ssl-proxy-proxy-observability:9098"]
+        labels: {service: ssl-proxy}
+
+  - job_name: ssl-proxy-java-coordinator
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ssl-proxy-java-coordinator:8080"]
+        labels: {service: octopus}
+
+  - job_name: ssl-proxy-atheros-search
+    static_configs:
+      - targets: ["ssl-proxy-atheros-search:9090"]
+        labels: {service: atheros-search}
+
+  - job_name: ssl-proxy-redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: ["ssl-proxy-redpanda:9644"]
+        labels: {service: redpanda}
+
+  - job_name: ssl-proxy-minio
+    metrics_path: /minio/v2/metrics/cluster
+    bearer_token_file: /etc/prometheus/secrets/minio-prometheus-bearer-token
+    static_configs:
+      - targets: ["ssl-proxy-minio:9000"]
+        labels: {service: minio}
+
+  - job_name: ssl-proxy-redis
+    static_configs:
+      - targets: ["ssl-proxy-redis-runtime:9121"]
+        labels: {service: redis}
+
+  - job_name: ssl-proxy-keycloak
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ssl-proxy-schema-migrator-keycloak:9000"]
+        labels: {service: keycloak}
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels: {service: prometheus}
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["ssl-proxy-telemetry-alertmanager:9093"]
+        labels: {service: alertmanager}
+
+  - job_name: grafana
+    static_configs:
+      - targets: ["ssl-proxy-telemetry-grafana:3000"]
+        labels: {service: grafana}
+
+  - job_name: loki
+    metrics_path: /metrics
+    basic_auth:
+      username_file: /etc/prometheus/secrets/loki-username
+      password_file: /etc/prometheus/secrets/loki-password
+    static_configs:
+      - targets: ["ssl-proxy-telemetry-loki:3100"]
+        labels: {service: loki}
+
+  - job_name: alloy
+    static_configs:
+      - targets: ["ssl-proxy-telemetry-alloy:12345"]
+        labels: {service: alloy}
+
+  - job_name: otel-collector
+    static_configs:
+      - targets:
+          - "ssl-proxy-telemetry-otel-collector:8888"
+          - "ssl-proxy-telemetry-otel-collector:8889"
+        labels: {service: otel-collector}
+
+  - job_name: jaeger
+    static_configs:
+      - targets: ["ssl-proxy-telemetry-jaeger:8888"]
+        labels: {service: jaeger}
+
+  - job_name: pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: ["ssl-proxy-telemetry-pushgateway:9091"]
+        labels: {service: pushgateway}
+
+  - job_name: kube-state-metrics
+    static_configs:
+      - targets: ["ssl-proxy-telemetry-kube-state-metrics:8080"]
+        labels: {service: kube-state-metrics}
+
+  - job_name: blackbox-exporter
+    static_configs:
+      - targets: ["ssl-proxy-telemetry-blackbox-exporter:9115"]
+        labels: {service: blackbox-exporter}
+
+  - job_name: node-exporter
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces: {own_namespace: true}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        regex: ssl-proxy-telemetry-node-exporter
+        action: keep
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        regex: metrics
+        action: keep
+      - target_label: service
+        replacement: node-exporter
+
+  - job_name: cadvisor
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces: {own_namespace: true}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        regex: ssl-proxy-telemetry-cadvisor
+        action: keep
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        regex: http
+        action: keep
+      - target_label: service
+        replacement: cadvisor
+
+  - job_name: tidb-dev
+    metrics_path: /metrics
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces: {own_namespace: true}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        regex: ssl-proxy-tidb
+        action: keep
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        regex: metrics
+        action: keep
+      - target_label: service
+        replacement: tidb
+
+  - job_name: argocd
+    static_configs:
+      - targets: ["argocd-metrics.argocd.svc.cluster.local:8082"]
+        labels: {service: argocd}
+
+  - job_name: traefik-edge
+    static_configs:
+      - targets: ["traefik-metrics.kube-system.svc.cluster.local:9100"]
+        labels: {service: traefik}
+
+  - job_name: jenkins
+    scrape_interval: 60s
+    metrics_path: /prometheus/
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/secrets/jenkins-prometheus-password
+    static_configs:
+      - targets: ["192.168.1.242:8083"]
+        labels: {service: jenkins, job_name: ssl-proxy-images}
+
+  - job_name: blackbox-service-catalog
+    metrics_path: /probe
+    file_sd_configs:
+      - files: ["/etc/prometheus/catalog/service-catalog.yml"]
+    relabel_configs:
+      - source_labels: [module]
+        target_label: __param_module
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: ssl-proxy-telemetry-blackbox-exporter:9115

@@ -294,6 +294,7 @@ async fn evaluate_transparent_policy(
         orig_dst.port(),
         tls.alpn.as_deref(),
     );
+    state.record_classification(category);
 
     if let Some(ref name) = hostname {
         if blocklist::is_blocked(name, state) {

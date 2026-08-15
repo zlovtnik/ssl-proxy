@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ssl-proxy-telemetry-alertmanager
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-alertmanager
+spec:
+  serviceName: ssl-proxy-telemetry-alertmanager
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-alertmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: telemetry-alertmanager
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.32.1
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+          ports:
+            - {name: http, containerPort: 9093}
+          readinessProbe:
+            httpGet: {path: /-/ready, port: http}
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: {path: /-/healthy, port: http}
+            initialDelaySeconds: 15
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - {name: config, mountPath: /etc/alertmanager, readOnly: true}
+            - {name: secret, mountPath: /etc/alertmanager-secrets, readOnly: true}
+            - {name: data, mountPath: /alertmanager}
+      volumes:
+        - name: config
+          configMap: {name: ssl-proxy-telemetry-alertmanager-config}
+        - name: secret
+          secret:
+            secretName: observability-credentials
+            items:
+              - {key: alertmanager-webhook-url, path: alertmanager-webhook-url}
+        - name: data
+          persistentVolumeClaim: {claimName: ssl-proxy-telemetry-alertmanager}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ssl-proxy-telemetry-alertmanager
+  namespace: ssl-proxy
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-telemetry-alertmanager
+  namespace: ssl-proxy
+spec:
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-alertmanager
+  ports:
+    - {name: http, port: 9093, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-telemetry-alertmanager
+  namespace: ssl-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-alertmanager
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-prometheus}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-grafana}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-blackbox-exporter}
+      ports:
+        - {protocol: TCP, port: 9093}

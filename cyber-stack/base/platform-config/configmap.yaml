@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/component: platform-config
     app.kubernetes.io/managed-by: kustomize
 data:
+  ENVIRONMENT: "local"
   SYNC_REDPANDA_BOOTSTRAP_SERVERS: "ssl-proxy-redpanda:9092"
   SYNC_SCAN_TOPIC: "sync.scan.request"
   SYNC_LOAD_TOPIC: "sync.oracle.load"

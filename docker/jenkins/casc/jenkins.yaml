@@ -9,9 +9,20 @@ jenkins:
       users:
         - id: "${JENKINS_ADMIN_ID:-admin}"
           password: "${jenkins-admin-password}"
+        - id: "prometheus"
+          password: "${jenkins-prometheus-password}"
   authorizationStrategy:
-    loggedInUsersCanDoAnything:
-      allowAnonymousRead: false
+    projectMatrix:
+      entries:
+        - user:
+            name: "${JENKINS_ADMIN_ID:-admin}"
+            permissions:
+              - "Overall/Administer"
+        - user:
+            name: "prometheus"
+            permissions:
+              - "Overall/Read"
+              - "Metrics/View"
 
 credentials:
   system:
@@ -35,6 +46,19 @@ jobs:
         logRotator {
           numToKeep(20)
           artifactNumToKeep(5)
+        }
+        properties {
+          authorizationMatrix {
+            inheritanceStrategy {
+              inheritingGlobal()
+            }
+            entries {
+              user {
+                name('prometheus')
+                permissions(['Job/Read'])
+              }
+            }
+          }
         }
         triggers {
           scm('H/5 * * * *')

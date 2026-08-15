@@ -74,6 +74,7 @@ fn parse_single_shim_process_config(
     )?;
 
     let obfuscation = WgPacketObfuscation::new(key.into_bytes(), magic_byte)
+        .map_err(|e| ConfigParseOutcome::Error(e.to_string()))?
         .with_encryption_mode(encryption_mode)
         .with_padding(parse_padding(optional_value(
             &options.padding,
@@ -580,6 +581,7 @@ fn build_toml_shim_config(
         .replay_protection
         .unwrap_or(matches!(encryption_mode, EncryptionMode::Aead));
     let obfuscation = WgPacketObfuscation::new(key.into_bytes(), magic_byte)
+        .map_err(|e| ConfigParseOutcome::Error(e.to_string()))?
         .with_encryption_mode(encryption_mode)
         .with_padding(parse_padding(raw.padding)?)
         .with_magic_position(parse_magic_position(raw.magic_position)?)

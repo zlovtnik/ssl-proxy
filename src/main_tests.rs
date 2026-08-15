@@ -1,9 +1,13 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
 
+use axum::{body::Body, http::Request};
+use tower::ServiceExt;
+
 use super::{
-    admin_api_key_matches, constant_time_eq, AdminAuthRateLimiter, ADMIN_AUTH_FAILURE_WINDOW,
-    ADMIN_AUTH_MAX_FAILURES, ADMIN_AUTH_MAX_TRACKED_IPS,
+    admin_api_key_matches, build_observability_router, build_state, constant_time_eq,
+    AdminAuthRateLimiter, ADMIN_AUTH_FAILURE_WINDOW, ADMIN_AUTH_MAX_FAILURES,
+    ADMIN_AUTH_MAX_TRACKED_IPS,
 };
 
 #[test]
@@ -67,4 +71,23 @@ fn admin_auth_rate_limiter_fails_closed_when_saturated() {
         ADMIN_AUTH_MAX_FAILURES
     );
     assert!(limiter.failures_by_ip.get(&saturated_ip).is_none());
+}
+
+#[tokio::test]
+async fn observability_listener_exposes_no_admin_routes() {
+    let state = build_state(&ssl_proxy::config::Config::default()).unwrap();
+    let router = build_observability_router(state);
+
+    for path in ["/hosts", "/stats/summary", "/devices", "/dashboard"] {
+        let response = router
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::NOT_FOUND,
+            "{path}"
+        );
+    }
 }

@@ -206,11 +206,15 @@ spec:
               value: "true"
             - name: KC_HEALTH_ENABLED
               value: "true"
+            - name: KC_METRICS_ENABLED
+              value: "true"
             - name: KC_HOSTNAME_STRICT
               value: "false"
           ports:
             - name: http
               containerPort: 8080
+            - name: management
+              containerPort: 9000
           startupProbe:
             tcpSocket:
               port: http
@@ -304,3 +308,37 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+    - name: management
+      port: 9000
+      targetPort: management
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-schema-migrator-keycloak
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: schema-migrator-keycloak
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: schema-migrator-keycloak
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: telemetry-prometheus
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: telemetry-blackbox-exporter
+      ports:
+        - protocol: TCP
+          port: 9000

@@ -34,6 +34,7 @@ patches:
 - path: patches/proxy-replicas.yaml
 - path: patches/resources.yaml
 - path: patches/jaeger-recovery.yaml
+- path: patches/tidb-metrics-bridge.yaml
 - path: patches/alloy-positions.yaml
 - path: patches/remove-bundled-tidb.yaml
 - path: patches/external-tidb.yaml

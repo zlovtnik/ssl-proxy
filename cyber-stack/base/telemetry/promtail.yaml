@@ -117,3 +117,39 @@ spec:
           hostPath:
             path: /var/lib/alloy
             type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-telemetry-alloy
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-alloy
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-alloy
+  ports:
+    - {name: http, port: 12345, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-telemetry-alloy
+  namespace: ssl-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-alloy
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-prometheus}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-blackbox-exporter}
+      ports:
+        - {protocol: TCP, port: 12345}

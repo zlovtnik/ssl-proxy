@@ -179,6 +179,14 @@ spec:
             matchLabels:
               app.kubernetes.io/name: ssl-proxy
               app.kubernetes.io/component: telemetry-grafana
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ssl-proxy
+              app.kubernetes.io/component: telemetry-prometheus
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ssl-proxy
+              app.kubernetes.io/component: telemetry-blackbox-exporter
       ports:
         - protocol: TCP
           port: 8080

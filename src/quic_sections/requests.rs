@@ -198,6 +198,7 @@ async fn handle_h3_request(
     }
     let tls = parse_tls_info(&first_up_chunk);
     let category = classify(&hostname, port, tls.alpn.as_deref());
+    state.record_classification(category);
     let context = TunnelAuditContext::new("quic-h3", category, None, profile)
         .with_resolution(resolved_ips.clone(), selected_ip.clone())
         .with_tls(tls.clone());

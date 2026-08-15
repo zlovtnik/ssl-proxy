@@ -1,0 +1,39 @@
+groups:
+  - name: infrastructure-saturation
+    rules:
+      - alert: NodeResourceSaturationWarning
+        expr: node:cpu_utilization:ratio_rate5m > 0.85 or node:memory_utilization:ratio > 0.85
+        for: 10m
+        labels: {severity: warning, service: infrastructure}
+        annotations:
+          summary: "Node resource utilization is above 85%"
+          diagnostic: "CPU or memory utilization has remained above the warning threshold for ten minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#node-saturation"
+      - alert: NodeResourceSaturationCritical
+        expr: node:cpu_utilization:ratio_rate5m > 0.95 or node:memory_utilization:ratio > 0.95
+        for: 5m
+        labels: {severity: critical, service: infrastructure}
+        annotations:
+          summary: "Node resource utilization is above 95%"
+          diagnostic: "CPU or memory utilization has remained above the critical threshold for five minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#node-saturation"
+      - alert: FilesystemFreeSpaceWarning
+        expr: node:filesystem_utilization:ratio > 0.85 or pvc:utilization:ratio > 0.85
+        for: 10m
+        labels: {severity: warning, service: storage}
+        annotations:
+          summary: "Filesystem or PVC has less than 15% free"
+          diagnostic: "Persistent storage utilization has crossed the warning threshold."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#storage-pressure"
+      - alert: FilesystemFreeSpaceCritical
+        expr: node:filesystem_utilization:ratio > 0.92 or pvc:utilization:ratio > 0.92
+        for: 5m
+        labels: {severity: critical, service: storage}
+        annotations:
+          summary: "Filesystem or PVC has less than 8% free"
+          diagnostic: "Persistent storage utilization has crossed the critical threshold."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#storage-pressure"

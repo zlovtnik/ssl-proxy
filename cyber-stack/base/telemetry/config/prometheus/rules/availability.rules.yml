@@ -1,0 +1,72 @@
+groups:
+  - name: target-and-probe-availability
+    rules:
+      - alert: ScrapeTargetDown
+        expr: up == 0
+        for: 2m
+        labels: {severity: critical, service: telemetry}
+        annotations:
+          summary: "Prometheus target {{ $labels.instance }} is down"
+          diagnostic: "The {{ $labels.job }} scrape has failed continuously for two minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#scrape-target-down"
+      - alert: BlackboxProbeFailed
+        expr: probe_success{job="blackbox-service-catalog"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Availability probe failed for {{ $labels.service }}"
+          diagnostic: "Blackbox exporter cannot complete the configured {{ $labels.module }} probe to {{ $labels.instance }}."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#probe-failed"
+      - alert: TelemetryPipelineUnavailable
+        expr: |
+          absent(up{service="prometheus"}) or
+          absent(up{service="alertmanager"}) or
+          absent(up{service="otel-collector"}) or
+          absent(up{service="jaeger"}) or
+          absent(up{service="loki"}) or
+          absent(up{service="alloy"}) or
+          min(up{service=~"prometheus|alertmanager|otel-collector|jaeger|loki|alloy"}) == 0
+        for: 2m
+        labels: {severity: critical, service: telemetry}
+        annotations:
+          summary: "A telemetry pipeline component is unavailable"
+          diagnostic: "At least one metrics, alerting, tracing, or logging target is not being scraped."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tracing-jaeger"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#telemetry-pipeline"
+      - alert: DeclaredTargetAbsent
+        expr: absent(up{service="ssl-proxy"}) or absent(up{service="octopus"}) or absent(up{service="atheros-search"})
+        for: 2m
+        labels: {severity: critical, service: telemetry}
+        annotations:
+          summary: "An expected first-party metrics target is absent"
+          diagnostic: "Service discovery or scrape configuration no longer exposes a required first-party target."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#target-absent"
+      - alert: TraefikEdgeDown
+        expr: up{job="traefik-edge"} == 0
+        for: 2m
+        labels: {severity: critical, service: traefik}
+        annotations:
+          summary: "Default-deny Traefik edge is unavailable"
+          diagnostic: "Prometheus cannot scrape the internal Traefik metrics service."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#traefik"
+      - alert: TraefikEdgeUnexpectedResponse
+        expr: sum(increase(traefik_entrypoint_requests_total{job="traefik-edge",entrypoint=~"web|websecure",code!="404"}[5m])) > 0
+        labels: {severity: critical, service: traefik}
+        annotations:
+          summary: "Default-deny Traefik edge returned a non-404 response"
+          diagnostic: "The route-free edge observed a response code other than its expected 404."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#traefik"
+      - alert: TraefikEdgeRequestFlood
+        expr: sum(rate(traefik_entrypoint_requests_total{job="traefik-edge",entrypoint=~"web|websecure"}[5m])) > 10
+        for: 5m
+        labels: {severity: warning, service: traefik}
+        annotations:
+          summary: "Default-deny Traefik edge exceeds ten requests per second"
+          diagnostic: "Traffic to the default-deny edge is unexpectedly elevated."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#traefik"

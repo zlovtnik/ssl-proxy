@@ -77,7 +77,7 @@
                 b"second"
             );
             server_socket
-                .send_to(&encode_packet(b"second-reply", &obfuscation), shim_peer)
+                .send_to(&encode_packet(b"second-reply", &obfuscation).unwrap(), shim_peer)
                 .await
                 .unwrap();
         });
@@ -134,7 +134,7 @@
                 let mut response = b"reply-".to_vec();
                 response.extend_from_slice(&decoded);
                 server_socket
-                    .send_to(&encode_packet(&response, &server_obfuscation), shim_peer)
+                    .send_to(&encode_packet(&response, &server_obfuscation).unwrap(), shim_peer)
                     .await
                     .unwrap();
             }
@@ -241,7 +241,7 @@
                 b"ipv6"
             );
             server_socket
-                .send_to(&encode_packet(b"ipv6-reply", &obfuscation), shim_peer)
+                .send_to(&encode_packet(b"ipv6-reply", &obfuscation).unwrap(), shim_peer)
                 .await
                 .unwrap();
         });

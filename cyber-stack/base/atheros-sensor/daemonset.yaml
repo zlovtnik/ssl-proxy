@@ -97,6 +97,8 @@ spec:
               value: "off"
             - name: ATH_SENSOR_METRICS_PORT
               value: "9097"
+            - name: ATH_SENSOR_METRICS_TEXTFILE_PATH
+              value: "/var/lib/node_exporter/textfile_collector/atheros_sensor.prom"
             - name: ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED
               value: "true"
             - name: ATH_SENSOR_CLIENT_INVENTORY_FLUSH_SECS
@@ -175,6 +177,8 @@ spec:
               mountPath: /dev/net/tun
             - name: sync-outbox
               mountPath: /sync-outbox
+            - name: node-exporter-textfile
+              mountPath: /var/lib/node_exporter/textfile_collector
       volumes:
         - name: sys-class-net
           hostPath:
@@ -188,22 +192,7 @@ spec:
           hostPath:
             path: /var/lib/ssl-proxy/sync-outbox
             type: DirectoryOrCreate
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: ssl-proxy-atheros-sensor
-  namespace: ssl-proxy
-  labels:
-    app.kubernetes.io/name: ssl-proxy
-    app.kubernetes.io/component: atheros-sensor
-    app.kubernetes.io/managed-by: kustomize
-spec:
-  clusterIP: None
-  selector:
-    app.kubernetes.io/name: ssl-proxy
-    app.kubernetes.io/component: atheros-sensor
-  ports:
-    - name: metrics
-      port: 9097
-      targetPort: metrics
+        - name: node-exporter-textfile
+          hostPath:
+            path: /var/lib/node_exporter/textfile_collector
+            type: DirectoryOrCreate

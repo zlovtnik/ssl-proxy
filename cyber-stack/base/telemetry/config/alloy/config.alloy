@@ -1,0 +1,61 @@
+loki.write "default" {
+  endpoint {
+    url = "http://ssl-proxy-telemetry-loki:3100/loki/api/v1/push"
+    tenant_id = "ssl-proxy"
+    basic_auth {
+      username = sys.env("LOKI_USERNAME")
+      password = sys.env("LOKI_PASSWORD")
+    }
+  }
+}
+
+loki.relabel "journal" {
+  forward_to = []
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label = "unit"
+  }
+}
+
+loki.source.journal "default" {
+  max_age = "12h"
+  labels = { job = "systemd-journal" }
+  relabel_rules = loki.relabel.journal.rules
+  forward_to = [loki.write.default.receiver]
+}
+
+local.file_match "default" {
+  path_targets = [{__path__ = "/var/log/containers/*.log", job = "container-logs"}]
+}
+
+loki.source.file "default" {
+  targets = local.file_match.default.targets
+  forward_to = [loki.relabel.containers.receiver]
+}
+
+loki.relabel "containers" {
+  forward_to = [loki.process.default.receiver]
+  rule {
+    source_labels = ["filename"]
+    regex = "^.*/([^_]+)_([^_]+)_(.+)-[a-f0-9]+\\.log$"
+    replacement = "$1"
+    target_label = "pod_name"
+  }
+  rule {
+    source_labels = ["filename"]
+    regex = "^.*/([^_]+)_([^_]+)_(.+)-[a-f0-9]+\\.log$"
+    replacement = "$2"
+    target_label = "namespace"
+  }
+  rule {
+    source_labels = ["filename"]
+    regex = "^.*/([^_]+)_([^_]+)_(.+)-[a-f0-9]+\\.log$"
+    replacement = "$3"
+    target_label = "container"
+  }
+}
+
+loki.process "default" {
+  stage.cri {}
+  forward_to = [loki.write.default.receiver]
+}

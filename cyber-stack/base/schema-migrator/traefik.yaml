@@ -140,3 +140,6 @@ spec:
     - name: https
       port: 443
       targetPort: websecure
+    - name: ping
+      port: 8082
+      targetPort: ping

@@ -48,10 +48,7 @@ async fn spawn_transparent_listener(
     })
 }
 
-fn build_explicit_proxy_router(
-    state: state::SharedState,
-    cors: CorsLayer,
-) -> Router {
+fn build_explicit_proxy_router(state: state::SharedState, cors: CorsLayer) -> Router {
     Router::new()
         .fallback(any(proxy::handler))
         .layer(TraceLayer::new_for_http())
@@ -59,9 +56,7 @@ fn build_explicit_proxy_router(
         .with_state(state)
 }
 
-fn build_proxy_credentials(
-    config: &config::Config,
-) -> Option<std::sync::Arc<(String, String)>> {
+fn build_proxy_credentials(config: &config::Config) -> Option<std::sync::Arc<(String, String)>> {
     let proxy_creds = config.proxy.credentials.as_ref().map(|creds| {
         info!(username = %creds.username, "explicit proxy authentication enabled");
         std::sync::Arc::new((creds.username.clone(), creds.password.clone()))
@@ -72,25 +67,39 @@ fn build_proxy_credentials(
     proxy_creds
 }
 
-fn build_tls_acceptor(config: &config::Config) -> Option<TlsAcceptor> {
+#[derive(Debug, thiserror::Error)]
+enum TlsLoadError {
+    #[error("failed to read TLS cert: {0}")]
+    ReadCert(#[from] std::io::Error),
+    #[error("invalid cert PEM: {0}")]
+    InvalidCert(String),
+    #[error("failed to parse key PEM: {0}")]
+    ParseKey(String),
+    #[error("no private key found in key file")]
+    NoPrivateKey,
+    #[error("invalid TLS config: {0}")]
+    InvalidConfig(String),
+}
+
+fn build_tls_acceptor(config: &config::Config) -> Result<Option<TlsAcceptor>, TlsLoadError> {
     if let (Some(cert_path), Some(key_path)) = (&config.tls.cert_path, &config.tls.key_path) {
-        let cert_pem = std::fs::read(cert_path).expect("failed to read TLS cert");
-        let key_pem = std::fs::read(key_path).expect("failed to read TLS key");
+        let cert_pem = std::fs::read(cert_path)?;
+        let key_pem = std::fs::read(key_path)?;
         let certs: Vec<_> = rustls_pemfile::certs(&mut &cert_pem[..])
             .collect::<Result<_, _>>()
-            .expect("invalid cert PEM");
+            .map_err(|e| TlsLoadError::InvalidCert(e.to_string()))?;
         let key = rustls_pemfile::private_key(&mut &key_pem[..])
-            .expect("failed to parse key PEM")
-            .expect("no private key found");
+            .map_err(|e| TlsLoadError::ParseKey(e.to_string()))?
+            .ok_or(TlsLoadError::NoPrivateKey)?;
         let tls_config = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(certs, key)
-            .expect("invalid TLS config");
+            .map_err(|e| TlsLoadError::InvalidConfig(e.to_string()))?;
         info!("TLS enabled on explicit proxy listener");
-        Some(TlsAcceptor::from(std::sync::Arc::new(tls_config)))
+        Ok(Some(TlsAcceptor::from(std::sync::Arc::new(tls_config))))
     } else {
         warn!("TLS_CERT_PATH / TLS_KEY_PATH not set — explicit proxy listener is PLAINTEXT");
-        None
+        Ok(None)
     }
 }
 
@@ -142,7 +151,13 @@ async fn run_explicit_proxy_listener(
         });
     info!(%addr, "explicit proxy listener active");
 
-    let tls_acceptor = build_tls_acceptor(config);
+    let tls_acceptor = match build_tls_acceptor(config) {
+        Ok(acceptor) => acceptor,
+        Err(e) => {
+            error!(error = %e, "failed to build TLS config; explicit proxy will be plaintext only");
+            None
+        }
+    };
     spawn_quic_listener_if_enabled(
         config,
         state.clone(),
@@ -325,13 +340,22 @@ async fn drain_shutdown(
 
 /// Application entrypoint that initializes runtime components and runs the proxy service.
 #[tokio::main]
-async fn main() {
+async fn main() -> std::process::ExitCode {
     if let Some(exit_code) = run_boringtun_subcommand() {
         std::process::exit(exit_code);
     }
 
-    install_rustls_provider();
-    let config = config::Config::from_env_or_panic();
+    if let Err(e) = install_rustls_provider() {
+        eprintln!("{e}");
+        return std::process::ExitCode::FAILURE;
+    }
+    let config = match config::Config::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Configuration error: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     if let Err(e) = security::verify_startup_integrity() {
         eprintln!("startup integrity verification failed; refusing to start: {e}");
         std::process::exit(1);
@@ -345,7 +369,13 @@ async fn main() {
         std::process::exit(1);
     }
     let shutdown = CancellationToken::new();
-    let state = build_state(&config);
+    let state = match build_state(&config) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to initialize state: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     spawn_background_tasks(&config, state.clone(), shutdown.clone());
 
     // Semaphore to limit concurrent connections
@@ -354,6 +384,7 @@ async fn main() {
     let cors = build_admin_cors(&config);
 
     spawn_admin_listener(&config, state.clone(), shutdown.clone(), cors.clone()).await;
+    spawn_observability_listener(state.clone(), shutdown.clone()).await;
     log_runtime_ports(&config);
     let _wg_relay = spawn_wireguard_relay(&config, state.clone(), shutdown.clone()).await;
     let tproxy_handle = spawn_transparent_listener(
@@ -380,4 +411,5 @@ async fn main() {
     }
 
     drain_shutdown(tasks, tproxy_handle, otel_provider).await;
+    std::process::ExitCode::SUCCESS
 }

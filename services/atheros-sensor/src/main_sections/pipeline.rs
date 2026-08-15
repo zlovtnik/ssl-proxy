@@ -153,6 +153,11 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         Arc::clone(&stats),
         Arc::clone(&publish_state),
     );
+    metrics::spawn_metrics_textfile_writer(
+        config.metrics_textfile_path.clone(),
+        Arc::clone(&stats),
+        Arc::clone(&publish_state),
+    );
 
     // Shared filter state: tracks the last-applied BPF so the hopper can skip
     // re-applying when the filter hasn't changed.

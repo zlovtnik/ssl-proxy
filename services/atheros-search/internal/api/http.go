@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -570,7 +571,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
-		Handler:           corsMiddleware(mux, allowedOrigins),
+		Handler:           otelhttp.NewHandler(corsMiddleware(mux, allowedOrigins), "atheros-search.http"),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {

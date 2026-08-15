@@ -305,6 +305,7 @@ pub struct AppState {
     pub tunnels_opened: AtomicU64,
     pub blocked_count: AtomicU64,
     pub allowed_count: AtomicU64,
+    pub classification_counts: [AtomicU64; 6],
     pub obfuscated_count: AtomicU64,
     pub host_stats_dropped: AtomicU64,
     pub blocklist: ArcSwap<HashSet<String>>,

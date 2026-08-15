@@ -75,6 +75,34 @@ spec:
               mountPath: /tmp
             - name: redis-config
               mountPath: /etc/redis
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.84.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REDIS_ADDR
+              value: redis://127.0.0.1:6379
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-runtime
+                  key: password
+          ports:
+            - name: metrics
+              containerPort: 9121
+          readinessProbe:
+            httpGet: {path: /metrics, port: metrics}
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: {path: /metrics, port: metrics}
+            initialDelaySeconds: 15
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
       volumes:
         - name: tmp
           emptyDir: {}
@@ -97,3 +125,28 @@ spec:
     - name: redis
       port: 6379
       targetPort: redis
+    - name: metrics
+      port: 9121
+      targetPort: metrics
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-redis-runtime
+  namespace: ssl-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: redis-runtime
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - {protocol: TCP, port: 6379}
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-prometheus}
+      ports:
+        - {protocol: TCP, port: 9121}

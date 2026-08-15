@@ -88,6 +88,11 @@ class RenderedWorkloadPolicyTest(unittest.TestCase):
         self.assertIn("512 MiB headroom", errors[0])
 
     def test_proxy_probe_and_wireguard_policies(self) -> None:
+        self.assertEqual([], check_gitops._check_proxy_probes([], "test"))
+        self.assertEqual(
+            1,
+            len(check_gitops._check_proxy_probes([], "cyber-stack/base/proxy")),
+        )
         bad_probe = documents(
             workload(
                 "ssl-proxy-proxy",
@@ -99,13 +104,13 @@ class RenderedWorkloadPolicyTest(unittest.TestCase):
         good = documents(
             workload(
                 "ssl-proxy-proxy",
-                containers="[{ports: [{hostPort: 443, protocol: UDP, containerPort: 443}], livenessProbe: {exec: {command: [curl]}}, readinessProbe: {exec: {command: [curl]}}}]",
+                containers="[{name: ssl-proxy, env: [{name: ADMIN_BIND_ADDR, value: 127.0.0.1}], ports: [{hostPort: 443, protocol: UDP, containerPort: 443}], livenessProbe: {httpGet: {path: /health, port: observability}}, readinessProbe: {httpGet: {path: /ready, port: observability}}}]",
             )
         )
         self.assertEqual([], check_gitops._check_proxy_probes(good, "test"))
         self.assertEqual([], check_gitops._check_proxy_wireguard_route(good, "test"))
 
-    def test_jaeger_probes_use_admin_health_with_startup_budget(self) -> None:
+    def test_jaeger_probes_use_v2_health_with_startup_budget(self) -> None:
         bad = documents(
             workload(
                 "ssl-proxy-telemetry-jaeger",
@@ -116,12 +121,12 @@ class RenderedWorkloadPolicyTest(unittest.TestCase):
         good = documents(
             workload(
                 "ssl-proxy-telemetry-jaeger",
-                containers="[{name: jaeger, ports: [{name: admin, containerPort: 14269}], startupProbe: {httpGet: {path: /, port: admin}, failureThreshold: 60, periodSeconds: 10}, livenessProbe: {httpGet: {path: /, port: admin}}, readinessProbe: {httpGet: {path: /, port: admin}}}]",
+                containers="[{name: jaeger, ports: [{name: health, containerPort: 13133}], startupProbe: {httpGet: {path: /, port: health}, failureThreshold: 60, periodSeconds: 10}, livenessProbe: {httpGet: {path: /, port: health}}, readinessProbe: {httpGet: {path: /, port: health}}}]",
             )
         )
         self.assertEqual([], check_gitops._check_jaeger_probes(good, "test"))
 
-    def test_jaeger_runtime_contains_badger_preload_fix(self) -> None:
+    def test_jaeger_runtime_is_digest_pinned_v2(self) -> None:
         buggy = documents(
             workload(
                 "ssl-proxy-telemetry-jaeger",
@@ -134,7 +139,7 @@ class RenderedWorkloadPolicyTest(unittest.TestCase):
         fixed = documents(
             workload(
                 "ssl-proxy-telemetry-jaeger",
-                containers=f"[{{name: jaeger, image: '{check_gitops.JAEGER_BADGER_PRELOAD_FIXED_IMAGE}'}}]",
+                containers=f"[{{name: jaeger, image: '{check_gitops.JAEGER_V2_IMAGE}'}}]",
             )
         )
         self.assertEqual(
@@ -145,17 +150,17 @@ class RenderedWorkloadPolicyTest(unittest.TestCase):
         bad = documents(
             workload(
                 "ssl-proxy-telemetry-jaeger",
-                containers="[{name: jaeger, resources: {limits: {cpu: 500m}}, "
+                containers="[{name: jaeger, resources: {requests: {memory: 256Mi}, limits: {memory: 1Gi}}, "
                 "startupProbe: {failureThreshold: 60, periodSeconds: 10}}]",
             )
         )
         self.assertEqual(
-            2, len(check_gitops._check_prod_jaeger_recovery(bad, "prod"))
+            3, len(check_gitops._check_prod_jaeger_recovery(bad, "prod"))
         )
         good = documents(
             workload(
                 "ssl-proxy-telemetry-jaeger",
-                containers="[{name: jaeger, resources: {limits: {cpu: '2'}}, "
+                containers="[{name: jaeger, resources: {requests: {memory: 512Mi}, limits: {memory: 2Gi}}, "
                 "startupProbe: {failureThreshold: 180, periodSeconds: 10}}]",
             )
         )
@@ -432,14 +437,18 @@ class TraefikObservabilityTest(unittest.TestCase):
     def config(self) -> list[dict[str, object]]:
         return documents(
             """kind: ConfigMap
-metadata: {name: ssl-proxy-telemetry-prometheus-config}
+metadata: {name: ssl-proxy-telemetry-prometheus-config-abc123def4}
 data:
   prometheus.yml: |-
-    rule_files: [/etc/prometheus/edge-rules.yml]
+    rule_files: [/etc/prometheus/rules/*.yml]
     scrape_configs:
       - job_name: traefik-edge
         static_configs:
           - targets: [traefik-metrics.kube-system.svc.cluster.local:9100]
+---
+kind: ConfigMap
+metadata: {name: ssl-proxy-telemetry-prometheus-rules-abc123def4}
+data:
   edge-rules.yml: |-
     groups:
       - name: traefik-default-deny-edge
@@ -455,10 +464,120 @@ data:
             [], check_gitops._check_traefik_observability(self.config(), "prod")
         )
         rendered = self.config()
-        rendered[0]["data"]["edge-rules.yml"] = "groups: []\n"
+        rendered[1]["data"]["edge-rules.yml"] = "groups: []\n"
         self.assertEqual(
             3, len(check_gitops._check_traefik_observability(rendered, "prod"))
         )
+
+
+class ObservabilitySecretMountTest(unittest.TestCase):
+    def rendered_contract(self) -> list[dict[str, object]]:
+        catalog = "\n".join(
+            f"- labels: {{service: {service}}}"
+            for service in sorted(check_gitops.OBSERVABILITY_CATALOG_SERVICES)
+        )
+        prefixes = (
+            "ssl-proxy-telemetry-prometheus-catalog-",
+            "ssl-proxy-telemetry-prometheus-config-",
+            "ssl-proxy-telemetry-prometheus-rules-",
+            "ssl-proxy-telemetry-alertmanager-config-",
+            "ssl-proxy-telemetry-grafana-dashboards-",
+            "ssl-proxy-telemetry-otel-collector-config-",
+            "ssl-proxy-telemetry-jaeger-config-",
+            "ssl-proxy-telemetry-blackbox-config-",
+        )
+        rendered: list[dict[str, object]] = [
+            {
+                "kind": "ConfigMap",
+                "metadata": {"name": f"{prefix}abc123def4"},
+                "data": {"service-catalog.yml": catalog} if "catalog" in prefix else {},
+            }
+            for prefix in prefixes
+        ]
+        rendered.extend(
+            {
+                "kind": "NetworkPolicy",
+                "metadata": {"name": name},
+            }
+            for name in (
+                "ssl-proxy-telemetry-prometheus",
+                "ssl-proxy-telemetry-alertmanager",
+                "ssl-proxy-telemetry-blackbox-exporter",
+                "ssl-proxy-telemetry-kube-state-metrics",
+                "ssl-proxy-redis-runtime",
+                "ssl-proxy-minio-ingress",
+            )
+        )
+        return rendered
+
+    def test_requires_structural_secret_sources_and_ignores_unrelated_text(self) -> None:
+        rendered = self.rendered_contract()
+        rendered.append(
+            {
+                "kind": "ConfigMap",
+                "data": {
+                    "unrelated": "alertmanager-webhook-url jenkins-prometheus-password"
+                },
+            }
+        )
+
+        errors = check_gitops._check_observability_contract(rendered, "test")
+        self.assertEqual(
+            2,
+            sum("required observability Secret key" in error for error in errors),
+        )
+
+        rendered.extend(
+            documents(
+                """kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - env:
+            - valueFrom:
+                secretKeyRef:
+                  name: observability-credentials
+                  key: alertmanager-webhook-url
+      volumes:
+        - secret:
+            secretName: observability-credentials
+            items:
+              - key: jenkins-prometheus-password
+"""
+            )
+        )
+        errors = check_gitops._check_observability_contract(rendered, "test")
+        self.assertFalse(
+            any("required observability Secret key" in error for error in errors)
+        )
+
+    def test_accepts_env_from_and_projected_secret_sources(self) -> None:
+        rendered = documents(
+            """kind: CronJob
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - envFrom:
+                - secretRef: {name: observability-credentials}
+          volumes:
+            - projected:
+                sources:
+                  - secret:
+                      name: observability-credentials
+                      items:
+                        - key: alertmanager-webhook-url
+"""
+        )
+        for key in ("alertmanager-webhook-url", "jenkins-prometheus-password"):
+            self.assertTrue(
+                check_gitops._workloads_source_secret_key(
+                    rendered, "observability-credentials", key
+                )
+            )
 
 
 class SchemaExecutorContractTest(unittest.TestCase):

@@ -9,8 +9,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
 spec:
   replicas: 1
-  strategy:
-    type: Recreate
+  strategy: {type: Recreate}
   selector:
     matchLabels:
       app.kubernetes.io/name: ssl-proxy
@@ -28,90 +27,79 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: jaeger
-          # 1.76.0 includes jaegertracing/jaeger#7551, which deduplicates the
-          # Badger service cache preload. Older releases can spend longer than
-          # the startup budget rescanning the same service after a restart.
-          image: jaegertracing/all-in-one:1.76.0@sha256:ab6f1a1f0fb49ea08bcd19f6b84f6081d0d44b364b6de148e1798eb5816bacac
+          image: jaegertracing/jaeger:2.20.0@sha256:46a886260e04002d8f45e213fc39063fa11a50446048fdaa64786fc0840cb9f8
           imagePullPolicy: IfNotPresent
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 10001
-            runAsGroup: 10001
+          args: ["--config", "/etc/jaeger/config.yaml"]
           ports:
-            - containerPort: 16686
-              name: ui
-            - containerPort: 4317
-              name: otlp-grpc
-            - containerPort: 4318
-              name: otlp-http
-            - containerPort: 14268
-              name: http-collector
-            - containerPort: 6831
-              name: thrift-compact
-              protocol: UDP
-            - containerPort: 14269
-              name: admin
+            - {containerPort: 16686, name: ui}
+            - {containerPort: 4317, name: otlp-grpc}
+            - {containerPort: 4318, name: otlp-http}
+            - {containerPort: 8888, name: metrics}
+            - {containerPort: 13133, name: health}
           startupProbe:
-            httpGet:
-              path: /
-              port: admin
+            httpGet: {path: /, port: health}
             failureThreshold: 60
             periodSeconds: 10
             timeoutSeconds: 5
           livenessProbe:
-            httpGet:
-              path: /
-              port: admin
+            httpGet: {path: /, port: health}
             periodSeconds: 15
             timeoutSeconds: 10
           readinessProbe:
-            httpGet:
-              path: /
-              port: admin
+            httpGet: {path: /, port: health}
             periodSeconds: 5
             timeoutSeconds: 5
           resources:
-            requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: 500m
-              memory: 1Gi
-          env:
-            - name: SPAN_STORAGE_TYPE
-              value: "badger"
-            - name: BADGER_EPHEMERAL
-              value: "false"
-            - name: BADGER_DIRECTORY_KEY
-              value: "/badger/key"
-            - name: BADGER_DIRECTORY_VALUE
-              value: "/badger/value"
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
           volumeMounts:
-            - name: data
-              mountPath: /badger
+            - {name: config, mountPath: /etc/jaeger, readOnly: true}
+            - {name: data, mountPath: /badger}
       volumes:
+        - name: config
+          configMap: {name: ssl-proxy-telemetry-jaeger-config}
         - name: data
-          persistentVolumeClaim:
-            claimName: ssl-proxy-telemetry-jaeger
+          persistentVolumeClaim: {claimName: ssl-proxy-telemetry-jaeger-v2-data}
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ssl-proxy-telemetry-jaeger-v2-data
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-jaeger
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 10Gi}
+---
+# Archived Jaeger v1 Badger data. It is intentionally unmounted and protected
+# so historical trace files remain recoverable during the v2 migration.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: ssl-proxy-telemetry-jaeger
   namespace: ssl-proxy
   annotations:
-    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-options: Prune=false
   labels:
     app.kubernetes.io/name: ssl-proxy
-    app.kubernetes.io/component: telemetry-jaeger
+    app.kubernetes.io/component: telemetry-jaeger-archive
     app.kubernetes.io/managed-by: kustomize
+    ssl-proxy.io/storage-status: archived
 spec:
-  accessModes: ["ReadWriteOnce"]
+  accessModes: [ReadWriteOnce]
   resources:
-    requests:
-      storage: 10Gi
+    requests: {storage: 10Gi}
 ---
 apiVersion: v1
 kind: Service
@@ -121,46 +109,43 @@ metadata:
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: telemetry-jaeger
-    app.kubernetes.io/managed-by: kustomize
 spec:
-  type: ClusterIP
   selector:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: telemetry-jaeger
   ports:
-    - name: ui
-      port: 16686
-      targetPort: ui
-      protocol: TCP
-    - name: otlp-grpc
-      port: 4317
-      targetPort: otlp-grpc
-      protocol: TCP
-    - name: otlp-http
-      port: 4318
-      targetPort: otlp-http
-      protocol: TCP
+    - {name: ui, port: 16686, targetPort: ui}
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}
+    - {name: otlp-http, port: 4318, targetPort: otlp-http}
+    - {name: metrics, port: 8888, targetPort: metrics}
+    - {name: health, port: 13133, targetPort: health}
 ---
-apiVersion: v1
-kind: Service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
-  name: ssl-proxy-telemetry-jaeger-collector
+  name: ssl-proxy-telemetry-jaeger
   namespace: ssl-proxy
-  labels:
-    app.kubernetes.io/name: ssl-proxy
-    app.kubernetes.io/component: telemetry-jaeger
-    app.kubernetes.io/managed-by: kustomize
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: ssl-proxy
-    app.kubernetes.io/component: telemetry-jaeger
-  ports:
-    - name: http-collector
-      port: 14268
-      targetPort: http-collector
-      protocol: TCP
-    - name: thrift-compact
-      port: 6831
-      targetPort: thrift-compact
-      protocol: UDP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-jaeger
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-otel-collector}
+      ports:
+        - {protocol: TCP, port: 4317}
+        - {protocol: TCP, port: 4318}
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-prometheus}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-grafana}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-blackbox-exporter}
+      ports:
+        - {protocol: TCP, port: 16686}
+        - {protocol: TCP, port: 8888}
+        - {protocol: TCP, port: 13133}

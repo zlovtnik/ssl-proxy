@@ -11,9 +11,9 @@ spec:
           resources:
             requests:
               cpu: 500m
-              memory: 256Mi
+              memory: 512Mi
             limits:
               cpu: "2"
-              memory: 1Gi
+              memory: 2Gi
           startupProbe:
             failureThreshold: 180
