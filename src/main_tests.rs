@@ -45,6 +45,34 @@ fn configured_unreadable_tls_material_is_rejected() {
 }
 
 #[test]
+fn cert_only_tls_config_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = ssl_proxy::config::Config::default();
+    config.proxy.explicit_enabled = true;
+    config.tls.cert_path = Some(directory.path().join("cert.crt").display().to_string());
+    config.tls.key_path = None;
+
+    assert!(matches!(
+        build_tls_acceptor(&config),
+        Err(TlsLoadError::InvalidConfig(msg)) if msg.contains("must both be set")
+    ));
+}
+
+#[test]
+fn key_only_tls_config_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = ssl_proxy::config::Config::default();
+    config.proxy.explicit_enabled = true;
+    config.tls.cert_path = None;
+    config.tls.key_path = Some(directory.path().join("key.key").display().to_string());
+
+    assert!(matches!(
+        build_tls_acceptor(&config),
+        Err(TlsLoadError::InvalidConfig(msg)) if msg.contains("must both be set")
+    ));
+}
+
+#[test]
 fn admin_auth_rate_limiter_evicts_expired_failures() {
     let limiter = AdminAuthRateLimiter::default();
     let now = Instant::now();

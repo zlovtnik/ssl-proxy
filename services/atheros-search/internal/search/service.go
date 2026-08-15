@@ -71,6 +71,7 @@ func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (resp
 	mode := normalizeMode(req.Mode)
 	if wildcardAll {
 		mode = searchv1.SearchMode_SEARCH_MODE_SPARSE
+		metricsMode = modeName(mode)
 	}
 	kinds, err := requestKinds(req.Kind)
 	if err != nil {

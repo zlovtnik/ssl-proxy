@@ -82,6 +82,13 @@ enum TlsLoadError {
 }
 
 fn build_tls_acceptor(config: &config::Config) -> Result<Option<TlsAcceptor>, TlsLoadError> {
+    let has_cert = config.tls.cert_path.is_some();
+    let has_key = config.tls.key_path.is_some();
+    if has_cert != has_key {
+        return Err(TlsLoadError::InvalidConfig(
+            "TLS_CERT_PATH and TLS_KEY_PATH must both be set or both unset".into(),
+        ));
+    }
     if let (Some(cert_path), Some(key_path)) = (&config.tls.cert_path, &config.tls.key_path) {
         let cert_pem = std::fs::read(cert_path)?;
         let key_pem = std::fs::read(key_path)?;
