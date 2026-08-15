@@ -96,8 +96,6 @@ spec:
           secret:
             secretName: observability-credentials
             items:
-              - key: minio-prometheus-bearer-token
-                path: minio-prometheus-bearer-token
               - key: jenkins-prometheus-password
                 path: jenkins-prometheus-password
               - key: loki-username

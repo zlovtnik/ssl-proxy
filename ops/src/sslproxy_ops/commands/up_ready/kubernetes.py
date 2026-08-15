@@ -304,7 +304,15 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
     apply_secret_values(
         ctx,
         "observability-credentials",
-        [("grafana-admin-password", secrets / "grafana_admin_password.key")],
+        [
+            ("grafana-admin-password", secrets / "grafana_admin_password.key"),
+            ("loki-username", secrets / "observability" / "loki-username"),
+            ("loki-password", secrets / "observability" / "loki-password"),
+            ("loki-htpasswd", secrets / "observability" / "loki-htpasswd"),
+            ("alertmanager-webhook-url", secrets / "observability" / "alertmanager-webhook-url"),
+            ("jenkins-prometheus-password", secrets / "observability" / "jenkins-prometheus-password"),
+            ("minio-prometheus-bearer-token", secrets / "observability" / "minio-prometheus-bearer-token"),
+        ],
     )
     apply_secret_values(
         ctx,

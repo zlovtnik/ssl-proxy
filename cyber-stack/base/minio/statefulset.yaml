@@ -52,7 +52,7 @@ spec:
                   name: minio-credentials
                   key: secret-key
             - name: MINIO_PROMETHEUS_AUTH_TYPE
-              value: jwt
+              value: public
           ports:
             - name: api
               containerPort: 9000
