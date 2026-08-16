@@ -21,7 +21,7 @@ defmodule TrafficAudit.AuditSupervisor do
   def run(commit_sha, opts \\ []) when is_binary(commit_sha) do
     transports = Keyword.get(opts, :transports, TransportSelector.transports())
 
-    with {:ok, winner} <- TransportSelector.select_best(transports, opts) do
+    with {:ok, winner} <- TransportSelector.select_best(transports, Keyword.put_new(opts, :commit_sha, commit_sha)) do
       case Persistence.save(commit_sha, winner, opts) do
         {:error, reason} -> {:error, reason}
         _ -> {:ok, winner}
