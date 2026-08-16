@@ -19,9 +19,9 @@ defmodule TrafficAudit.Io.Ja3 do
 
   alias TrafficAudit.Io.Shell
 
-  @spec extract(binary()) :: {:ok, [String.t()]} | {:error, term()}
-  def extract(pcap) do
-    case Shell.run_with_input("tshark", ["-z", "ja3,tree"], pcap, "-r") do
+  @spec extract(binary(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
+  def extract(pcap, opts \\ []) do
+    case Shell.run_with_input("tshark", ["-z", "ja3,tree"], pcap, "-r", opts) do
       {:ok, out} ->
         {:ok, parse(out)}
 

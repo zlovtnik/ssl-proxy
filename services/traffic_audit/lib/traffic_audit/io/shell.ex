@@ -17,10 +17,12 @@ defmodule TrafficAudit.Io.Shell do
   `input_flag`, and returns the merged output. Exit status 0 is success;
   anything else is `{:error, ...}`.
   """
-  @spec run_with_input(String.t(), [String.t()], iodata(), String.t()) ::
+  @spec run_with_input(String.t(), [String.t()], iodata(), String.t(), keyword()) ::
           {:ok, binary()} | {:error, term()}
-  def run_with_input(bin, args, input, input_flag) do
-    case System.find_executable(bin) do
+  def run_with_input(bin, args, input, input_flag, opts \\ []) do
+    find_executable = Keyword.get(opts, :find_executable_fn, &System.find_executable/1)
+
+    case find_executable.(bin) do
       nil ->
         {:error, {:command_not_found, bin}}
 

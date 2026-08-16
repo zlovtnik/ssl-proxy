@@ -25,7 +25,7 @@ defmodule TrafficAudit.Io.Ja3Test do
 end
 
 defmodule TrafficAudit.Io.Ja3ExtractTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import ExUnit.CaptureLog
 
@@ -36,12 +36,6 @@ defmodule TrafficAudit.Io.Ja3ExtractTest do
     File.mkdir_p!(dir)
 
     on_exit(fn -> File.rm_rf!(dir) end)
-
-    old_path = System.get_env("PATH")
-
-    on_exit(fn ->
-      if old_path, do: System.put_env("PATH", old_path), else: System.delete_env("PATH")
-    end)
 
     %{dir: dir}
   end
@@ -60,8 +54,8 @@ defmodule TrafficAudit.Io.Ja3ExtractTest do
           echo 'Client "JA3 Hash": 0f9a5d9a2f4d8e1c3b7a6e5d4c3b2a1f'
         """)
 
-      System.put_env("PATH", Path.dirname(path))
-      assert {:ok, ["0f9a5d9a2f4d8e1c3b7a6e5d4c3b2a1f"]} = Ja3.extract("")
+      assert {:ok, ["0f9a5d9a2f4d8e1c3b7a6e5d4c3b2a1f"]} =
+               Ja3.extract("", find_executable_fn: fn _ -> path end)
     end
 
     test "degrades to {:ok, []} when tshark reports ja3,tree unsupported", %{dir: dir} do
@@ -72,22 +66,15 @@ defmodule TrafficAudit.Io.Ja3ExtractTest do
           exit 1
         """)
 
-      System.put_env("PATH", Path.dirname(path))
-
       assert capture_log(fn ->
-               assert {:ok, []} = Ja3.extract("")
+               assert {:ok, []} =
+                        Ja3.extract("", find_executable_fn: fn _ -> path end)
              end) =~ "JA3"
     end
 
     test "degrades to {:ok, []} when tshark is missing" do
-      empty = Path.join(System.tmp_dir!(), "ja3_empty_#{System.unique_integer([:positive])}")
-      File.mkdir_p!(empty)
-      on_exit(fn -> File.rm_rf!(empty) end)
-
-      System.put_env("PATH", empty)
-
       assert capture_log(fn ->
-               assert {:ok, []} = Ja3.extract("")
+               assert {:ok, []} = Ja3.extract("", find_executable_fn: fn _ -> nil end)
              end) =~ "JA3"
     end
 
@@ -98,9 +85,9 @@ defmodule TrafficAudit.Io.Ja3ExtractTest do
           exit 1
         """)
 
-      System.put_env("PATH", Path.dirname(path))
+      assert {:error, {:command_failed, "tshark", 1, err}} =
+               Ja3.extract("", find_executable_fn: fn _ -> path end)
 
-      assert {:error, {:command_failed, "tshark", 1, err}} = Ja3.extract("")
       assert err =~ "some other failure"
     end
   end
