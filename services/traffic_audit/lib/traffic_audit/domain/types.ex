@@ -37,6 +37,10 @@ defmodule TrafficAudit.Domain.Types do
     `l1`-`l4` are the per-layer fingerprints; `composite` is the weighted sum;
     `passed?` is the hard-threshold gate on L3 (worst-of size/timing divergence).
     """
+    @derive {
+      Jason.Encoder,
+      only: [:transport, :l1, :l3_size_divergence, :l3_timing_divergence, :l4_ja3_match, :composite, :passed?, :commit_sha]
+    }
     @enforce_keys [:transport, :l3_size_divergence, :l3_timing_divergence, :composite, :passed?]
     defstruct [
       :transport,
