@@ -1,18 +1,21 @@
 defmodule TrafficAudit.Io.Dpi do
   @moduledoc """
-  Runs ndpiReader against a pcap and returns the classification output.
+  Runs ndpiReader against a pcap and returns a structured classification
+  summary.
 
-  The result map carries the raw `ndpiReader` output. Deriving a single
-  `:confidence` float from it is a follow-up; the composite scorer treats a
-  missing `:confidence` as 0.0 (see `TrafficAudit.Domain.FlowStats.composite/3`).
+  ndpiReader's banner and statistics block (merged stdout/stderr) are parsed by
+  `TrafficAudit.Domain.DpiSummary` into the version, packet and flow counts,
+  the per-protocol breakdown, and the classification confidence used as the L2
+  score. The raw text is not carried into the result: it is large, volatile,
+  and unneeded by consumers.
   """
 
-  alias TrafficAudit.Io.Shell
+  alias TrafficAudit.{Domain, Io}
 
-  @spec scan(binary()) :: {:ok, map()} | {:error, term()}
-  def scan(pcap) do
-    with {:ok, out} <- Shell.run_with_input("ndpiReader", [], pcap, "-i") do
-      {:ok, %{raw: out}}
+  @spec scan(binary(), keyword()) :: {:ok, map()} | {:error, term()}
+  def scan(pcap, opts \\ []) do
+    with {:ok, out} <- Io.Shell.run_with_input("ndpiReader", [], pcap, "-i", opts) do
+      {:ok, Domain.DpiSummary.parse(out)}
     end
   end
 end

@@ -78,4 +78,12 @@ against it — obfs4 and wireguard move that weight share onto L2/L3. The
 runtime image ships tshark; dev machines without it degrade to "no
 fingerprints" (L4 weight 0.0).
 
+DPI: `Io.Dpi` runs `ndpiReader -i FILE` and `Domain.DpiSummary` parses the
+printed statistics into the version, packet/flow counts, the per-protocol
+breakdown, and a classification confidence — the share of flows nDPI did not
+leave Unknown or Speculative — that becomes the L2 score. The Debian build of
+ndpiReader 4.2 has no JSON flow dump (`-J` prints help and exits), so parsing
+is anchored on the printed headers; the raw banner is not carried into
+results.
+
 This project is part of the `ssl-proxy` monorepo.
