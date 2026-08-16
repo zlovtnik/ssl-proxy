@@ -68,10 +68,14 @@ strftime pattern in the `-w` filename, so the duration is enforced by
 - `priv/fixtures/` — deterministic pcaps for unprivileged CI.
 - `scripts/generate_fixtures.exs` — regenerates those fixtures.
 
-JA3: the runtime image omits tshark (Debian bookworm's Wireshark 4.x removed
-`ja3,tree`), so `Io.Ja3` degrades to "no fingerprints" there and on dev
-machines without tshark. The L4 weight is currently 0.0, so this cannot
-affect transport selection; wire the browser-reference diff and a real weight
-in the follow-up.
+JA3: `Io.Ja3` runs `tshark -T fields` raw ClientHello extraction (Wireshark
+4.x removed the old `-z ja3,tree` statistics argument) and reduces each
+ClientHello line to its JA3 MD5 in `Domain.Ja3`, normalizing Wireshark's hex
+version token and stripping RFC 8701 GREASE so hashes match canonical JA3
+databases. The L4 score is a match against a static known-browser reference
+(`Domain.Ja3.match_score/2`, 0.0/1.0 policy) and only `tls_fronted` is scored
+against it — obfs4 and wireguard move that weight share onto L2/L3. The
+runtime image ships tshark; dev machines without it degrade to "no
+fingerprints" (L4 weight 0.0).
 
 This project is part of the `ssl-proxy` monorepo.

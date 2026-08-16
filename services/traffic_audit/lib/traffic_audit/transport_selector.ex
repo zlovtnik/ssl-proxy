@@ -14,6 +14,16 @@ defmodule TrafficAudit.TransportSelector do
 
   @threshold 0.20
 
+  # Per-transport weight rows, each summing to 1.0. Only `tls_fronted`
+  # produces a TLS ClientHello, so only it is scored against L4; obfs4 and
+  # wireguard move that share onto L2/L3 instead of scoring a layer they
+  # cannot produce.
+  @weights_by_transport %{
+    tls_fronted: [l1: 0.15, l2: 0.20, l3_size: 0.25, l3_timing: 0.25, l4: 0.15],
+    obfs4: [l1: 0.15, l2: 0.25, l3_size: 0.30, l3_timing: 0.30, l4: 0.0],
+    wireguard: [l1: 0.15, l2: 0.25, l3_size: 0.30, l3_timing: 0.30, l4: 0.0]
+  }
+
   @doc """
   Candidate transports the gate audits each commit.
   """
@@ -26,7 +36,10 @@ defmodule TrafficAudit.TransportSelector do
   """
   @spec select_best([atom()], keyword()) :: {:ok, map()} | {:error, term()}
   def select_best(transports, opts \\ []) do
-    results = Enum.map(transports, fn t -> {t, Pipeline.score_transport(t, opts)} end)
+    results =
+      Enum.map(transports, fn t ->
+        {t, Pipeline.score_transport(t, put_transport_weights(t, opts))}
+      end)
 
     with {:ok, oks} <- all_succeeded(results) do
       pick_winner(oks)
@@ -52,5 +65,12 @@ defmodule TrafficAudit.TransportSelector do
   defp passes_gate?(score) do
     flow = score.l3_flow
     max(flow.l3_size_divergence, flow.l3_timing_divergence) <= @threshold
+  end
+
+  defp put_transport_weights(transport, opts) do
+    case Map.fetch(@weights_by_transport, transport) do
+      {:ok, weights} -> Keyword.put(opts, :weights, weights)
+      :error -> opts
+    end
   end
 end

@@ -1,6 +1,8 @@
 defmodule TrafficAudit.PipelineTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias TrafficAudit.Domain.{FlowStats, PcapFixture, Types}
   alias TrafficAudit.Pipeline
 
@@ -21,7 +23,43 @@ defmodule TrafficAudit.PipelineTest do
       assert result.l4_ja3 == ["ja3:abc"]
 
       assert result.composite_score ==
-               FlowStats.composite(result.l2_dpi, result.l3_flow, result.l4_ja3)
+               FlowStats.composite(
+                 result.l2_dpi,
+                 result.l3_flow,
+                 result.l3_flow.l4_ja3_match
+               )
+    end
+
+    test "scores captured hashes against the browser reference for L4" do
+      opts = [
+        capture_fn: fn _t, _o -> {:ok, @pcap} end,
+        dpi_fn: fn _ -> {:ok, %{confidence: 0.9}} end,
+        ja3_fn: fn _ -> {:ok, ["cd08e31494f9531f560d64c695473da9"]} end
+      ]
+
+      assert {:ok, result} = Pipeline.score_transport(:obfs4, opts)
+      assert result.l3_flow.l4_ja3_match == 1.0
+    end
+
+    test "skips the tshark subprocess for non-TLS transports on the production path" do
+      opts = [
+        capture_fn: fn _t, _o -> {:ok, @pcap} end,
+        dpi_fn: fn _ -> {:ok, %{confidence: 0.9}} end
+      ]
+
+      log =
+        capture_log(fn ->
+          assert {:ok, result} = Pipeline.score_transport(:obfs4, opts)
+          assert result.l4_ja3 == []
+          assert result.l3_flow.l4_ja3_match == 0.0
+        end)
+
+      refute log =~ "tshark"
+
+      assert {:ok, %{l4_ja3: [], l3_flow: %{l4_ja3_match: match}}} =
+               Pipeline.score_transport(:wireguard, opts)
+
+      assert match == 0.0
     end
 
     test "short-circuits on a capture failure before dpi runs" do

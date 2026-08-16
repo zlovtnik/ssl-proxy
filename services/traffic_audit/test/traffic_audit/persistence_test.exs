@@ -29,6 +29,35 @@ defmodule TrafficAudit.PersistenceTest do
       assert log =~ "deadbeef"
       assert log =~ "obfs4"
     end
+
+    test "records a composite that includes the L4 ja3-match term" do
+      weights = [l1: 0.15, l2: 0.20, l3_size: 0.25, l3_timing: 0.25, l4: 0.15]
+      packets = [%Types.Packet{size: 1408, direction: :in, ts: 0.0}]
+
+      with_l4 =
+        FlowStats.score_from_packets(packets, :tls_fronted, l4_ja3_match: 0.8, weights: weights)
+
+      without_l4 =
+        FlowStats.score_from_packets(packets, :tls_fronted, l4_ja3_match: 0.0, weights: weights)
+
+      assert_in_delta with_l4.composite - without_l4.composite, 0.8 * 0.15, 1.0e-12
+
+      log =
+        capture_log(fn ->
+          assert {:ok, :recorded} =
+                   Persistence.save(
+                     "deadbeef1234",
+                     %{
+                       transport: :tls_fronted,
+                       l3_flow: with_l4,
+                       composite_score: with_l4.composite
+                     }
+                   )
+        end)
+
+      assert log =~ "tls_fronted"
+      assert log =~ Float.to_string(with_l4.composite)
+    end
   end
 
   describe "save/3 in repo mode" do

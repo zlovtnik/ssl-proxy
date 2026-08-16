@@ -20,10 +20,11 @@ RUN mix local.hex --force && mix local.rebar --force \
     && mix escript.build
 
 # Runtime image — only the built escript + capture/classification tooling.
-# tshark is intentionally omitted: Debian bookworm's Wireshark 4.x removed
-# `ja3,tree`, so `Io.Ja3` degrades to no fingerprints (L4 weight is 0.0).
-# Privileged (NET_RAW/NET_ADMIN) is granted by the CI runner at the container
-# cap level, never baked into the image.
+# tshark is the JA3 extractor: Wireshark 4.x dropped the `-z ja3,tree`
+# statistics argument, so we run `-T fields` raw extraction instead and hash
+# the ClientHello fields ourselves (TrafficAudit.Domain.Ja3). Privileged
+# (NET_RAW/NET_ADMIN) is granted by the CI runner at the container cap level,
+# never baked into the image.
 FROM elixir:1.17-slim AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -32,6 +33,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         tcpdump \
+        tshark \
         libndpi-bin \
     && rm -rf /var/lib/apt/lists/*
 

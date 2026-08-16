@@ -14,16 +14,20 @@ defmodule TrafficAudit.Pipeline do
 
   @scoring_opts [:reference, :threshold, :weights, :commit_sha, :l1, :l2, :l4_ja3_match]
 
+  # Transports whose traffic has no TLS ClientHello on the wire; skipping the
+  # tshark subprocess for them saves a spawn per non-TLS transport per run.
+  @non_tls_transports [:obfs4, :wireguard]
+
   @spec score_transport(atom(), keyword()) :: {:ok, map()} | {:error, term()}
   def score_transport(transport, opts \\ []) do
     with {:ok, pcap} <- capture(transport, opts),
          {:ok, dpi} <- dpi(pcap, opts),
-         {:ok, ja3} <- ja3(pcap, opts) do
+         {:ok, ja3} <- ja3(transport, pcap, opts) do
       scoring_opts =
         opts
         |> Keyword.take(@scoring_opts)
         |> Keyword.put_new(:l2, dpi)
-        |> Keyword.put_new(:l4_ja3_match, ja3)
+        |> Keyword.put_new(:l4_ja3_match, Domain.Ja3.match_score(ja3))
 
       flow = Domain.FlowStats.score(pcap, transport, scoring_opts)
 
@@ -52,10 +56,17 @@ defmodule TrafficAudit.Pipeline do
     end
   end
 
-  defp ja3(pcap, opts) do
+  defp ja3(transport, pcap, opts) do
     case Keyword.get(opts, :ja3_fn) do
-      nil -> Io.Ja3.extract(pcap)
-      fun -> fun.(pcap)
+      nil ->
+        if transport in @non_tls_transports do
+          {:ok, []}
+        else
+          Io.Ja3.extract(pcap)
+        end
+
+      fun ->
+        fun.(pcap)
     end
   end
 end

@@ -91,5 +91,37 @@ defmodule TrafficAudit.TransportSelectorTest do
       opts = run_opts(PcapFixture.degenerate_sizes(), PcapFixture.degenerate_gaps())
       assert {:error, :no_passing_transport} = TransportSelector.select_best([:obfs4], opts)
     end
+
+    test "applies per-transport weights: only tls_fronted is scored against L4" do
+      opts =
+        per_transport_opts(%{
+          obfs4: {PcapFixture.reference_like_sizes(), PcapFixture.reference_like_gaps()},
+          wireguard: {PcapFixture.reference_like_sizes(), PcapFixture.reference_like_gaps()},
+          tls_fronted: {PcapFixture.reference_like_sizes(), PcapFixture.reference_like_gaps()}
+        })
+
+      for transport <- [:obfs4, :wireguard] do
+        assert {:ok, %{l3_flow: %{weights: weights}}} =
+                 TransportSelector.select_best([transport], opts)
+
+        assert Keyword.fetch!(weights, :l4) == 0.0
+        assert_in_delta Enum.sum(Keyword.values(weights)), 1.0, 1.0e-12
+      end
+
+      assert {:ok, %{l3_flow: %{weights: weights}}} =
+               TransportSelector.select_best([:tls_fronted], opts)
+
+      refute Keyword.fetch!(weights, :l4) == 0.0
+      assert_in_delta Enum.sum(Keyword.values(weights)), 1.0, 1.0e-12
+    end
+
+    test "replaces passed weights with the per-transport row" do
+      opts = run_opts(PcapFixture.reference_like_sizes(), PcapFixture.reference_like_gaps())
+
+      assert {:ok, %{l3_flow: %{weights: weights}}} =
+               TransportSelector.select_best([:obfs4], Keyword.put(opts, :weights, l4: 0.5))
+
+      assert Keyword.fetch!(weights, :l4) == 0.0
+    end
   end
 end

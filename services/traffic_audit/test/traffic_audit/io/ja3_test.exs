@@ -4,22 +4,22 @@ defmodule TrafficAudit.Io.Ja3Test do
   alias TrafficAudit.Io.Ja3
 
   describe "parse/1" do
-    test "extracts unique 32-hex JA3 hashes from tshark ja3,tree output" do
+    test "maps each -T fields ClientHello line to its unique 32-hex JA3 hash" do
       out = """
-      Client "JA3 Fingerprint": 771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53
-      Client "JA3 Hash": 0f9a5d9a2f4d8e1c3b7a6e5d4c3b2a1f
-      Server "JA3 Fingerprint": 771,4865-4866-4867-49195-49199-49196-49200-52393-52392
-      Server "JA3 Hash": 6e5d4c3b2a1f0f9a5d9a2f4d8e1c3b7a
+      771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513-21,29-23-24,0
+      769,47-53-5-10-49161-49162-49171-49172-50-56-19-4,0-10-11,23-24-25,0
+      771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513-21,29-23-24,0
       """
 
       assert Ja3.parse(out) == [
-               "0f9a5d9a2f4d8e1c3b7a6e5d4c3b2a1f",
-               "6e5d4c3b2a1f0f9a5d9a2f4d8e1c3b7a"
+               "cd08e31494f9531f560d64c695473da9",
+               "ada70206e40642a3e4461f35503241d5"
              ]
     end
 
-    test "returns [] when no hashes are present" do
+    test "returns [] when no ClientHello lines are present" do
       assert Ja3.parse("no fingerprints here") == []
+      assert Ja3.parse("") == []
     end
   end
 end
@@ -47,29 +47,24 @@ defmodule TrafficAudit.Io.Ja3ExtractTest do
     path
   end
 
-  describe "extract/1" do
-    test "returns parsed hashes when tshark supports ja3,tree", %{dir: dir} do
+  describe "extract/2" do
+    test "returns hashes parsed from -T fields output", %{dir: dir} do
       path =
         fake_tshark(dir, ~S"""
-          echo 'Client "JA3 Hash": 0f9a5d9a2f4d8e1c3b7a6e5d4c3b2a1f'
+          echo '771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513-21,29-23-24,0'
         """)
 
-      assert {:ok, ["0f9a5d9a2f4d8e1c3b7a6e5d4c3b2a1f"]} =
+      assert {:ok, ["cd08e31494f9531f560d64c695473da9"]} =
                Ja3.extract("", find_executable_fn: fn _ -> path end)
     end
 
-    test "degrades to {:ok, []} when tshark reports ja3,tree unsupported", %{dir: dir} do
+    test "skips lines that do not parse into a hash", %{dir: dir} do
       path =
         fake_tshark(dir, ~S"""
-          echo 'tshark: Invalid -z argument "ja3,tree"; it must be one of:' >&2
-          echo '     afp,srt' >&2
-          exit 1
+          echo 'not,a,valid,line'
         """)
 
-      assert capture_log(fn ->
-               assert {:ok, []} =
-                        Ja3.extract("", find_executable_fn: fn _ -> path end)
-             end) =~ "JA3"
+      assert {:ok, []} = Ja3.extract("", find_executable_fn: fn _ -> path end)
     end
 
     test "degrades to {:ok, []} when tshark is missing" do
