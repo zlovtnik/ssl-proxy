@@ -17,4 +17,4 @@ data:
     [security]
     ssl-cert = "/etc/tidb-tls-server/tls.crt"
     ssl-key = "/etc/tidb-tls-server/tls.key"
-    require_secure_transport = OFF
+    require_secure_transport = ON
