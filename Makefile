@@ -28,8 +28,10 @@ PUBLISH_METADATA_FILE ?=
 ATHEROS_SEARCH_UI_API_BASE ?=
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
 
-SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui tidb-runtime-schema
-DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator,$(SERVICES))
+SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui tidb-runtime-schema traffic-audit
+# traffic_audit is a CI-only escript gate (no long-lived K8s workload), so like
+# wg-key-rotator it is excluded from image digest promotion.
+DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator traffic-audit,$(SERVICES))
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
@@ -216,6 +218,7 @@ $(eval $(call service_rules,atheros-search-ui,apps/integration-console/atheros-s
 $(eval $(call service_rules,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,apps/schema-migrator))
 $(eval $(call service_rules,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,apps/schema-migrator))
 $(eval $(call service_rules,tidb-runtime-schema,k8s/tidb-schema-executor/Dockerfile,,tidb-runtime-schema,.))
+$(eval $(call service_rules,traffic-audit,services/traffic_audit/Dockerfile,,traffic-audit,services/traffic_audit))
 
 ifneq ($(BUILDX_READY),1)
 $(BUILD_TARGETS) $(PUBLISH_TARGETS): buildx-ready
