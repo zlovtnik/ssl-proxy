@@ -102,6 +102,8 @@ spec:
                 path: loki-username
               - key: loki-password
                 path: loki-password
+              - key: minio-prometheus-bearer-token
+                path: minio-prometheus-bearer-token
         - name: data
           persistentVolumeClaim:
             claimName: ssl-proxy-telemetry-prometheus
