@@ -43,6 +43,7 @@ spec:
             httpGet:
               path: /
               port: health
+            tcpSocket: null
             failureThreshold: 60
             periodSeconds: 10
             timeoutSeconds: 5
@@ -50,12 +51,14 @@ spec:
             httpGet:
               path: /
               port: health
+            tcpSocket: null
             periodSeconds: 15
             timeoutSeconds: 10
           readinessProbe:
             httpGet:
               path: /
               port: health
+            tcpSocket: null
             periodSeconds: 5
             timeoutSeconds: 5
           resources:
