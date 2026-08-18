@@ -10,16 +10,16 @@ resources:
 - ../../../base/atheros-sensor/daemonset.yaml
 - ../../../base/atheros-search
 images:
-- digest: sha256:0de2212e682b3500f72e9fc8f62a154ed8737823ad22b9b933f8c117b98ce618
+- digest: sha256:7e2d7cff9812e6bf979f16a0ddd5fcaa9519bdaccb5c7fccde3b6b73698597c4
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
-- digest: sha256:e0f87044a0ae83c03fcf7fe82e191e058c08b0dc6ccb7ac12b94b4a4a086f0f3
+- digest: sha256:1136de277d1fdaa33f07fff09e6b15c348b1faa5959a7ef3c9707dcff4513b0f
   name: atheros-search-ui
   newName: 192.168.1.242:5000/atheros-search-ui
-- digest: sha256:2b74bf2217b16b68f1bfba0f3529d5c0a1527e6830e8e98ccf758fec8966dc55
+- digest: sha256:242e046b89016bad7f631bb1050b90ce115d1a34beafd602df93683fc8191bb7
   name: atheros-sensor
   newName: 192.168.1.242:5000/atheros-sensor
-- digest: sha256:ad485a0fa9046811fc4edcb5d5e7a192633722e3c36cb7cdfa890f63ffdfe976
+- digest: sha256:9920fd6b8e3ddfc082ef41bdd0ca24cd7d44b66898135b81079668e55e8e4b4f
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
 - digest: sha256:cb133fd3c2c60840381b5d521055fd4741c66b1fdb3cf60d1e93fdf885e4546f
@@ -28,7 +28,7 @@ images:
 - digest: sha256:1dc8ff2dd1868dfc2c98997ca5b538f0ddc39088ac18b6f24f96ed70f3b87443
   name: schema-migrator-ui
   newName: 192.168.1.242:5000/schema-migrator-ui
-- digest: sha256:ad323800e92a3ecd07ff4e394ed8e6370f60852e1abf0ab53878e13f0d6d5b6b
+- digest: sha256:013efb1408dc85a50b6021efa80520d596df564ed7dfa1a769961116fe49ef44
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
 patches:
