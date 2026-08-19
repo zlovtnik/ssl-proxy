@@ -69,6 +69,16 @@ class TiDBSchemaExecutorTest(unittest.TestCase):
             script.index("UPDATE schema_migrator.schema_readiness"),
         )
 
+    def test_ssl_flags_are_conditional(self) -> None:
+        script = EXECUTOR.read_text(encoding="utf-8")
+        self.assertIn(
+            'ca_file="${TIDB_TLS_CA_FILE:-}"',
+            script,
+        )
+        self.assertIn('if [ -n "${ca_file}" ]', script)
+        self.assertIn("--ssl-mode=VERIFY_IDENTITY --ssl-ca=${ca_file}", script)
+        self.assertIn("--ssl-mode=DISABLED", script)
+
 
 if __name__ == "__main__":
     unittest.main()

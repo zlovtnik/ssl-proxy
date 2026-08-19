@@ -3,7 +3,7 @@ set -eu
 
 schema_root="/workspace/sql/tidb"
 dsn="${TIDB_SCHEMA_OWNER_DSN:?TIDB_SCHEMA_OWNER_DSN is required}"
-ca_file="${TIDB_TLS_CA_FILE:?TIDB_TLS_CA_FILE is required}"
+ca_file="${TIDB_TLS_CA_FILE:-}"
 octopus_account="${TIDB_OCTOPUS_ACCOUNT:?TIDB_OCTOPUS_ACCOUNT is required}"
 atheros_search_account="${TIDB_ATHEROS_SEARCH_ACCOUNT:?TIDB_ATHEROS_SEARCH_ACCOUNT is required}"
 schema_migrator_account="${TIDB_SCHEMA_MIGRATOR_ACCOUNT:?TIDB_SCHEMA_MIGRATOR_ACCOUNT is required}"
@@ -40,13 +40,18 @@ if [ -z "${db_user}" ] || [ -z "${db_host}" ] || [ "${db_host}" = "${endpoint}" 
 fi
 
 mysql_run() {
+  ssl_args=""
+  if [ -n "${ca_file}" ]; then
+    ssl_args="--ssl-mode=VERIFY_IDENTITY --ssl-ca=${ca_file}"
+  else
+    ssl_args="--ssl-mode=DISABLED"
+  fi
   MYSQL_PWD="${db_password}" mysql \
     --protocol=TCP \
     --host="${db_host}" \
     --port="${db_port}" \
     --user="${db_user}" \
-    --ssl-mode=VERIFY_IDENTITY \
-    --ssl-ca="${ca_file}" \
+    ${ssl_args} \
     "$@"
 }
 
