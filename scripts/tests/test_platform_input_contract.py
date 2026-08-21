@@ -44,12 +44,12 @@ EXPECTED_INPUTS = {
     ("Secret", "schema-migrator-bootstrap"): {"application-admin-password"},
     ("Secret", "schema-migrator-keycloak"): {"bootstrap-admin-password"},
     ("Secret", "ssl-proxy-identity-tls"): {"tls.crt", "tls.key"},
-    ("Secret", "tidb-atheros-search"): {"dsn"},
-    ("Secret", "tidb-client-ca"): {"ca.crt"},
+    ("Secret", "tidb-atheros-search"): {"password"},
     ("Secret", "tidb-keycloak"): {"password"},
     ("Secret", "tidb-octopus"): {"password"},
+    ("Secret", "tidb-root"): {"password"},
     ("Secret", "tidb-schema-migrator"): {"password"},
-    ("Secret", "tidb-schema-owner"): {"dsn"},
+    ("Secret", "tidb-schema-owner"): {"password"},
     ("Secret", "wireguard-config"): {
         "server.conf",
         "Corefile",
@@ -67,7 +67,6 @@ EXPECTED_INPUTS = {
     ("ConfigMap", "ssl-proxy-prod-tidb-endpoint"): {
         "TIDB_HOST",
         "TIDB_PORT",
-        "TIDB_TLS_SERVER_NAME",
         "SCHEMA_MIGRATOR_TIDB_JDBC_URL",
     },
 }

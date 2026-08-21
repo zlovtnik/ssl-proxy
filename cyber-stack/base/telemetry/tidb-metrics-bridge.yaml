@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/component: telemetry-tidb-metrics-bridge
 spec:
   replicas: 0
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: ssl-proxy

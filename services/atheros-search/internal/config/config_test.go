@@ -12,6 +12,8 @@ import (
 func setRequiredTiDBEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
+		"ATHSEARCH_TIDB_HOST",
+		"ATHSEARCH_TIDB_PASSWORD",
 		"ATHSEARCH_TIDB_TLS_CERT_FILE",
 		"ATHSEARCH_TIDB_TLS_KEY_FILE",
 		"ATHSEARCH_TIDB_MAX_OPEN_CONNS",
@@ -41,6 +43,24 @@ func TestLoadRequiresNativeTiDBConfiguration(t *testing.T) {
 	require.Equal(t, 8, cfg.DenseOverfetchFactor)
 }
 
+func TestLoadBuildsPasswordBasedTiDBConfigurationWithoutTLS(t *testing.T) {
+	setRequiredTiDBEnv(t)
+	t.Setenv("ATHSEARCH_TIDB_DSN", "")
+	t.Setenv("ATHSEARCH_TIDB_HOST", "tidb.example.test")
+	t.Setenv("ATHSEARCH_TIDB_PORT", "4000")
+	t.Setenv("ATHSEARCH_TIDB_DATABASE", "atheros_search")
+	t.Setenv("ATHSEARCH_TIDB_USER", "atheros_search_runtime")
+	t.Setenv("ATHSEARCH_TIDB_PASSWORD", "secret")
+	t.Setenv("ATHSEARCH_TIDB_TLS_CA_FILE", "")
+	t.Setenv("ATHSEARCH_TIDB_TLS_SERVER_NAME", "")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Contains(t, cfg.TiDBDSN, "atheros_search_runtime:secret@tcp(tidb.example.test:4000)/atheros_search")
+	require.Empty(t, cfg.TiDBTLSCAFile)
+	require.Empty(t, cfg.TiDBTLSServerName)
+}
+
 func TestLoadRejectsURLStyleDSNsAndGenericFallbacks(t *testing.T) {
 	setRequiredTiDBEnv(t)
 	for _, scheme := range []string{
@@ -58,15 +78,16 @@ func TestLoadRejectsURLStyleDSNsAndGenericFallbacks(t *testing.T) {
 	t.Setenv("ATHSEARCH_TIDB_DSN", "")
 	t.Setenv("DATABASE"+"_URL", "search:secret@tcp(tidb.example.test:4000)/atheros_search")
 	_, err := Load()
-	require.ErrorContains(t, err, "ATHSEARCH_TIDB_DSN is required")
+	require.ErrorContains(t, err, "ATHSEARCH_TIDB_HOST is required")
 }
 
-func TestLoadRequiresVerifiedTLSAndManifest(t *testing.T) {
+func TestLoadAllowsDisabledTLSAndValidatesPartialTLSAndManifest(t *testing.T) {
 	setRequiredTiDBEnv(t)
 
 	t.Setenv("ATHSEARCH_TIDB_TLS_CA_FILE", "")
+	t.Setenv("ATHSEARCH_TIDB_TLS_SERVER_NAME", "")
 	_, err := Load()
-	require.ErrorContains(t, err, "ATHSEARCH_TIDB_TLS_CA_FILE")
+	require.NoError(t, err)
 
 	setRequiredTiDBEnv(t)
 	t.Setenv("ATHSEARCH_TIDB_TLS_CERT_FILE", "/tls/client.crt")

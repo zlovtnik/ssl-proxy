@@ -317,11 +317,7 @@ spec:
             - name: TIDB_WARN_ONLY
               value: "false"
             - name: TIDB_SSL_MODE
-              value: "VERIFY_IDENTITY"
-            - name: TIDB_SSL_CA_PATH
-              value: "/etc/tidb-tls/ca.crt"
-            - name: TIDB_SSL_SERVER_NAME
-              value: "ssl-proxy-tidb.$(POD_NAMESPACE).svc.cluster.local"
+              value: "DISABLED"
             - name: OCTOPUS_PROCESSORS_ENABLED
               value: "true"
             - name: OCTOPUS_ENABLED_PROCESSORS
@@ -399,9 +395,6 @@ spec:
               readOnly: true
             - name: sync-outbox
               mountPath: /sync-outbox
-            - name: tidb-tls
-              mountPath: /etc/tidb-tls
-              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -412,9 +405,6 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
-        - name: tidb-tls
-          secret:
-            secretName: tidb-client-ca
 ---
 apiVersion: v1
 kind: Service

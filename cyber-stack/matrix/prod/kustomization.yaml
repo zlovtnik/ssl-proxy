@@ -4,6 +4,7 @@ namespace: prod-ssl-proxy
 resources:
 - namespace.yaml
 - ../../base
+- ../../base/tidb-bootstrap
 configMapGenerator:
 - behavior: merge
   files:
@@ -36,6 +37,7 @@ images:
   name: tidb-runtime-schema
   newName: 192.168.1.242:5000/tidb-runtime-schema
 patches:
+- path: patches/external-schema-executor.yaml
 - path: patches/identity-hostname.yaml
 - path: patches/proxy-replicas.yaml
 - path: patches/resources.yaml

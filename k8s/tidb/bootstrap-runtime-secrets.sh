@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# Fresh-cluster bootstrap only. Do not run this script to rotate TiDB TLS:
-# k8s/tidb/generate-tls-secrets.sh preserves all existing runtime credentials.
+# Fresh-cluster bootstrap only. TiDB transport is plaintext in the supported
+# dev and production deployment surfaces; credentials remain mandatory.
 NAMESPACE="default"
 
 generate_password() {
@@ -13,18 +13,23 @@ octopus_password="$(generate_password)"
 atheros_search_password="$(generate_password)"
 schema_migrator_password="$(generate_password)"
 keycloak_password="$(generate_password)"
+root_password="$(generate_password)"
+schema_owner_password="$(generate_password)"
 redis_password="$(generate_password)"
+
+kubectl create secret generic tidb-root \
+  --namespace="${NAMESPACE}" \
+  --from-literal=password="${root_password}" \
+  --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create secret generic tidb-octopus \
   --namespace="${NAMESPACE}" \
   --from-literal=password="${octopus_password}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-atheros_search_dsn="atheros_search_runtime:${atheros_search_password}@tcp(ssl-proxy-tidb.default.svc.cluster.local:4000)/atheros_search"
 kubectl create secret generic tidb-atheros-search \
   --namespace="${NAMESPACE}" \
   --from-literal=password="${atheros_search_password}" \
-  --from-literal=dsn="${atheros_search_dsn}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create secret generic tidb-schema-migrator \
@@ -39,7 +44,7 @@ kubectl create secret generic tidb-keycloak \
 
 kubectl create secret generic tidb-schema-owner \
   --namespace="${NAMESPACE}" \
-  --from-literal=dsn="mysql://root@ssl-proxy-tidb:4000/" \
+  --from-literal=password="${schema_owner_password}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create secret generic redis-runtime \

@@ -345,7 +345,7 @@ def _check_jaeger_probes(rendered: Documents | str, relative: str) -> list[str]:
     for probe_name in ("startupProbe", "livenessProbe", "readinessProbe"):
         probe = _mapping(container.get(probe_name))
         http_get = _mapping(probe.get("httpGet"))
-        if http_get.get("path") != "/" or http_get.get("port") != "health":
+        if http_get.get("path") != "/health/status" or http_get.get("port") != "health":
             errors.append(
                 f"{relative}: Jaeger {probe_name} must use the v2 health endpoint"
             )
@@ -517,11 +517,7 @@ def _check_prod_keycloak_external_tidb(
         str(_mapping(container).get("name"))
         for container in _list(pod_spec.get("initContainers"))
     ]
-    expected_init_order = [
-        "pem-to-pkcs12",
-        "prepare-keycloak-home",
-        "bootstrap-admin-service",
-    ]
+    expected_init_order = ["prepare-keycloak-home", "bootstrap-admin-service"]
     errors: list[str] = []
     required_positions = [
         init_container_names.index(name)
@@ -533,8 +529,8 @@ def _check_prod_keycloak_external_tidb(
         or required_positions != sorted(required_positions)
     ):
         errors.append(
-            f"{relative}: Keycloak init containers must prepare TLS and "
-            "keycloak-home before bootstrap-admin-service"
+            f"{relative}: Keycloak init containers must prepare keycloak-home "
+            "before bootstrap-admin-service"
         )
     container_groups = (
         (
@@ -1232,6 +1228,10 @@ def _check_tidb_collection_path(
             errors.append(
                 f"{relative}: prod TiDB bridge requires ssl-proxy.io/tidb-host=true"
             )
+        if _path(bridge, "spec", "strategy", "type") != "Recreate":
+            errors.append(
+                f"{relative}: prod TiDB bridge must use Recreate to avoid host-port rollout deadlock"
+            )
     bridge_configs = _config_maps_with_prefix(
         documents, "ssl-proxy-telemetry-tidb-bridge-config-"
     )
@@ -1265,20 +1265,52 @@ def _wave(document: Mapping[str, Any]) -> int | None:
 
 def _check_tidb_waves(rendered: Documents | str, relative: str) -> list[str]:
     documents = _documents(rendered)
-    jobs = {name: _find(documents, "Job", name) for name in ("ssl-proxy-tidb-init", "ssl-proxy-tidb-schema-executor", "ssl-proxy-tidb-init-grants")}
-    if any(not values for values in jobs.values()):
+    schema_jobs = _find(documents, "Job", "ssl-proxy-tidb-schema-executor")
+    bootstrap_jobs = _find(documents, "Job", "ssl-proxy-tidb-bootstrap") or _find(
+        documents, "Job", "ssl-proxy-tidb-init"
+    )
+    if not schema_jobs or not bootstrap_jobs:
         return []
-    waves = {name: max(wave for document in values if (wave := _wave(document)) is not None) for name, values in jobs.items() if any(_wave(document) is not None for document in values)}
-    if len(waves) != len(jobs):
+    bootstrap_waves = [wave for document in bootstrap_jobs if (wave := _wave(document)) is not None]
+    schema_waves = [wave for document in schema_jobs if (wave := _wave(document)) is not None]
+    if not bootstrap_waves or not schema_waves:
         return []
-    init_wave = waves["ssl-proxy-tidb-init"]
-    schema_wave = waves["ssl-proxy-tidb-schema-executor"]
-    grants_wave = waves["ssl-proxy-tidb-init-grants"]
+    init_wave = max(bootstrap_waves)
+    schema_wave = max(schema_waves)
     errors: list[str] = []
     if init_wave >= schema_wave:
         errors.append(f"{relative}: TiDB init wave ({init_wave}) must be less than schema executor wave ({schema_wave})")
-    if schema_wave >= grants_wave:
-        errors.append(f"{relative}: schema executor wave ({schema_wave}) must be less than grants wave ({grants_wave})")
+    grants_jobs = _find(documents, "Job", "ssl-proxy-tidb-init-grants")
+    grants_waves = [wave for document in grants_jobs if (wave := _wave(document)) is not None]
+    if grants_waves and schema_wave >= max(grants_waves):
+        errors.append(f"{relative}: schema executor wave ({schema_wave}) must be less than grants wave ({max(grants_waves)})")
+    return errors
+
+
+def _check_tidb_plaintext_contract(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    documents = _documents(rendered)
+    rendered_text = yaml.safe_dump(documents, sort_keys=False)
+    errors: list[str] = []
+    for forbidden in (
+        "tidb-client-ca",
+        "TIDB_TLS_CA_FILE",
+        "TIDB_TLS_SERVER_NAME",
+        "sslMode=VERIFY_IDENTITY",
+    ):
+        if forbidden in rendered_text:
+            errors.append(f"{relative}: rendered TiDB workload retains {forbidden}")
+
+    octopus = _find(documents, "Deployment", "ssl-proxy-java-coordinator")
+    if octopus:
+        ssl_modes = [
+            entry.get("value")
+            for entry in _environment(_pod_containers(octopus[0]))
+            if entry.get("name") == "TIDB_SSL_MODE"
+        ]
+        if ssl_modes != ["DISABLED"]:
+            errors.append(f"{relative}: Octopus must set TIDB_SSL_MODE=DISABLED")
     return errors
 
 
@@ -1729,7 +1761,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for image in FIRST_PARTY_IMAGES:
             if any(rendered_image == image or rendered_image.startswith(f"{image}:") for rendered_image in _rendered_images(documents)):
                 errors.append(f"{relative}: rendered workload retains logical image name {image}")
-        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_tidb_waves):
+        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_tidb_waves, _check_tidb_plaintext_contract):
             errors.extend(check(documents, relative))
         if relative.startswith("cyber-stack/matrix/"):
             errors.extend(_check_phase_one_workload_edge(documents, relative))

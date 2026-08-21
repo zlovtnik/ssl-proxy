@@ -19,7 +19,7 @@ import (
 
 func main() {
 	dsn := flag.String("dsn", envOr("ATHSEARCH_TIDB_DSN", ""), "TiDB DSN (required)")
-	tlsCA := flag.String("tls-ca", envOr("ATHSEARCH_TIDB_TLS_CA_FILE", ""), "TiDB TLS CA file (required)")
+	tlsCA := flag.String("tls-ca", envOr("ATHSEARCH_TIDB_TLS_CA_FILE", ""), "Optional TiDB TLS CA file")
 	tlsCert := flag.String("tls-cert", envOr("ATHSEARCH_TIDB_TLS_CERT_FILE", ""), "TiDB TLS cert file")
 	tlsKey := flag.String("tls-key", envOr("ATHSEARCH_TIDB_TLS_KEY_FILE", ""), "TiDB TLS key file")
 	tlsServer := flag.String("tls-server", envOr("ATHSEARCH_TIDB_TLS_SERVER_NAME", ""), "TiDB TLS server name")
@@ -32,9 +32,6 @@ func main() {
 
 	if *dsn == "" {
 		logger.Fatal().Msg("ATHSEARCH_TIDB_DSN is required")
-	}
-	if *tlsCA == "" {
-		logger.Fatal().Msg("ATHSEARCH_TIDB_TLS_CA_FILE is required")
 	}
 	manifestSHA256 := strings.ToLower(strings.TrimSpace(*schemaManifestSHA256))
 	if len(manifestSHA256) != sha256.Size*2 {

@@ -37,11 +37,16 @@ In particular, `DATABASE_URL` and `SYNC_DATABASE_URL` are not fallbacks for
 
 | Variable | Shared fallback | Purpose |
 |---|---|---|
-| `ATHSEARCH_TIDB_DSN` | None | Native Go MySQL DSN selecting `atheros_search`; URL-style `mysql://` values are rejected |
-| `ATHSEARCH_TIDB_TLS_CA_FILE` | None | PEM CA used to verify TiDB |
+| `ATHSEARCH_TIDB_DSN` | None | Compatibility native MySQL DSN; when absent, the discrete settings below are required |
+| `ATHSEARCH_TIDB_HOST` | None | TiDB host used to build the native DSN |
+| `ATHSEARCH_TIDB_PORT` | `4000` | TiDB SQL port |
+| `ATHSEARCH_TIDB_DATABASE` | `atheros_search` | Required canonical database |
+| `ATHSEARCH_TIDB_USER` | `atheros_search_runtime` | Dedicated non-root account |
+| `ATHSEARCH_TIDB_PASSWORD` | None | Required password when the compatibility DSN is absent |
+| `ATHSEARCH_TIDB_TLS_CA_FILE` | None | Optional PEM CA that enables verified TLS |
 | `ATHSEARCH_TIDB_TLS_CERT_FILE` | None | Optional PEM client certificate; must be supplied with the key |
 | `ATHSEARCH_TIDB_TLS_KEY_FILE` | None | Optional PEM client private key; must be supplied with the certificate |
-| `ATHSEARCH_TIDB_TLS_SERVER_NAME` | None | Expected certificate DNS name |
+| `ATHSEARCH_TIDB_TLS_SERVER_NAME` | None | Required certificate identity only when a CA is configured |
 | `ATHSEARCH_SCHEMA_MANIFEST_SHA256` | None | Exact 64-character canonical manifest checksum |
 
 Startup verifies the selected database, UTC/strict SQL session, TiDB version,

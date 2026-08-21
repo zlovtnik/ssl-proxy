@@ -35,48 +35,6 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
-      initContainers:
-        - name: pem-to-pkcs12
-          image: schema-migrator-backend:latest
-          imagePullPolicy: Always
-          command: ["/bin/sh", "-ec"]
-          args:
-            - |
-              keytool -delete -alias tidb-ca \
-                -keystore /run/tidb-tls/truststore.p12 \
-                -storepass changeit 2>/dev/null || true
-              keytool -importcert -noprompt \
-                -alias tidb-ca \
-                -file /etc/tidb-tls/ca.crt \
-                -keystore /run/tidb-tls/truststore.p12 \
-                -storetype PKCS12 \
-                -storepass changeit
-          env:
-            - name: JAVA_TOOL_OPTIONS
-              value: -Djava.io.tmpdir=/tmp
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-          resources:
-            requests:
-              cpu: 10m
-              memory: 64Mi
-            limits:
-              cpu: 100m
-              memory: 128Mi
-          volumeMounts:
-            - name: tidb-tls
-              mountPath: /etc/tidb-tls
-              readOnly: true
-            - name: tidb-truststore
-              mountPath: /run/tidb-tls
-            - name: tmp
-              mountPath: /tmp
       containers:
         - name: backend
           image: schema-migrator-backend:latest
@@ -185,25 +143,10 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: tidb-tls
-              mountPath: /etc/tidb-tls
-              readOnly: true
-            - name: tidb-truststore
-              mountPath: /run/tidb-tls
-              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 2Gi
-        - name: tidb-tls
-          secret:
-            secretName: tidb-client-ca
-            items:
-              - key: ca.crt
-                path: ca.crt
-        - name: tidb-truststore
-          emptyDir:
-            sizeLimit: 1Mi
 ---
 apiVersion: v1
 kind: Service

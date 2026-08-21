@@ -43,15 +43,19 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: ATHSEARCH_TIDB_DSN
+            - name: ATHSEARCH_TIDB_HOST
+              value: "ssl-proxy-tidb.$(POD_NAMESPACE).svc.cluster.local"
+            - name: ATHSEARCH_TIDB_PORT
+              value: "4000"
+            - name: ATHSEARCH_TIDB_DATABASE
+              value: "atheros_search"
+            - name: ATHSEARCH_TIDB_USER
+              value: "atheros_search_runtime"
+            - name: ATHSEARCH_TIDB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: tidb-atheros-search
-                  key: dsn
-            - name: ATHSEARCH_TIDB_TLS_CA_FILE
-              value: /etc/tidb-tls/ca.crt
-            - name: ATHSEARCH_TIDB_TLS_SERVER_NAME
-              value: "ssl-proxy-tidb.$(POD_NAMESPACE).svc.cluster.local"
+                  key: password
             - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
               value: "b10612a60b1a3cd3ca8c8c62d4098aaf9ebc8548b061aaefc952e3c020cf872c"
             - name: ATHSEARCH_EMBEDDING_MODEL
@@ -89,9 +93,6 @@ spec:
             - name: metrics
               containerPort: 9090
           volumeMounts:
-            - name: tidb-tls
-              mountPath: /etc/tidb-tls
-              readOnly: true
             - name: tmp
               mountPath: /tmp
           startupProbe:
@@ -131,12 +132,6 @@ spec:
             runAsUser: 65532
             runAsGroup: 65532
       volumes:
-        - name: tidb-tls
-          secret:
-            secretName: tidb-client-ca
-            items:
-              - key: ca.crt
-                path: ca.crt
         - name: tmp
           emptyDir: {}
 ---

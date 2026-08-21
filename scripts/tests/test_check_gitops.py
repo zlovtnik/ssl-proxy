@@ -121,7 +121,7 @@ class RenderedWorkloadPolicyTest(unittest.TestCase):
         good = documents(
             workload(
                 "ssl-proxy-telemetry-jaeger",
-                containers="[{name: jaeger, ports: [{name: health, containerPort: 13133}], startupProbe: {httpGet: {path: /, port: health}, failureThreshold: 60, periodSeconds: 10}, livenessProbe: {httpGet: {path: /, port: health}}, readinessProbe: {httpGet: {path: /, port: health}}}]",
+                containers="[{name: jaeger, ports: [{name: health, containerPort: 13133}], startupProbe: {httpGet: {path: /health/status, port: health}, failureThreshold: 60, periodSeconds: 10}, livenessProbe: {httpGet: {path: /health/status, port: health}}, readinessProbe: {httpGet: {path: /health/status, port: health}}}]",
             )
         )
         self.assertEqual([], check_gitops._check_jaeger_probes(good, "test"))

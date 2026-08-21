@@ -5,6 +5,7 @@ resources:
   - ../../../base/redpanda/statefulset.yaml
   - ../../../base/minio/statefulset.yaml
   - ../../../base/redis-runtime/deployment.yaml
+  - ../../../base/tidb-bootstrap
   - ../../../base/tidb-schema-executor
   - ../../../base/telemetry
 configMapGenerator:
@@ -28,6 +29,7 @@ images:
   - name: otel/opentelemetry-collector-contrib
     digest: sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
 patches:
+  - path: ../patches/external-schema-executor.yaml
   - path: ../patches/alloy-positions.yaml
   - path: ../patches/jaeger-recovery.yaml
   - path: ../patches/tidb-metrics-bridge.yaml

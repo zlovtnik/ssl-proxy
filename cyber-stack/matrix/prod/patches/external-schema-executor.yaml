@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-tidb-schema-executor
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: schema
+          env:
+            - name: TIDB_HOST
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: TIDB_HOST
+            - name: TIDB_PORT
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: TIDB_PORT

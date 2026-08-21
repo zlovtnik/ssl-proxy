@@ -13,8 +13,3 @@ data:
 
     [tikv-client.copr-cache]
     capacity-mb = 128
-
-    [security]
-    ssl-cert = "/etc/tidb-tls-server/tls.crt"
-    ssl-key = "/etc/tidb-tls-server/tls.key"
-    require_secure_transport = ON

@@ -36,3 +36,12 @@ func TestValidateTiDBVersion(t *testing.T) {
 	require.ErrorContains(t, validateTiDBVersion("5.7.25-TiDB-v8.4.0"), "v8.5")
 	require.ErrorContains(t, validateTiDBVersion("8.5.0 MySQL Community Server"), "not identifiable")
 }
+
+func TestRegisterTLSConfigAllowsExplicitPlaintext(t *testing.T) {
+	name, err := registerTLSConfig(Options{})
+	require.NoError(t, err)
+	require.Empty(t, name)
+
+	_, err = registerTLSConfig(Options{TLSServerName: "tidb.example.test"})
+	require.ErrorContains(t, err, "CA file")
+}

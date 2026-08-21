@@ -791,10 +791,13 @@ def _restore_tidb_tls_secrets(
 
 
 def sync_tidb_secrets(ctx: UpReadyContext) -> bool:
-    """Create missing runtime secrets and safely reuse or rotate TiDB TLS."""
+    """Create missing password-only TiDB runtime secrets."""
     namespace = ctx.settings.kube_namespace
     context = ctx.settings.kube_context
-    tidb_host = f"ssl-proxy-tidb.{namespace}.svc.cluster.local"
+
+    if not _secret_exists("tidb-root", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-root")
+        _create_secret_from_literals(ctx, "tidb-root", {"password": _generate_password()})
 
     if not _secret_exists("tidb-octopus", namespace, context):
         step("S02", "tidb_secrets: creating tidb-octopus")
@@ -802,12 +805,10 @@ def sync_tidb_secrets(ctx: UpReadyContext) -> bool:
 
     if not _secret_exists("tidb-atheros-search", namespace, context):
         step("S02", "tidb_secrets: creating tidb-atheros-search")
-        password = _generate_password()
-        dsn = f"atheros_search_runtime:{password}@tcp({tidb_host}:4000)/atheros_search"
         _create_secret_from_literals(
             ctx,
             "tidb-atheros-search",
-            {"password": password, "dsn": dsn},
+            {"password": _generate_password()},
         )
 
     if not _secret_exists("tidb-schema-migrator", namespace, context):
@@ -827,82 +828,14 @@ def sync_tidb_secrets(ctx: UpReadyContext) -> bool:
         _create_secret_from_literals(
             ctx,
             "tidb-schema-owner",
-            {"dsn": f"mysql://root@{tidb_host}:4000/"},
+            {"password": _generate_password()},
         )
 
     if not _secret_exists("redis-runtime", namespace, context):
         step("S02", "tidb_secrets: creating redis-runtime")
         _create_secret_from_literals(ctx, "redis-runtime", {"password": _generate_password()})
 
-    previous_ca = _secret_payload("tidb-client-ca", namespace, context)
-    previous_tls = _secret_payload("tidb-server-tls", namespace, context)
-    expected_hosts = (tidb_host, "ssl-proxy-tidb")
-    rotate_reason = "explicit operator request" if ctx.settings.rotate_tidb_tls else ""
-
-    with tempfile.TemporaryDirectory(prefix="ssl-proxy-tidb-tls-") as cert_dir:
-        cert_path = Path(cert_dir)
-        if not rotate_reason and previous_ca is not None and previous_tls is not None:
-            try:
-                ca_path, server_cert_path, server_key_path = _write_tidb_tls_material(
-                    cert_path,
-                    _secret_bytes(previous_ca, "tidb-client-ca", "ca.crt"),
-                    _secret_bytes(previous_tls, "tidb-server-tls", "tls.crt"),
-                    _secret_bytes(previous_tls, "tidb-server-tls", "tls.key"),
-                )
-                valid, detail = _validate_tidb_tls_material(
-                    ca_path,
-                    server_cert_path,
-                    server_key_path,
-                    expected_hosts,
-                )
-                if valid:
-                    ctx.tidb_tls_cert_checksum = _compute_tls_checksum(
-                        server_cert_path,
-                        server_key_path,
-                    )
-                    step("S02", "tidb_tls: reusing valid existing certificate pair")
-                    return True
-                rotate_reason = detail
-            except UpReadyError as exc:
-                rotate_reason = str(exc)
-        elif not rotate_reason:
-            rotate_reason = "certificate pair is missing"
-
-        step("S02", f"tidb_tls: rotating certificate pair ({rotate_reason})")
-        ca_path, server_cert_path, server_key_path = _generate_tidb_tls_material(
-            cert_path,
-            tidb_host,
-        )
-        valid, detail = _validate_tidb_tls_material(
-            ca_path,
-            server_cert_path,
-            server_key_path,
-            expected_hosts,
-        )
-        if not valid:
-            raise UpReadyError(f"Generated TiDB TLS material failed validation: {detail}")
-        _apply_tidb_tls_material(ctx, ca_path, server_cert_path, server_key_path)
-        ctx.tidb_tls_cert_checksum = _compute_tls_checksum(
-            server_cert_path,
-            server_key_path,
-        )
-
-        if _statefulset_exists(ctx, "ssl-proxy-tidb"):
-            try:
-                _restart_tidb_tls_consumers(ctx)
-                ctx.tidb_tls_rollout_complete = True
-            except (shell.ShellCommandError, UpReadyError) as exc:
-                warn(f"TiDB TLS rollout failed; restoring previous certificate pair: {exc}")
-                try:
-                    _restore_tidb_tls_secrets(ctx, previous_ca, previous_tls)
-                except (shell.ShellCommandError, UpReadyError) as rollback_exc:
-                    raise UpReadyError(
-                        f"TiDB TLS rotation failed ({exc}); rollback also failed "
-                        f"({rollback_exc})"
-                    ) from rollback_exc
-                raise UpReadyError(
-                    f"TiDB TLS rotation failed and the previous pair was restored: {exc}"
-                ) from exc
+    ctx.tidb_tls_cert_checksum = None
     return True
 
 
@@ -1232,12 +1165,12 @@ def prepare_helm_release(ctx: UpReadyContext) -> bool:
 
 PREFLIGHT_REQUIRED_SECRETS: dict[str, str] = {
     "redis-runtime": "password",
-    "tidb-client-ca": "ca.crt",
+    "tidb-root": "password",
     "tidb-octopus": "password",
     "tidb-atheros-search": "password",
     "tidb-schema-migrator": "password",
     "tidb-keycloak": "password",
-    "tidb-schema-owner": "dsn",
+    "tidb-schema-owner": "password",
 }
 
 

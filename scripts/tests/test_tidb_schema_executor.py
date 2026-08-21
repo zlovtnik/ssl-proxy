@@ -7,6 +7,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 EXECUTOR = REPO / "k8s/tidb-schema-executor/entrypoint.sh"
+BOOTSTRAP = REPO / "k8s/tidb-schema-executor/bootstrap.sh"
 SCHEMA_MIGRATOR_MANIFEST = REPO / "sql/tidb/schema_migrator/manifest.yaml"
 
 
@@ -69,15 +70,22 @@ class TiDBSchemaExecutorTest(unittest.TestCase):
             script.index("UPDATE schema_migrator.schema_readiness"),
         )
 
-    def test_ssl_flags_are_conditional(self) -> None:
+    def test_plaintext_transport_is_explicit(self) -> None:
         script = EXECUTOR.read_text(encoding="utf-8")
-        self.assertIn(
-            'ca_file="${TIDB_TLS_CA_FILE:-}"',
-            script,
-        )
-        self.assertIn('if [ -n "${ca_file}" ]', script)
-        self.assertIn("--ssl-mode=VERIFY_IDENTITY --ssl-ca=${ca_file}", script)
         self.assertIn("--ssl-mode=DISABLED", script)
+        self.assertNotIn("TIDB_TLS_CA_FILE", script)
+        self.assertIn("TIDB_SCHEMA_OWNER_PASSWORD", script)
+
+    def test_bootstrap_gates_empty_root_and_reconciles_password_accounts(self) -> None:
+        script = BOOTSTRAP.read_text(encoding="utf-8")
+
+        self.assertIn("--ssl-mode=DISABLED", script)
+        self.assertIn('allow_empty_root="${TIDB_ALLOW_EMPTY_ROOT_BOOTSTRAP:-false}"', script)
+        self.assertIn("refusing blank-root adoption because TiDB is not empty", script)
+        self.assertIn("ALTER USER 'root'@'%'", script)
+        self.assertIn("create_or_update_account schema_owner", script)
+        self.assertIn("WITH GRANT OPTION", script)
+        self.assertNotIn("echo \"${root_password}\"", script)
 
 
 if __name__ == "__main__":

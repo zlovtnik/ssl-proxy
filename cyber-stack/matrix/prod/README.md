@@ -1,8 +1,9 @@
 # Production prerequisites
 
-Production uses an externally operated, highly available TiDB deployment. The
-prod data-plane overlay intentionally excludes the development-only UniStore
-StatefulSet and initialization Jobs.
+Production uses the host-operated TiDB instance on Wiretrap. The prod
+data-plane overlay excludes the development-only UniStore StatefulSet, but it
+owns an idempotent bootstrap hook for the external endpoint before canonical
+schema execution.
 
 Before the prod Applications are registered, the platform control plane must
 materialize `ssl-proxy-prod-tidb-endpoint` in `prod-ssl-proxy` with these
@@ -10,19 +11,25 @@ non-secret keys:
 
 - `TIDB_HOST`
 - `TIDB_PORT`
-- `TIDB_TLS_SERVER_NAME`
 - `SCHEMA_MIGRATOR_TIDB_JDBC_URL`
 
 For the Wiretrap address cutover, the platform-owned values must resolve the
-external TiDB authority to `192.168.1.242:4000`: `TIDB_HOST` is
-`192.168.1.242`, `TIDB_PORT` remains `4000`, and the JDBC URL uses the same
-host and port while preserving its database, TLS and connection parameters.
+TiDB authority to `192.168.1.242:4000`: `TIDB_HOST` is `192.168.1.242`,
+`TIDB_PORT` remains `4000`, and the JDBC URL uses the same host and port with
+`sslMode=DISABLED`.
 The values remain external prerequisites and are not committed here.
 
-The same platform workflow must provide the existing TiDB account Secrets and
-`tidb-client-ca`. Production approval also requires tested TiDB backup,
-restore, failover and recovery procedures with recorded RTO and RPO. No
-operator should create or patch these Kubernetes objects interactively.
+The same platform workflow must provide `tidb-root/password` and the five
+password-only account Secrets documented in the platform input contract. The
+bootstrap hook tries the configured root password first and may adopt a blank
+root only when the endpoint has no application databases or non-root accounts;
+it rotates root immediately. No operator should patch these Kubernetes objects
+interactively.
+
+This Wiretrap deployment intentionally uses plaintext TiDB transport on a
+trusted LAN. Credentials remain mandatory. The host container must use a
+persistent named volume, `restart: unless-stopped`, SQL bound to
+`192.168.1.242:4000`, and metrics bound to `127.0.0.1:10080`.
 
 Octopus is deliberately staged with TiDB schema/readiness checks enabled while
 its consumer and processor lanes and processor catalog remain disabled. The

@@ -34,13 +34,21 @@ spec:
           image: tidb-runtime-schema
           imagePullPolicy: Always
           env:
-            - name: TIDB_SCHEMA_OWNER_DSN
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: TIDB_HOST
+              value: "ssl-proxy-tidb.$(POD_NAMESPACE).svc.cluster.local"
+            - name: TIDB_PORT
+              value: "4000"
+            - name: TIDB_SCHEMA_OWNER_USER
+              value: "schema_owner"
+            - name: TIDB_SCHEMA_OWNER_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: tidb-schema-owner
-                  key: dsn
-            - name: TIDB_TLS_CA_FILE
-              value: /etc/tidb-tls/ca.crt
+                  key: password
             - name: TIDB_SCHEMA_APPLY_POST_TIFLASH
               value: "false"
             - name: TIDB_OCTOPUS_ACCOUNT
@@ -50,9 +58,6 @@ spec:
             - name: TIDB_SCHEMA_MIGRATOR_ACCOUNT
               value: "schema_migrator_runtime"
           volumeMounts:
-            - name: tidb-tls
-              mountPath: /etc/tidb-tls
-              readOnly: true
             - name: tmp
               mountPath: /tmp
           resources:
@@ -71,11 +76,5 @@ spec:
             runAsUser: 65532
             runAsGroup: 65532
       volumes:
-        - name: tidb-tls
-          secret:
-            secretName: tidb-client-ca
-            items:
-              - key: ca.crt
-                path: ca.crt
         - name: tmp
           emptyDir: {}

@@ -97,13 +97,13 @@ The platform and network owners perform the cutover in this order:
 2. Rebind the untracked CI registry and Jenkins runtime to `.242`, preserving
    their named volumes. Configure K3s/containerd to trust the exact plain-HTTP
    authority `192.168.1.242:5000`, then prove the registry API and a CRI pull.
-3. Recreate standalone TiDB with the same image, command, restart policy, data
-   volume, TLS/config mounts and localhost status binding. Change only its SQL
-   bind to `192.168.1.242:4000`, and retain the stopped prior container as
-   rollback evidence until acceptance.
+3. Recreate standalone TiDB with `pingcap/tidb:v8.5.7`, UniStore, a persistent
+   named volume and `restart: unless-stopped`. Bind SQL only to
+   `192.168.1.242:4000`, bind status/metrics to `127.0.0.1:10080`, configure no
+   TLS material, and retain the stopped prior container as rollback evidence.
 4. Through the platform prerequisite workflow, update the non-secret
    `ssl-proxy-prod-tidb-endpoint` values, including `TIDB_HOST` and the JDBC
-   URL, to `.242` while preserving port and TLS settings. Do not patch the
+   URL, to `.242` with `sslMode=DISABLED`. Do not patch the
    ConfigMap interactively.
 5. Merge the reviewed repository address change to `main` and let Argo CD
    reconcile the digest-identical `.242:5000` image references. Require
@@ -208,7 +208,7 @@ The evidence must show:
   client address matches that client rather than a spoofed forwarding header,
   and each request has a matching JSON access-log record;
 - `192.168.1.242:5000/v2/` responds, a CRI image pull succeeds, TiDB accepts
-  the intended TLS client on `.242:4000`, all workloads are healthy, and the
+  password-authenticated plaintext clients on `.242:4000`, all workloads are healthy, and the
   Atheros Sensor image-pull failure is resolved.
 
 Use arbitrary Host values for the LAN response check:
@@ -273,7 +273,7 @@ drift. Correct Git or the platform prerequisite and let Argo CD reconcile it.
 The current recovery incident is blocked by missing platform-owned Secrets,
 not by first-party publication. Republishing `$TAG` or `latest` cannot satisfy
 that contract. Have the platform declarative control plane run its atomic Vault
-KV-v2 sync for the contract, including the TLS, TiDB account/grant/CA and Loki
+KV-v2 sync for the contract, including TiDB root/account passwords and Loki
 htpasswd preflight, then rerun `make recover-stack`; do not create or patch the
 Secrets interactively. Existing pending pods recover through kubelet retries
 and Argo CD self-healing. Do not restart, patch or scale workloads to force
@@ -336,14 +336,14 @@ missing Application, unhealthy status or timeout is a failed release check.
 
 ### Octopus health fails
 
-- Verify the rendered TiDB host, port, database, account, SSL mode, CA path and
-  server name.
+- Verify the rendered TiDB host, port, database, account and explicit
+  `TIDB_SSL_MODE=DISABLED` setting.
 - Confirm the canonical manifest and signed cutover artifact.
 - Do not fall back to PostgreSQL.
 
 ### Search readiness fails
 
-- Validate the native MySQL DSN, TLS files/server name and manifest hash.
+- Validate the discrete TiDB host/port/user/password settings and manifest hash.
 - Confirm the Search account grants and platform-provided Secret keys.
 - Check whether the embedding backend is required for the selected mode.
 - Inspect the rendered app-stack Kustomization for worker configuration.

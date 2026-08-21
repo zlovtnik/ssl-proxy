@@ -2,8 +2,10 @@
 set -eu
 
 schema_root="/workspace/sql/tidb"
-dsn="${TIDB_SCHEMA_OWNER_DSN:?TIDB_SCHEMA_OWNER_DSN is required}"
-ca_file="${TIDB_TLS_CA_FILE:-}"
+db_host="${TIDB_HOST:?TIDB_HOST is required}"
+db_port="${TIDB_PORT:-4000}"
+db_user="${TIDB_SCHEMA_OWNER_USER:-schema_owner}"
+db_password="${TIDB_SCHEMA_OWNER_PASSWORD:?TIDB_SCHEMA_OWNER_PASSWORD is required}"
 octopus_account="${TIDB_OCTOPUS_ACCOUNT:?TIDB_OCTOPUS_ACCOUNT is required}"
 atheros_search_account="${TIDB_ATHEROS_SEARCH_ACCOUNT:?TIDB_ATHEROS_SEARCH_ACCOUNT is required}"
 schema_migrator_account="${TIDB_SCHEMA_MIGRATOR_ACCOUNT:?TIDB_SCHEMA_MIGRATOR_ACCOUNT is required}"
@@ -17,41 +19,24 @@ for account in "${octopus_account}" "${atheros_search_account}" "${schema_migrat
   esac
 done
 
-case "${dsn}" in
-  mysql://*@*/*) ;;
-  *) echo "TIDB_SCHEMA_OWNER_DSN must be a mysql:// URL" >&2; exit 2 ;;
+case "${db_port}" in
+  *[!0-9]*|'') echo "TIDB_PORT must be numeric" >&2; exit 2 ;;
 esac
-
-authority="${dsn#mysql://}"
-authority="${authority%%/*}"
-credentials="${authority%@*}"
-endpoint="${authority#*@}"
-db_user="${credentials%%:*}"
-db_password=""
-if [ "${credentials}" != "${db_user}" ]; then
-  db_password="${credentials#*:}"
-fi
-db_host="${endpoint%:*}"
-db_port="${endpoint##*:}"
-
-if [ -z "${db_user}" ] || [ -z "${db_host}" ] || [ "${db_host}" = "${endpoint}" ]; then
-  echo "TIDB_SCHEMA_OWNER_DSN must include user, host, and port" >&2
+if [ "${db_port}" -lt 1 ] || [ "${db_port}" -gt 65535 ]; then
+  echo "TIDB_PORT must be between 1 and 65535" >&2
   exit 2
 fi
+case "${db_user}" in
+  *[!A-Za-z0-9_]*|'') echo "TIDB_SCHEMA_OWNER_USER contains invalid characters" >&2; exit 2 ;;
+esac
 
 mysql_run() {
-  ssl_args=""
-  if [ -n "${ca_file}" ]; then
-    ssl_args="--ssl-mode=VERIFY_IDENTITY --ssl-ca=${ca_file}"
-  else
-    ssl_args="--ssl-mode=DISABLED"
-  fi
   MYSQL_PWD="${db_password}" mysql \
     --protocol=TCP \
     --host="${db_host}" \
     --port="${db_port}" \
     --user="${db_user}" \
-    ${ssl_args} \
+    --ssl-mode=DISABLED \
     "$@"
 }
 

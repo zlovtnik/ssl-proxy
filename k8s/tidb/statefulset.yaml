@@ -36,9 +36,6 @@ spec:
           volumeMounts:
             - name: tidb-data
               mountPath: /tidb-data
-            - name: tidb-server-tls
-              mountPath: /etc/tidb-tls-server
-              readOnly: true
             - name: tidb-config
               mountPath: /etc/tidb/config
           resources:
@@ -66,9 +63,6 @@ spec:
         - name: tidb-data
           hostPath:
             path: /var/lib/docker/volumes/ssl-proxy_tidb-data/_data
-        - name: tidb-server-tls
-          secret:
-            secretName: tidb-server-tls
         - name: tidb-config
           configMap:
             name: ssl-proxy-tidb-config

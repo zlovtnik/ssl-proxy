@@ -22,7 +22,7 @@ spec:
             - |
               set -euo pipefail
 
-              MYSQL_OPTS="--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/tidb-tls/ca.crt"
+              MYSQL_OPTS="--ssl-mode=DISABLED"
 
               echo "Waiting for TiDB to be ready..."
               until mysqladmin -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} ping --silent 2>/dev/null; do
@@ -116,12 +116,4 @@ spec:
                 secretKeyRef:
                   name: tidb-keycloak
                   key: password
-          volumeMounts:
-            - name: tidb-tls
-              mountPath: /etc/tidb-tls
-              readOnly: true
-      volumes:
-        - name: tidb-tls
-          secret:
-            secretName: tidb-client-ca
       restartPolicy: OnFailure

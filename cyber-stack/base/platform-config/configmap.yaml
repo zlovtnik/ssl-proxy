@@ -49,7 +49,7 @@ data:
   IDENTITY_HOSTNAME: "identity.example.internal"
   IDENTITY_PUBLIC_ORIGIN: "https://$(IDENTITY_HOSTNAME)"
   IDENTITY_KEYCLOAK_ISSUER: "https://$(IDENTITY_HOSTNAME)/realms/middleware"
-  SCHEMA_MIGRATOR_TIDB_JDBC_URL: "jdbc:mysql://ssl-proxy-tidb:4000/schema_migrator?sslMode=VERIFY_IDENTITY&trustCertificateKeyStoreUrl=file:///run/tidb-tls/truststore.p12&trustCertificateKeyStoreType=PKCS12&trustCertificateKeyStorePassword=changeit&fallbackToSystemTrustStore=false&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true"
+  SCHEMA_MIGRATOR_TIDB_JDBC_URL: "jdbc:mysql://ssl-proxy-tidb:4000/schema_migrator?sslMode=DISABLED&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true"
   REGISTRY_PLAIN_HTTP: "0"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://ssl-proxy-telemetry-otel-collector:4317"
 ---

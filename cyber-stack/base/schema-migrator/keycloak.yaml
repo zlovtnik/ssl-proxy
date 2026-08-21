@@ -33,44 +33,6 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
-        - name: pem-to-pkcs12
-          image: quay.io/keycloak/keycloak:26.2.5
-          imagePullPolicy: Always
-          command: ["/bin/sh", "-ec"]
-          args:
-            - |
-              keytool -delete -alias tidb-ca \
-                -keystore /run/tidb-tls/truststore.p12 \
-                -storepass changeit 2>/dev/null || true
-              keytool -importcert -noprompt \
-                -alias tidb-ca \
-                -file /etc/tidb-tls/ca.crt \
-                -keystore /run/tidb-tls/truststore.p12 \
-                -storetype PKCS12 \
-                -storepass changeit
-          resources:
-            requests:
-              cpu: 25m
-              memory: 64Mi
-            limits:
-              cpu: 250m
-              memory: 256Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-          volumeMounts:
-            - name: tidb-tls
-              mountPath: /etc/tidb-tls
-              readOnly: true
-            - name: tidb-truststore
-              mountPath: /run/tidb-tls
-            - name: tmp
-              mountPath: /tmp
         - name: prepare-keycloak-home
           image: quay.io/keycloak/keycloak:26.2.5
           imagePullPolicy: Always
@@ -123,7 +85,7 @@ spec:
             - name: KC_DB_URL_DATABASE
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
-              value: "?sslMode=VERIFY_IDENTITY&trustCertificateKeyStoreUrl=file:///run/tidb-tls/truststore.p12&trustCertificateKeyStoreType=PKCS12&trustCertificateKeyStorePassword=changeit&fallbackToSystemTrustStore=false"
+              value: "?sslMode=DISABLED"
             - name: KC_DB_USERNAME
               value: "keycloak"
             - name: KC_DB_PASSWORD
@@ -160,9 +122,6 @@ spec:
               mountPath: /opt/keycloak/data
             - name: tmp
               mountPath: /tmp
-            - name: tidb-truststore
-              mountPath: /run/tidb-tls
-              readOnly: true
       containers:
         - name: keycloak
           image: quay.io/keycloak/keycloak:26.2.5
@@ -187,7 +146,7 @@ spec:
             - name: KC_DB_URL_DATABASE
               value: "keycloak"
             - name: KC_DB_URL_PROPERTIES
-              value: "?sslMode=VERIFY_IDENTITY&trustCertificateKeyStoreUrl=file:///run/tidb-tls/truststore.p12&trustCertificateKeyStoreType=PKCS12&trustCertificateKeyStorePassword=changeit&fallbackToSystemTrustStore=false"
+              value: "?sslMode=DISABLED"
             - name: KC_DB_USERNAME
               value: "keycloak"
             - name: KC_DB_PASSWORD
@@ -262,12 +221,6 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
-            - name: tidb-tls
-              mountPath: /etc/tidb-tls
-              readOnly: true
-            - name: tidb-truststore
-              mountPath: /run/tidb-tls
-              readOnly: true
       volumes:
         - name: keycloak-home
           emptyDir:
@@ -280,15 +233,6 @@ spec:
             name: ssl-proxy-schema-migrator-keycloak-realm
         - name: tmp
           emptyDir: {}
-        - name: tidb-tls
-          secret:
-            secretName: tidb-client-ca
-            items:
-              - key: ca.crt
-                path: ca.crt
-        - name: tidb-truststore
-          emptyDir:
-            sizeLimit: 1Mi
 ---
 apiVersion: v1
 kind: Service

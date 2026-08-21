@@ -10,8 +10,8 @@ preflight:
 
   secrets:
     - namespace: default
-      name: tidb-client-ca
-      key: ca.crt
+      name: tidb-root
+      key: password
     - namespace: default
       name: tidb-octopus
       key: password
@@ -26,7 +26,7 @@ preflight:
       key: password
     - namespace: default
       name: tidb-schema-owner
-      key: dsn
+      key: password
     - namespace: default
       name: redis-runtime
       key: password

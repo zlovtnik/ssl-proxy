@@ -90,6 +90,9 @@ explicit context when its PVC data is no longer needed.
   patch or Secret/ConfigMap reference in both environments.
 - Keep credential values out of Git. Reference the smallest platform-owned
   Secret and key required by each workload.
+- TiDB Secrets are password-only. Canonical dev and prod renders set plaintext
+  transport explicitly; the production bootstrap rotates an empty root only
+  when the external instance is verified to be fresh.
 - Use the standard labels `app.kubernetes.io/name`,
   `app.kubernetes.io/component` and `app.kubernetes.io/managed-by`.
 - Pin third-party images to an immutable version. First-party images in the

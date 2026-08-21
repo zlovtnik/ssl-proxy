@@ -89,16 +89,9 @@ spec:
           volumeMounts:
             - name: tidb-data
               mountPath: /tidb-data
-            - name: tidb-server-tls
-              mountPath: /etc/tidb-tls-server
-              readOnly: true
             - name: tidb-config
               mountPath: /etc/tidb/config
       volumes:
-        - name: tidb-server-tls
-          secret:
-            secretName: ssl-proxy-tidb-server-tls
-            defaultMode: 0440
         - name: tidb-config
           configMap:
             name: ssl-proxy-tidb-config
@@ -175,9 +168,6 @@ data:
     [tikv-client.copr-cache]
     capacity-mb = 128
 
-    [security]
-    ssl-cert = "/etc/tidb-tls-server/tls.crt"
-    ssl-key = "/etc/tidb-tls-server/tls.key"
 ---
 apiVersion: batch/v1
 kind: Job
@@ -225,7 +215,7 @@ spec:
               set -eu
               TIDB_HOST="ssl-proxy-tidb.${POD_NAMESPACE}.svc.cluster.local"
               escape_sql() { printf '%s' "$1" | sed "s/'/''/g; s/\\\\/\\\\\\\\/g"; }
-              MYSQL_OPTS="--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/tidb-tls/ca.crt"
+              MYSQL_OPTS="--ssl-mode=DISABLED"
 
               echo "Waiting for TiDB to be ready..."
               until mysqladmin -h "${TIDB_HOST}" -P 4000 -u root \
@@ -234,7 +224,8 @@ spec:
               done
               echo "TiDB is ready."
 
-              # Probe root auth: try password first, fall back to passwordless for initial bootstrap
+              # Probe root auth: try the desired password first. Empty-root
+              # adoption is allowed only for a genuinely fresh TiDB instance.
               export MYSQL_PWD="${ROOT_PASSWORD}"
               root_auth_works=false
               root_passwordless_works=false
@@ -242,14 +233,29 @@ spec:
                 root_auth_works=true
               else
                 unset MYSQL_PWD
-                if mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1" >/dev/null 2>&1; then
+                if [ "${ALLOW_EMPTY_ROOT_BOOTSTRAP}" = "true" ] && \
+                  mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1" >/dev/null 2>&1; then
                   root_passwordless_works=true
                 fi
                 export MYSQL_PWD="${ROOT_PASSWORD}"
               fi
               if [ "$root_auth_works" != true ] && [ "$root_passwordless_works" != true ]; then
-                echo "cannot authenticate to TiDB as root with or without a password" >&2
+                echo "cannot authenticate to TiDB with the configured root password" >&2
                 exit 1
+              fi
+
+              if [ "$root_passwordless_works" = true ]; then
+                application_databases="$(unset MYSQL_PWD; mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                  ${MYSQL_OPTS} --batch --skip-column-names -e \
+                  "SELECT COUNT(*) FROM information_schema.schemata
+                   WHERE schema_name NOT IN ('INFORMATION_SCHEMA','METRICS_SCHEMA','PERFORMANCE_SCHEMA','mysql','sys','test');")"
+                non_root_accounts="$(unset MYSQL_PWD; mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                  ${MYSQL_OPTS} --batch --skip-column-names -e \
+                  "SELECT COUNT(*) FROM mysql.user WHERE User <> 'root';")"
+                if [ "${application_databases}" -ne 0 ] || [ "${non_root_accounts}" -ne 0 ]; then
+                  echo "refusing empty-root adoption because TiDB is not fresh" >&2
+                  exit 1
+                fi
               fi
 
               echo "Setting root password..."
@@ -280,11 +286,14 @@ spec:
               mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
                 "CREATE DATABASE IF NOT EXISTS atheros_search CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
               mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE DATABASE IF NOT EXISTS integration_console CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+              mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
                 "CREATE DATABASE IF NOT EXISTS schema_migrator CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
               mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
                 "CREATE DATABASE IF NOT EXISTS keycloak CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
               echo "Creating accounts..."
               for pair in \
+                "schema_owner:${SCHEMA_OWNER_PASSWORD}" \
                 "octopus_runtime:${OCTOPUS_PASSWORD}" \
                 "atheros_search_runtime:${ATHEROS_SEARCH_PASSWORD}" \
                 "schema_migrator_runtime:${SCHEMA_MIGRATOR_PASSWORD}" \
@@ -300,8 +309,22 @@ spec:
                 rm -f "${tmp_sql}"
               done
 
+              mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "GRANT ALL PRIVILEGES ON octopus_core.* TO 'schema_owner' WITH GRANT OPTION;
+                 GRANT ALL PRIVILEGES ON atheros_search.* TO 'schema_owner' WITH GRANT OPTION;
+                 GRANT ALL PRIVILEGES ON integration_console.* TO 'schema_owner' WITH GRANT OPTION;
+                 GRANT ALL PRIVILEGES ON schema_migrator.* TO 'schema_owner' WITH GRANT OPTION;
+                 GRANT ALL PRIVILEGES ON octopus_core.* TO 'octopus_runtime';
+                 GRANT ALL PRIVILEGES ON atheros_search.* TO 'octopus_runtime';
+                 GRANT ALL PRIVILEGES ON atheros_search.* TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.* TO 'atheros_search_runtime';
+                 GRANT ALL PRIVILEGES ON schema_migrator.* TO 'schema_migrator_runtime';
+                 GRANT ALL PRIVILEGES ON keycloak.* TO 'keycloak';"
+
               echo "TiDB databases and runtime accounts are ready."
           env:
+            - name: ALLOW_EMPTY_ROOT_BOOTSTRAP
+              value: "true"
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -315,6 +338,11 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: tidb-octopus
+                  key: password
+            - name: SCHEMA_OWNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-schema-owner
                   key: password
             - name: ATHEROS_SEARCH_PASSWORD
               valueFrom:
@@ -339,20 +367,11 @@ spec:
               cpu: 500m
               memory: 512Mi
           volumeMounts:
-            - name: tidb-tls
-              mountPath: /etc/tidb-tls
-              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: tmp
           emptyDir: {}
-        - name: tidb-tls
-          secret:
-            secretName: tidb-client-ca
-            items:
-              - key: ca.crt
-                path: ca.crt
 ---
 apiVersion: batch/v1
 kind: Job
@@ -399,7 +418,7 @@ spec:
             - |
               set -eu
               TIDB_HOST="ssl-proxy-tidb.${POD_NAMESPACE}.svc.cluster.local"
-              MYSQL_OPTS="--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/tidb-tls/ca.crt"
+              MYSQL_OPTS="--ssl-mode=DISABLED"
               export MYSQL_PWD="${ROOT_PASSWORD}"
 
               echo "Waiting for TiDB to be ready..."
@@ -571,17 +590,8 @@ spec:
               cpu: 500m
               memory: 512Mi
           volumeMounts:
-            - name: tidb-tls
-              mountPath: /etc/tidb-tls
-              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: tmp
           emptyDir: {}
-        - name: tidb-tls
-          secret:
-            secretName: tidb-client-ca
-            items:
-              - key: ca.crt
-                path: ca.crt

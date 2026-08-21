@@ -125,8 +125,8 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
         },
         "tidb": {
             "endpointConfigMapName": "ssl-proxy-prod-tidb-endpoint",
-            "caSecretName": "tidb-client-ca",
-            "serverNameKey": "TIDB_TLS_SERVER_NAME",
+            "transport": "plaintext",
+            "bootstrapRootSecretName": "tidb-root",
             "grantMatrixDocument": "docs/tidb-runtime-cutover.md",
             "accounts": {
                 "tidb-atheros-search": "atheros_search_runtime",
@@ -139,7 +139,7 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
     }
     if validation_policy != expected_validation_policy:
         raise PlatformInputContractError(
-            f"{CONTRACT_RELATIVE_PATH} validation policy does not preserve TLS, TiDB, and Loki checks"
+            f"{CONTRACT_RELATIVE_PATH} validation policy does not preserve TiDB and Loki checks"
         )
 
     inputs: list[PlatformInput] = []

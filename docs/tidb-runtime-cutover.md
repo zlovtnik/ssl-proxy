@@ -35,14 +35,14 @@ The `tidb-runtime-schema` image runs
 It:
 
 1. verifies each domain's ordered file checksums;
-2. applies the four application manifests over TLS as the schema owner;
+2. applies the four application manifests as the password-authenticated schema owner;
 3. replaces bootstrap privileges with the checked-in least-privilege grants;
    and
 4. records the Atheros Search and Octopus manifest readiness states.
 
 Application runtimes must not apply canonical DDL. They connect with dedicated
-accounts, check TiDB version/TLS/server identity and verify the expected
-manifest checksum before serving traffic.
+accounts, check the TiDB version and explicit transport mode, and verify the
+expected manifest checksum before serving traffic.
 
 Active migrations and ordered additions are append only. Do not recreate the
 retired `sql/tidb/core/` baseline or introduce PostgreSQL runtime aggregates.
@@ -85,11 +85,15 @@ range or reuse consumer identities without proving the intended offset.
 ## Required connection configuration
 
 Octopus uses the `TIDB_*` family, including host, port, database, user,
-password, pool size, SSL mode, CA path and server name. Atheros Search uses a
-native Go MySQL DSN in `ATHSEARCH_TIDB_DSN` plus
-`ATHSEARCH_TIDB_TLS_CA_FILE`, `ATHSEARCH_TIDB_TLS_SERVER_NAME` and the expected
-manifest hash. Schema Migrator uses its `BEDROCK_STATE_DB_*` settings for the
-TiDB internal store.
+password, pool size and explicit SSL mode. Atheros Search uses discrete host,
+port, database, user and password settings; `ATHSEARCH_TIDB_DSN` remains a
+compatibility input. Schema Migrator uses its `BEDROCK_STATE_DB_*` settings for
+the TiDB internal store.
+
+Both canonical Kustomize environments explicitly set plaintext TiDB transport
+(`DISABLED`). Password authentication remains mandatory for root, schema owner
+and every runtime account. Optional verified-TLS code is not a deployment
+default.
 
 Every connection parameter consumed by an application must have a matching
 Kustomize ConfigMap, Secret or environment patch source. Keep application
@@ -98,11 +102,11 @@ defaults, the base manifests and both environment slices aligned.
 ## Cutover procedure
 
 1. Back up existing evidence and record the source consumer-group offsets.
-2. Provision fresh TLS identities and dedicated accounts.
+2. Provision password-only Secrets and reconcile dedicated accounts.
 3. Apply the four canonical manifests with the schema executor and retain its
    checksum evidence.
-4. Verify database names, account grants, TiDB version, CA chain and server
-   name from each workload network.
+4. Verify database names, account grants, TiDB version and explicit transport
+   mode from each workload network.
 5. Produce and sign the cutover artifact containing cluster identity, schema
    version, required consumer groups and starting offsets.
 6. Start Octopus with consumers/processors gated off; verify `/health` against
@@ -119,7 +123,7 @@ defaults, the base manifests and both environment slices aligned.
 A cutover is accepted only when operators can show:
 
 - schema-executor success and all manifest hashes;
-- TLS verification from each direct client;
+- explicit plaintext transport and password authentication from each direct client;
 - exact grant output for every runtime account;
 - signed topic/partition/offset boundary;
 - duplicate-delivery and restart tests without duplicate effects;

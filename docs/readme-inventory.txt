@@ -11,3 +11,4 @@ services/atheros-search/scripts/README.md
 services/atheros-sensor/README.md
 services/octopus/README.md
 services/octopus/tidb/README.md
+services/traffic_audit/README.md

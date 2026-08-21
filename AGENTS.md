@@ -149,3 +149,21 @@ overrides a rule for its subtree.
 - Respect existing conventions before inventing new ones.
 - Keep commits, branches, and filenames boring where possible.
 - When the codebase is loud, answer with precision.
+
+## Documentation Maintenance
+- Every `.md` file must have valid cross-references. If a referenced file, directory,
+  service, or env var does not exist, fix the reference or remove the dead content.
+- Historical/superseded documents must carry a status blockquote at the top
+  (`> **Status: Historical / superseded.**`) and a one-line warning after the first
+  heading stating that the body contains references to retired files, services, or
+  technologies.
+- AGENTS.md files must not duplicate rules from their parent. Each subtree file should
+  contain only service-specific rules. If a rule appears in both a parent and child
+  AGENTS.md, remove it from the child.
+- When adding or removing a service, update the root AGENTS.md Repo Anatomy section
+  and the relevant subtree AGENTS.md in the same change.
+- When adding a new AGENTS.md, keep it under 60 lines. If it exceeds that, split the
+  excess into a companion README.
+- Do not mix YAML agent definitions (opencode config, persona blocks) into AGENTS.md.
+  Agent config belongs in `.opencode/` or a dedicated config file.
+- Verify documentation with `python3 scripts/check-docs.py` after changes.

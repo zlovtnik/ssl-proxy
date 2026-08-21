@@ -142,6 +142,12 @@ func validateDriverConfig(cfg *mysql.Config) error {
 }
 
 func registerTLSConfig(opts Options) (string, error) {
+	if strings.TrimSpace(opts.TLSCAFile) == "" {
+		if opts.TLSCertFile != "" || opts.TLSKeyFile != "" || opts.TLSServerName != "" {
+			return "", errors.New("TiDB TLS CA file is required when TLS settings are configured")
+		}
+		return "", nil
+	}
 	caPEM, err := os.ReadFile(opts.TLSCAFile)
 	if err != nil {
 		return "", fmt.Errorf("read TiDB CA certificate: %w", err)

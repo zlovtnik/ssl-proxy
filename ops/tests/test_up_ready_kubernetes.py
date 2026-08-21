@@ -93,27 +93,25 @@ class UpReadyKubernetesTest(unittest.TestCase):
             },
         )
 
-    def test_sync_tidb_tls_reuses_valid_existing_pair(self):
+    def test_sync_tidb_secrets_does_not_read_or_apply_tls_material(self):
         ctx = UpReadyContext(settings=Settings())
-        with tempfile.TemporaryDirectory() as directory:
-            ca_payload, tls_payload = self._tidb_tls_secret_payloads(Path(directory))
-            with (
-                patch(
-                    "sslproxy_ops.commands.up_ready.kubernetes._secret_exists",
-                    return_value=True,
-                ),
-                patch(
-                    "sslproxy_ops.commands.up_ready.kubernetes._secret_payload",
-                    side_effect=[ca_payload, tls_payload],
-                ),
-                patch(
-                    "sslproxy_ops.commands.up_ready.kubernetes._apply_tidb_tls_material"
-                ) as apply_tls,
-            ):
-                self.assertTrue(sync_tidb_secrets(ctx))
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._secret_exists",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._secret_payload"
+            ) as read_tls,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._apply_tidb_tls_material"
+            ) as apply_tls,
+        ):
+            self.assertTrue(sync_tidb_secrets(ctx))
 
+        read_tls.assert_not_called()
         apply_tls.assert_not_called()
-        self.assertEqual(len(ctx.tidb_tls_cert_checksum), 64)
+        self.assertIsNone(ctx.tidb_tls_cert_checksum)
 
     def test_tidb_tls_validation_rejects_wrong_key_and_missing_san(self):
         with (
@@ -165,7 +163,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertFalse(valid)
         self.assertIn("expires within 30 days", detail)
 
-    def test_sync_tidb_tls_forced_rotation_applies_new_pair(self):
+    def test_sync_tidb_secrets_ignores_retired_tls_rotation_flag(self):
         settings = Settings()
         settings.rotate_tidb_tls = True
         ctx = UpReadyContext(settings=settings)
@@ -175,56 +173,30 @@ class UpReadyKubernetesTest(unittest.TestCase):
                 return_value=True,
             ),
             patch(
-                "sslproxy_ops.commands.up_ready.kubernetes._secret_payload",
-                return_value=None,
-            ),
-            patch(
                 "sslproxy_ops.commands.up_ready.kubernetes._apply_tidb_tls_material"
             ) as apply_tls,
-            patch(
-                "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
-                return_value=False,
-            ),
         ):
             self.assertTrue(sync_tidb_secrets(ctx))
 
-        apply_tls.assert_called_once()
-        self.assertEqual(len(ctx.tidb_tls_cert_checksum), 64)
+        apply_tls.assert_not_called()
+        self.assertIsNone(ctx.tidb_tls_cert_checksum)
 
-    def test_sync_tidb_tls_restores_previous_pair_when_rollout_fails(self):
+    def test_sync_tidb_secrets_never_restarts_tls_consumers(self):
         settings = Settings()
         settings.rotate_tidb_tls = True
         ctx = UpReadyContext(settings=settings)
-        with tempfile.TemporaryDirectory() as directory:
-            ca_payload, tls_payload = self._tidb_tls_secret_payloads(Path(directory))
-            with (
-                patch(
-                    "sslproxy_ops.commands.up_ready.kubernetes._secret_exists",
-                    return_value=True,
-                ),
-                patch(
-                    "sslproxy_ops.commands.up_ready.kubernetes._secret_payload",
-                    side_effect=[ca_payload, tls_payload],
-                ),
-                patch(
-                    "sslproxy_ops.commands.up_ready.kubernetes._apply_tidb_tls_material"
-                ),
-                patch(
-                    "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
-                    return_value=True,
-                ),
-                patch(
-                    "sslproxy_ops.commands.up_ready.kubernetes._restart_tidb_tls_consumers",
-                    side_effect=[UpReadyError("rollout failed"), None],
-                ),
-                patch(
-                    "sslproxy_ops.commands.up_ready.kubernetes._apply_secret_payload"
-                ) as restore,
-                self.assertRaisesRegex(UpReadyError, "previous pair was restored"),
-            ):
-                sync_tidb_secrets(ctx)
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._secret_exists",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._restart_tidb_tls_consumers"
+            ) as restart,
+        ):
+            self.assertTrue(sync_tidb_secrets(ctx))
 
-        self.assertEqual(restore.call_count, 2)
+        restart.assert_not_called()
 
     def test_ensure_tidb_ready_recovers_stale_checksum(self):
         ctx = UpReadyContext(settings=Settings())
@@ -611,14 +583,14 @@ class UpReadyKubernetesTest(unittest.TestCase):
         )
         side_effects = []
         for name in PREFLIGHT_REQUIRED_SECRETS:
-            side_effects.append(present if name != "tidb-client-ca" else missing)
+            side_effects.append(present if name != "tidb-root" else missing)
 
         with (
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
                 side_effect=side_effects,
             ) as mocked,
-            self.assertRaisesRegex(UpReadyError, "tidb-client-ca"),
+            self.assertRaisesRegex(UpReadyError, "tidb-root"),
         ):
             preflight_required_secrets(ctx)
 
@@ -653,7 +625,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
     def test_preflight_required_secrets_constant_covers_all_chart_references(self):
         expected = {
             "redis-runtime",
-            "tidb-client-ca",
+            "tidb-root",
             "tidb-octopus",
             "tidb-atheros-search",
             "tidb-schema-migrator",

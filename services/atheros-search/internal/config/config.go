@@ -5,12 +5,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/viper"
 )
 
@@ -58,8 +60,32 @@ type Config struct {
 func Load() (Config, error) {
 	env := viper.New()
 	env.AutomaticEnv()
+	tidbDSN := strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_DSN"))
+	if tidbDSN == "" {
+		tidbHost := strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_HOST"))
+		tidbPort := envInt("ATHSEARCH_TIDB_PORT", 4000)
+		tidbDatabase := envString("ATHSEARCH_TIDB_DATABASE", "atheros_search")
+		tidbUser := envString("ATHSEARCH_TIDB_USER", "atheros_search_runtime")
+		tidbPassword := os.Getenv("ATHSEARCH_TIDB_PASSWORD")
+		if tidbHost == "" {
+			return Config{}, errors.New("ATHSEARCH_TIDB_HOST is required when ATHSEARCH_TIDB_DSN is not set")
+		}
+		if tidbPort < 1 || tidbPort > 65535 {
+			return Config{}, errors.New("ATHSEARCH_TIDB_PORT must be between 1 and 65535")
+		}
+		if strings.TrimSpace(tidbPassword) == "" {
+			return Config{}, errors.New("ATHSEARCH_TIDB_PASSWORD is required when ATHSEARCH_TIDB_DSN is not set")
+		}
+		tidbDSN = (&mysql.Config{
+			User:   tidbUser,
+			Passwd: tidbPassword,
+			Net:    "tcp",
+			Addr:   net.JoinHostPort(tidbHost, strconv.Itoa(tidbPort)),
+			DBName: tidbDatabase,
+		}).FormatDSN()
+	}
 	cfg := Config{
-		TiDBDSN:                  strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_DSN")),
+		TiDBDSN:                  tidbDSN,
 		TiDBTLSCAFile:            strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_CA_FILE")),
 		TiDBTLSCertFile:          strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_CERT_FILE")),
 		TiDBTLSKeyFile:           strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_KEY_FILE")),
@@ -93,9 +119,6 @@ func Load() (Config, error) {
 		WSEnabled:                envBool("ATHSEARCH_WS_ENABLED", false),
 	}
 
-	if cfg.TiDBDSN == "" {
-		return cfg, errors.New("ATHSEARCH_TIDB_DSN is required")
-	}
 	if cfg.WorkerEnabled {
 		if cfg.EmbeddingBackend == "" {
 			return cfg, errors.New("ATHSEARCH_EMBEDDING_BACKEND is required when workers are enabled")
@@ -116,13 +139,13 @@ func Load() (Config, error) {
 	if strings.Contains(cfg.TiDBDSN, "://") {
 		return cfg, errors.New("ATHSEARCH_TIDB_DSN must be a native MySQL DSN")
 	}
-	if cfg.TiDBTLSCAFile == "" {
-		return cfg, errors.New("ATHSEARCH_TIDB_TLS_CA_FILE is required")
-	}
 	if (cfg.TiDBTLSCertFile == "") != (cfg.TiDBTLSKeyFile == "") {
 		return cfg, errors.New("ATHSEARCH_TIDB_TLS_CERT_FILE and ATHSEARCH_TIDB_TLS_KEY_FILE must be configured together")
 	}
-	if cfg.TiDBTLSServerName == "" {
+	if cfg.TiDBTLSCAFile == "" && (cfg.TiDBTLSCertFile != "" || cfg.TiDBTLSKeyFile != "" || cfg.TiDBTLSServerName != "") {
+		return cfg, errors.New("ATHSEARCH_TIDB_TLS_CA_FILE is required when any TiDB TLS setting is configured")
+	}
+	if cfg.TiDBTLSCAFile != "" && cfg.TiDBTLSServerName == "" {
 		return cfg, errors.New("ATHSEARCH_TIDB_TLS_SERVER_NAME is required")
 	}
 	if len(cfg.TiDBSchemaManifestSHA256) != sha256.Size*2 {
