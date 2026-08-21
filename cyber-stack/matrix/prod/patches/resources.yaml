@@ -22,7 +22,7 @@ metadata:
   name: ssl-proxy-java-coordinator
   namespace: ssl-proxy
 spec:
-  replicas: 4
+  replicas: 3
   template:
     spec:
       containers:

@@ -116,8 +116,17 @@ jobs:
       - name: Verify Docker
         run: docker version
 
+      - name: Verify Octopus source identity
+        run: make octopus-source-integrity
+
       - name: Test Octopus
         run: cd services/octopus && sbt test
+
+      - name: Assemble and inspect Octopus artifact
+        run: |
+          cd services/octopus
+          sbt assembly
+          python3 ../../scripts/octopus_image_contract.py jar target/scala-3.*/octopus.jar
 
   traffic-audit:
     name: Traffic audit gate

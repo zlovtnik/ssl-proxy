@@ -25,6 +25,7 @@ pipeline {
         checkout scm
         sh 'git submodule sync --recursive'
         sh 'git submodule update --init --recursive'
+        sh 'make octopus-source-integrity'
       }
     }
 

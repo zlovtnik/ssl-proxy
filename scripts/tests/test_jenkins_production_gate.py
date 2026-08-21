@@ -15,6 +15,15 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn("disableConcurrentBuilds(abortPrevious: true)", pipeline)
         self.assertNotIn("disableConcurrentBuilds()", pipeline)
 
+    def test_pipeline_verifies_octopus_pin_before_buildx_preflight(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        submodule_update = pipeline.index("git submodule update --init --recursive")
+        source_integrity = pipeline.index("make octopus-source-integrity")
+        buildx_preflight = pipeline.index("stage('Registry and Buildx preflight')")
+
+        self.assertLess(submodule_update, source_integrity)
+        self.assertLess(source_integrity, buildx_preflight)
+
     def test_kubectl_is_version_and_checksum_pinned(self) -> None:
         dockerfile = (REPOSITORY_ROOT / "docker/jenkins/Dockerfile").read_text(
             encoding="utf-8"

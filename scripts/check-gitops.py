@@ -605,31 +605,37 @@ OCTOPUS_RUNTIME_PROCESSORS = {
 }
 
 
-def _check_prod_octopus_runtime(
+def _check_octopus_runtime(
     rendered: Documents | str, relative: str
 ) -> list[str]:
     deployments = _find(
         _documents(rendered), "Deployment", "ssl-proxy-java-coordinator"
     )
     if len(deployments) != 1:
-        return [f"{relative}: expected one production Octopus Deployment"]
+        return [f"{relative}: expected one Octopus Deployment"]
     containers = [
         container
         for container in _pod_containers(deployments[0])
         if container.get("name") == "java-coordinator"
     ]
     if len(containers) != 1:
-        return [f"{relative}: expected one production Octopus container"]
+        return [f"{relative}: expected one Octopus container"]
     environment = _list(containers[0].get("env"))
+    expected_environment = "development" if "/dev" in relative else "production"
     expected = {
         "TIDB_ENABLED": "true",
         "SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR": "1",
         "OCTOPUS_PROCESSORS_ENABLED": "true",
         "OCTOPUS_CONSUMERS_ENABLED": "true",
         "OCTOPUS_ARCHIVE_ENABLED": "true",
-        "OCTOPUS_ENVIRONMENT": "production",
+        "OCTOPUS_ENVIRONMENT": expected_environment,
     }
     errors: list[str] = []
+    if (
+        expected_environment == "production"
+        and _path(deployments[0], "spec", "replicas") != 3
+    ):
+        errors.append(f"{relative}: production Octopus requires exactly 3 replicas")
     for variable, value in expected.items():
         entries = [
             _mapping(entry)
@@ -638,7 +644,7 @@ def _check_prod_octopus_runtime(
         ]
         if len(entries) != 1 or entries[0].get("value") != value:
             errors.append(
-                f"{relative}: production Octopus runtime requires {variable}={value}"
+                f"{relative}: Octopus runtime requires {variable}={value}"
             )
 
     names = {
@@ -664,13 +670,13 @@ def _check_prod_octopus_runtime(
         missing = sorted(OCTOPUS_RUNTIME_PROCESSORS - configured_processors)
         extra = sorted(configured_processors - OCTOPUS_RUNTIME_PROCESSORS)
         errors.append(
-            f"{relative}: production Octopus must enable the complete processor catalog; "
+            f"{relative}: Octopus must enable the complete processor catalog; "
             f"missing={','.join(missing) or '-'} extra={','.join(extra) or '-'}"
         )
     unexpected = sorted(name for name in names if name.startswith("OCTOPUS_CUTOVER_"))
     if unexpected:
         errors.append(
-            f"{relative}: production Octopus contains retired cutover inputs: "
+            f"{relative}: Octopus contains retired cutover inputs: "
             f"{', '.join(unexpected)}"
         )
     return errors
@@ -1811,19 +1817,21 @@ def check_repository(root: Path, executable: str) -> list[str]:
             errors.extend(_check_observability_contract(documents, relative))
 
     errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))
-    production_render_checks = {
+    environment_render_checks = {
+        "cyber-stack/matrix/dev/app-stack": (_check_octopus_runtime,),
+        "cyber-stack/matrix/dev": (_check_octopus_runtime,),
         "cyber-stack/matrix/prod/data-plane": (_check_prod_alloy_positions,),
         "cyber-stack/matrix/prod/app-stack": (
             _check_prod_keycloak_external_tidb,
-            _check_prod_octopus_runtime,
+            _check_octopus_runtime,
         ),
         "cyber-stack/matrix/prod": (
             _check_prod_alloy_positions,
             _check_prod_keycloak_external_tidb,
-            _check_prod_octopus_runtime,
+            _check_octopus_runtime,
         ),
     }
-    for relative, checks in production_render_checks.items():
+    for relative, checks in environment_render_checks.items():
         if relative not in rendered_kustomizations:
             continue
         for check in checks:

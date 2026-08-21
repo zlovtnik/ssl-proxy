@@ -51,6 +51,11 @@ esac
 repository_root="${SSL_PROXY_REPOSITORY_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 kustomize="${KUSTOMIZE:-kustomize}"
 
+if [ "$service" = "java-coordinator" ]; then
+  python3 "$repository_root/scripts/octopus_image_contract.py" source \
+    --repository-root "$repository_root"
+fi
+
 if ! command -v "$kustomize" >/dev/null 2>&1; then
   echo "Kustomize executable is unavailable: $kustomize" >&2
   exit 1

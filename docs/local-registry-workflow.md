@@ -93,6 +93,25 @@ the root Makefile. The Compose-only `wg-key-rotator` remains part of
 `publish-all`; it is intentionally excluded from environment-aware
 `make publish` because it has no Kubernetes image contract.
 
+Octopus publication is fail-closed. Before `publish-java-coordinator` can build
+or push, the parent checkout and `services/octopus` worktree must both be clean,
+and the checked-out Octopus commit must exactly equal the parent's gitlink. The
+image build rejects assembled JARs containing the retired cutover package,
+`CutoverConfig`, cutover verifier classes, or the obsolete replication-factor
+and mandatory-TLS validation. The runtime image records the parent revision in
+`org.opencontainers.image.revision` and the submodule revision in
+`io.ssl-proxy.octopus.revision`.
+
+Inspect a locally loaded candidate before accepting its digest:
+
+```bash
+make check-java-coordinator-image IMAGE=ssl-proxy-local/java-coordinator:$TAG
+```
+
+The same clean source-integrity check runs before either dev or production
+`bump-digest-java-coordinator`; a digest cannot be promoted from an unrelated,
+dirty, or mis-pinned checkout.
+
 ## UI API base
 
 For a standalone static UI build, set a reachable API origin:
