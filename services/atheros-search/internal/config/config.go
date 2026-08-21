@@ -77,11 +77,12 @@ func Load() (Config, error) {
 			return Config{}, errors.New("ATHSEARCH_TIDB_PASSWORD is required when ATHSEARCH_TIDB_DSN is not set")
 		}
 		tidbDSN = (&mysql.Config{
-			User:   tidbUser,
-			Passwd: tidbPassword,
-			Net:    "tcp",
-			Addr:   net.JoinHostPort(tidbHost, strconv.Itoa(tidbPort)),
-			DBName: tidbDatabase,
+			User:                 tidbUser,
+			Passwd:               tidbPassword,
+			Net:                  "tcp",
+			Addr:                 net.JoinHostPort(tidbHost, strconv.Itoa(tidbPort)),
+			DBName:               tidbDatabase,
+			AllowNativePasswords: true,
 		}).FormatDSN()
 	}
 	cfg := Config{

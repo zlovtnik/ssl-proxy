@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,6 +58,9 @@ func TestLoadBuildsPasswordBasedTiDBConfigurationWithoutTLS(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Contains(t, cfg.TiDBDSN, "atheros_search_runtime:secret@tcp(tidb.example.test:4000)/atheros_search")
+	driverConfig, err := mysql.ParseDSN(cfg.TiDBDSN)
+	require.NoError(t, err)
+	require.True(t, driverConfig.AllowNativePasswords)
 	require.Empty(t, cfg.TiDBTLSCAFile)
 	require.Empty(t, cfg.TiDBTLSServerName)
 }

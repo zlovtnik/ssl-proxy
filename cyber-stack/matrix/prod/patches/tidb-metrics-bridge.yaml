@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: ssl-proxy-telemetry-tidb-metrics-bridge
   namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   replicas: 1
   template:
