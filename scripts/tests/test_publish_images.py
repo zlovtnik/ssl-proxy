@@ -126,7 +126,9 @@ class PublishImagesTest(unittest.TestCase):
         self.assertIn("ssl-proxy: MATCH", report)
         self.assertIn("java-coordinator: UNPINNED", report)
         self.assertIn(
-            f"make bump-digest-java-coordinator ENV=prod DIGEST={NEW_DIGEST}", report
+            f"make bump-digest-java-coordinator ENV=prod DIGEST={NEW_DIGEST} "
+            f"IMAGE=registry.test:5000/releases/java-coordinator@{NEW_DIGEST}",
+            report,
         )
         for service, command in zip(FIRST_PARTY_SERVICES, commands, strict=True):
             self.assertIn(

@@ -207,6 +207,16 @@ def repository_from_kustomization(path: Path, service: str) -> str:
     return _validate_repository(matches[0].get("newName"), service=service, path=path)
 
 
+def image_from_kustomization(path: Path, service: str) -> tuple[str, str]:
+    entries = _image_entries(path)
+    matches = entries.get(service, [])
+    if len(matches) != 1:
+        raise ImageContractError(
+            f"{path} must contain exactly one image mapping for {service}; found {len(matches)}"
+        )
+    return _validate_entry(service, matches[0], path=path)
+
+
 def extract_buildx_digest(metadata: Mapping[str, Any]) -> str:
     """Extract the pushed manifest digest from Docker Buildx metadata."""
 
@@ -291,6 +301,14 @@ def _repository_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _pin_command(arguments: argparse.Namespace) -> int:
+    repository, digest = image_from_kustomization(
+        arguments.kustomization, arguments.service
+    )
+    print(f"{repository}\t{digest}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -315,6 +333,13 @@ def build_parser() -> argparse.ArgumentParser:
     repository.add_argument("--kustomization", type=Path, required=True)
     repository.add_argument("--service", required=True)
     repository.set_defaults(handler=_repository_command)
+
+    pin = subparsers.add_parser(
+        "pin", help="read one image repository and digest from a Kustomization"
+    )
+    pin.add_argument("--kustomization", type=Path, required=True)
+    pin.add_argument("--service", required=True)
+    pin.set_defaults(handler=_pin_command)
     return parser
 
 

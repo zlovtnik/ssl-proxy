@@ -50,9 +50,10 @@ esac
 
 repository_root="${SSL_PROXY_REPOSITORY_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 kustomize="${KUSTOMIZE:-kustomize}"
+octopus_contract="$repository_root/scripts/octopus_image_contract.py"
 
 if [ "$service" = "java-coordinator" ]; then
-  python3 "$repository_root/scripts/octopus_image_contract.py" source \
+  python3 "$octopus_contract" source \
     --repository-root "$repository_root"
 fi
 
@@ -99,6 +100,51 @@ if [ "$slice_new_name" != "$aggregate_new_name" ]; then
   exit 2
 fi
 
+promotion_record="$slice_overlay/java-coordinator-promotion.json"
+if [ "$service" = "java-coordinator" ]; then
+  candidate_image="${JAVA_COORDINATOR_IMAGE:-}"
+  expected_candidate="$slice_new_name@$digest"
+  if [ -z "$candidate_image" ]; then
+    echo "JAVA_COORDINATOR_IMAGE is required for java-coordinator promotion" >&2
+    exit 2
+  fi
+  if [ "$candidate_image" != "$expected_candidate" ]; then
+    echo "java-coordinator candidate must be the exact canonical digest reference: expected $expected_candidate" >&2
+    exit 2
+  fi
+
+  if [ "$environment" = "prod" ]; then
+    dev_slice="$repository_root/cyber-stack/matrix/dev/app-stack/kustomization.yaml"
+    dev_aggregate="$repository_root/cyber-stack/matrix/dev/kustomization.yaml"
+    dev_slice_pin="$(python3 "$repository_root/scripts/image_contract.py" pin \
+      --kustomization "$dev_slice" --service java-coordinator)"
+    dev_aggregate_pin="$(python3 "$repository_root/scripts/image_contract.py" pin \
+      --kustomization "$dev_aggregate" --service java-coordinator)"
+    if [ "$dev_slice_pin" != "$dev_aggregate_pin" ]; then
+      echo "dev java-coordinator pin differs between app-stack and aggregate" >&2
+      exit 2
+    fi
+    IFS=$'\t' read -r dev_repository dev_digest <<<"$dev_slice_pin"
+    if [ "$dev_digest" != "$digest" ]; then
+      echo "production java-coordinator digest must exactly match the tested dev pin: dev=$dev_digest requested=$digest" >&2
+      exit 2
+    fi
+    if [ "$dev_repository" != "$slice_new_name" ]; then
+      echo "dev and production java-coordinator repositories must match for exact digest promotion" >&2
+      exit 2
+    fi
+    dev_promotion_record="$repository_root/cyber-stack/matrix/dev/app-stack/java-coordinator-promotion.json"
+    python3 "$octopus_contract" image "$candidate_image" \
+      --expected-digest "$digest" \
+      --promotion-record "$dev_promotion_record" \
+      --repository-root "$repository_root"
+  else
+    python3 "$octopus_contract" image "$candidate_image" \
+      --expected-digest "$digest" \
+      --repository-root "$repository_root"
+  fi
+fi
+
 backup_dir="$(mktemp -d "${TMPDIR:-/tmp}/ssl-proxy-image-bump.XXXXXX")"
 slice_kustomization="$slice_overlay/kustomization.yaml"
 aggregate_kustomization="$aggregate_overlay/kustomization.yaml"
@@ -106,6 +152,12 @@ slice_backup="$backup_dir/slice-kustomization.yaml"
 aggregate_backup="$backup_dir/aggregate-kustomization.yaml"
 cp "$slice_kustomization" "$slice_backup"
 cp "$aggregate_kustomization" "$aggregate_backup"
+promotion_record_existed=0
+promotion_record_backup="$backup_dir/java-coordinator-promotion.json"
+if [ "$service" = "java-coordinator" ] && [ -f "$promotion_record" ]; then
+  cp "$promotion_record" "$promotion_record_backup"
+  promotion_record_existed=1
+fi
 committed=0
 
 cleanup() {
@@ -114,14 +166,32 @@ cleanup() {
   if [ "$committed" -ne 1 ]; then
     cp "$slice_backup" "$slice_kustomization"
     cp "$aggregate_backup" "$aggregate_kustomization"
+    if [ "$service" = "java-coordinator" ]; then
+      if [ "$promotion_record_existed" -eq 1 ]; then
+        cp "$promotion_record_backup" "$promotion_record"
+      else
+        rm -f "$promotion_record"
+      fi
+    fi
   fi
-  rm -f "$slice_backup" "$aggregate_backup"
+  rm -f "$slice_backup" "$aggregate_backup" "$promotion_record_backup"
   rmdir "$backup_dir"
   exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+if [ "$service" = "java-coordinator" ]; then
+  if [ "$environment" = "dev" ]; then
+    python3 "$octopus_contract" record "$promotion_record" \
+      --repository "$slice_new_name" \
+      --digest "$digest" \
+      --repository-root "$repository_root"
+  else
+    cp "$dev_promotion_record" "$promotion_record"
+  fi
+fi
 
 update_overlay "$slice_overlay" "$slice_new_name"
 update_overlay "$aggregate_overlay" "$aggregate_new_name"

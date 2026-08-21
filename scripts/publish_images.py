@@ -68,6 +68,8 @@ def publication_report(
     bump_command = (
         f"make bump-digest-{contract.service} ENV={environment} DIGEST={pushed_digest}"
     )
+    if contract.service == "java-coordinator":
+        bump_command += f" IMAGE={contract.repository}@{pushed_digest}"
     return "\n".join(
         (
             f"{contract.service}: {status}",

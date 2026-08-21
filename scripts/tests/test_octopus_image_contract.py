@@ -15,9 +15,13 @@ from octopus_image_contract import (  # noqa: E402
     ContractError,
     OCTOPUS_REVISION_LABEL,
     PARENT_REVISION_LABEL,
+    check_image,
+    check_image_digest,
     check_jar,
     check_labels,
+    load_promotion_record,
     source_revisions,
+    write_promotion_record,
 )
 
 
@@ -127,6 +131,63 @@ class OctopusImageContractTest(unittest.TestCase):
         labels[OCTOPUS_REVISION_LABEL] = "wrong"
         with self.assertRaisesRegex(ContractError, "OCI label mismatch"):
             check_labels(labels, "parent-sha", "octopus-sha")
+
+    def test_candidate_must_be_exact_inspected_repository_digest(self) -> None:
+        digest = "sha256:" + "a" * 64
+        reference = f"registry.test/team/java-coordinator@{digest}"
+        inspected = {"RepoDigests": [reference]}
+
+        check_image_digest(
+            reference, inspected, "registry.test/team/java-coordinator", digest
+        )
+
+        with self.assertRaisesRegex(ContractError, "exact canonical digest reference"):
+            check_image_digest(
+                "registry.test/team/java-coordinator:latest",
+                inspected,
+                "registry.test/team/java-coordinator",
+                digest,
+            )
+        with self.assertRaisesRegex(ContractError, "does not associate"):
+            check_image_digest(
+                reference,
+                {"RepoDigests": []},
+                "registry.test/team/java-coordinator",
+                digest,
+            )
+
+    def test_promotion_record_round_trips_verified_source_and_digest(self) -> None:
+        path = self.root / "promotion.json"
+        digest = "sha256:" + "b" * 64
+        parent = "1" * 40
+        octopus = "2" * 40
+        write_promotion_record(
+            path,
+            "registry.test/team/java-coordinator",
+            digest,
+            parent,
+            octopus,
+        )
+
+        self.assertEqual(
+            (
+                "registry.test/team/java-coordinator",
+                digest,
+                parent,
+                octopus,
+            ),
+            load_promotion_record(path),
+        )
+
+        with self.assertRaisesRegex(
+            ContractError, "does not match verified dev promotion record"
+        ):
+            check_image(
+                f"registry.test/team/java-coordinator@{'sha256:' + 'c' * 64}",
+                self.root,
+                "sha256:" + "c" * 64,
+                path,
+            )
 
 
 if __name__ == "__main__":

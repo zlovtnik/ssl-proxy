@@ -45,12 +45,17 @@ the mutable commit or `latest` registry tags.
 
 For an Octopus recovery rebuild, start from a new recursive checkout of `main`,
 run `make octopus-source-integrity`, and use a cache-free Buildx build. Load the
-candidate locally and run
-`make check-java-coordinator-image IMAGE=<local-candidate>` before accepting the
-registry digest. The check verifies both embedded source revisions and rejects
-retired cutover classes and obsolete replication/TLS validation in the JAR.
-Record the digest in dev first and complete runtime acceptance there. Copy that
-exact digest to production in a separate reviewed change; never rebuild between
+exact pushed `repository@sha256:...` candidate locally and run
+`make check-java-coordinator-image IMAGE=<repository@digest> DIGEST=<digest>`
+before accepting it. Record it in dev with the
+`make bump-digest-java-coordinator` target, passing `ENV=dev`, the digest, and
+the exact digest-qualified image as `IMAGE`. The check verifies the
+Docker-reported digest and both embedded source revisions, and rejects retired
+cutover classes and obsolete replication/TLS validation in the JAR. The dev
+bump records that provenance
+beside the pin. After runtime acceptance, production promotion must supply the
+same candidate and exact current dev digest; the command rejects any other
+digest and copies the dev provenance into production. Never rebuild between
 environments. If rollback is required, revert the runtime configuration and
 digest promotion together because reverting only the digest can recreate a
 configuration/artifact mismatch.

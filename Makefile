@@ -137,7 +137,8 @@ octopus-source-integrity:
 
 check-java-coordinator-image:
 	@test -n "$(IMAGE)" || { echo "IMAGE is required" >&2; exit 2; }
-	python3 scripts/octopus_image_contract.py image "$(IMAGE)"
+	@test -n "$(DIGEST)" || { echo "DIGEST is required (sha256:...)" >&2; exit 2; }
+	python3 scripts/octopus_image_contract.py image "$(IMAGE)" --expected-digest "$(DIGEST)"
 
 docs-check:
 	python3 scripts/check-docs.py
@@ -242,6 +243,11 @@ bump-digest-$(1):
 	KUSTOMIZE="$(KUSTOMIZE_EDITOR)" ./scripts/bump-image-digest.sh "$(1)" "$(ENV)" "$(DIGEST)"
 endef
 
-$(foreach service,$(DEPLOYABLE_SERVICES),$(eval $(call bump_digest_rule,$(service))))
+$(foreach service,$(filter-out java-coordinator,$(DEPLOYABLE_SERVICES)),$(eval $(call bump_digest_rule,$(service))))
 
 bump-digest-java-coordinator: octopus-source-integrity
+	@test -n "$(ENV)" || { echo "ENV is required (dev or prod)" >&2; exit 2; }
+	@test -n "$(DIGEST)" || { echo "DIGEST is required (sha256:...)" >&2; exit 2; }
+	@test -n "$(IMAGE)" || { echo "IMAGE is required as repository@sha256:..." >&2; exit 2; }
+	JAVA_COORDINATOR_IMAGE="$(IMAGE)" KUSTOMIZE="$(KUSTOMIZE_EDITOR)" \
+		./scripts/bump-image-digest.sh java-coordinator "$(ENV)" "$(DIGEST)"

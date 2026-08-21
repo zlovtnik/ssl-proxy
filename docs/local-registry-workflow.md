@@ -102,15 +102,25 @@ and mandatory-TLS validation. The runtime image records the parent revision in
 `org.opencontainers.image.revision` and the submodule revision in
 `io.ssl-proxy.octopus.revision`.
 
-Inspect a locally loaded candidate before accepting its digest:
+Pull and inspect the exact pushed candidate before accepting its digest:
 
 ```bash
-make check-java-coordinator-image IMAGE=ssl-proxy-local/java-coordinator:$TAG
+digest=sha256:<64-lowercase-hex>
+image="192.168.1.242:5000/java-coordinator@$digest"
+docker pull "$image"
+make check-java-coordinator-image IMAGE="$image" DIGEST="$digest"
+make bump-digest-java-coordinator ENV=dev DIGEST="$digest" IMAGE="$image"
 ```
 
-The same clean source-integrity check runs before either dev or production
-`bump-digest-java-coordinator`; a digest cannot be promoted from an unrelated,
-dirty, or mis-pinned checkout.
+The image check requires an exact `repository@sha256:...` reference whose local
+Docker inspection reports that digest, then verifies the OCI source labels and
+JAR. The dev bump writes those verified parent/Octopus revisions and image
+identity to `java-coordinator-promotion.json` beside the dev app-stack pin.
+Production accepts only the exact current dev digest, re-inspects that same
+candidate against the dev provenance, and copies the record with the production
+pin. The clean source-integrity check also runs before both bumps, so a digest
+cannot be promoted from an unrelated, dirty, mis-pinned, uninspected, or
+dev-untested artifact.
 
 ## UI API base
 
