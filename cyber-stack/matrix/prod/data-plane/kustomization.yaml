@@ -2,41 +2,41 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: prod-ssl-proxy
 resources:
-  - ../../../base/redpanda/statefulset.yaml
-  - ../../../base/minio/statefulset.yaml
-  - ../../../base/redis-runtime/deployment.yaml
-  - ../../../base/tidb-bootstrap
-  - ../../../base/tidb-schema-executor
-  - ../../../base/telemetry
+- ../../../base/redpanda/statefulset.yaml
+- ../../../base/minio/statefulset.yaml
+- ../../../base/redis-runtime/deployment.yaml
+- ../../../base/tidb-bootstrap
+- ../../../base/tidb-schema-executor
+- ../../../base/telemetry
 configMapGenerator:
-  - name: ssl-proxy-telemetry-prometheus-catalog
-    namespace: ssl-proxy
-    behavior: merge
-    files:
-      - external-service-catalog.yml=../config/prometheus/external-service-catalog.yml
+- behavior: merge
+  files:
+  - external-service-catalog.yml=../config/prometheus/external-service-catalog.yml
+  name: ssl-proxy-telemetry-prometheus-catalog
+  namespace: ssl-proxy
 images:
-  - name: tidb-runtime-schema
-    newName: 192.168.1.242:5000/tidb-runtime-schema
-    digest: sha256:d6473f4611ae0e29d12b621b8c13e3342241bfeab2522f5facb39d2eafb1cefd
-  - name: prom/prometheus
-    digest: sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
-  - name: grafana/grafana
-    digest: sha256:ab5cb380e3ff3172d6c8bd2e7cfd31cce977d2881b260e1f5bc089bf0b759b43
-  - name: grafana/loki
-    digest: sha256:58a6c186ce78ba04d58bfe2a927eff296ba733a430df09645d56cdc158f3ba08
-  - name: grafana/alloy
-    digest: sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
-  - name: otel/opentelemetry-collector-contrib
-    digest: sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
+- digest: sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
+  name: grafana/alloy
+- digest: sha256:ab5cb380e3ff3172d6c8bd2e7cfd31cce977d2881b260e1f5bc089bf0b759b43
+  name: grafana/grafana
+- digest: sha256:58a6c186ce78ba04d58bfe2a927eff296ba733a430df09645d56cdc158f3ba08
+  name: grafana/loki
+- digest: sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
+  name: otel/opentelemetry-collector-contrib
+- digest: sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
+  name: prom/prometheus
+- digest: sha256:895c4db2cc5e2ab6632da43bd95913f53f06f4640f6fb175a033698c22cd1057
+  name: tidb-runtime-schema
+  newName: 192.168.1.242:5000/tidb-runtime-schema
 patches:
-  - path: ../patches/external-schema-executor.yaml
-  - path: ../patches/alloy-positions.yaml
-  - path: ../patches/jaeger-recovery.yaml
-  - path: ../patches/tidb-metrics-bridge.yaml
-  - target:
-      kind: Job
-      name: ssl-proxy-tidb-schema-executor
-    patch: |-
-      - op: replace
-        path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
-        value: schema-migrator-001-10abd5b1ef8462fe4f521e064fc16193e50dec2cf508db34a4b32a9acc59f703
+- path: ../patches/external-schema-executor.yaml
+- path: ../patches/alloy-positions.yaml
+- path: ../patches/jaeger-recovery.yaml
+- path: ../patches/tidb-metrics-bridge.yaml
+- patch: |-
+    - op: replace
+      path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
+      value: schema-migrator-001-10abd5b1ef8462fe4f521e064fc16193e50dec2cf508db34a4b32a9acc59f703
+  target:
+    kind: Job
+    name: ssl-proxy-tidb-schema-executor

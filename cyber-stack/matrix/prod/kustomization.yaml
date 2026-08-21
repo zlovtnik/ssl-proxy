@@ -12,7 +12,7 @@ configMapGenerator:
   name: ssl-proxy-telemetry-prometheus-catalog
   namespace: ssl-proxy
 images:
-- digest: sha256:7e2d7cff9812e6bf979f16a0ddd5fcaa9519bdaccb5c7fccde3b6b73698597c4
+- digest: sha256:a0b3699f0d366b3103b04119d12629d9b618b8c91b8186de00ab1f63c37995f5
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
 - digest: sha256:1136de277d1fdaa33f07fff09e6b15c348b1faa5959a7ef3c9707dcff4513b0f
@@ -33,7 +33,7 @@ images:
 - digest: sha256:013efb1408dc85a50b6021efa80520d596df564ed7dfa1a769961116fe49ef44
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
-- digest: sha256:d6473f4611ae0e29d12b621b8c13e3342241bfeab2522f5facb39d2eafb1cefd
+- digest: sha256:895c4db2cc5e2ab6632da43bd95913f53f06f4640f6fb175a033698c22cd1057
   name: tidb-runtime-schema
   newName: 192.168.1.242:5000/tidb-runtime-schema
 patches:

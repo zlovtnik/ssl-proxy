@@ -12,7 +12,7 @@ resources:
 - ../../../base/atheros-sensor/daemonset.yaml
 - ../../../base/atheros-search
 images:
-- digest: sha256:1c742b5e35bbb80e6ba85a792f193577b80b6917e355ac412bd59733c973b24d
+- digest: sha256:a0b3699f0d366b3103b04119d12629d9b618b8c91b8186de00ab1f63c37995f5
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
 - digest: sha256:e0f87044a0ae83c03fcf7fe82e191e058c08b0dc6ccb7ac12b94b4a4a086f0f3
