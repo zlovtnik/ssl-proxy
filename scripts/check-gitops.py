@@ -575,7 +575,37 @@ def _check_prod_keycloak_external_tidb(
     return errors
 
 
-def _check_prod_octopus_staging(
+OCTOPUS_RUNTIME_PROCESSORS = {
+    "sync-scan-ingestion",
+    "sync-job-planner",
+    "sync-backlog-recovery",
+    "sync-load-dispatch",
+    "sync-load-consumer",
+    "sync-result-consumer",
+    "sync-outbox-publisher",
+    "wireless-frame-normalizer",
+    "wireless-inventory-projector",
+    "wireless-identity-projector",
+    "embedding-preparer",
+    "embedding-text-builder",
+    "behavior-projector",
+    "timing-projector",
+    "baseline-projector",
+    "sequence-projector",
+    "graph-projector",
+    "similarity-projector",
+    "clustering-projector",
+    "dns-alert-projector",
+    "rf-alert-projector",
+    "risk-projector",
+    "event-retention",
+    "search-retention",
+    "stale-worker-cleanup",
+    "scheduled-reconciliation",
+}
+
+
+def _check_prod_octopus_runtime(
     rendered: Documents | str, relative: str
 ) -> list[str]:
     deployments = _find(
@@ -594,10 +624,10 @@ def _check_prod_octopus_staging(
     expected = {
         "TIDB_ENABLED": "true",
         "SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR": "1",
-        "OCTOPUS_PROCESSORS_ENABLED": "false",
-        "OCTOPUS_CONSUMERS_ENABLED": "false",
+        "OCTOPUS_PROCESSORS_ENABLED": "true",
+        "OCTOPUS_CONSUMERS_ENABLED": "true",
+        "OCTOPUS_ARCHIVE_ENABLED": "true",
         "OCTOPUS_ENVIRONMENT": "production",
-        "OCTOPUS_CUTOVER_DEV_BYPASS": "false",
     }
     errors: list[str] = []
     for variable, value in expected.items():
@@ -608,7 +638,7 @@ def _check_prod_octopus_staging(
         ]
         if len(entries) != 1 or entries[0].get("value") != value:
             errors.append(
-                f"{relative}: staged production Octopus requires {variable}={value}"
+                f"{relative}: production Octopus runtime requires {variable}={value}"
             )
 
     names = {
@@ -616,26 +646,32 @@ def _check_prod_octopus_staging(
         for entry in environment
         if _mapping(entry).get("name") is not None
     }
-    if "OCTOPUS_ENABLED_PROCESSORS" in names:
+    processor_entries = [
+        _mapping(entry)
+        for entry in environment
+        if _mapping(entry).get("name") == "OCTOPUS_ENABLED_PROCESSORS"
+    ]
+    configured_processors = (
+        {
+            value.strip()
+            for value in str(processor_entries[0].get("value", "")).split(",")
+            if value.strip()
+        }
+        if len(processor_entries) == 1
+        else set()
+    )
+    if configured_processors != OCTOPUS_RUNTIME_PROCESSORS:
+        missing = sorted(OCTOPUS_RUNTIME_PROCESSORS - configured_processors)
+        extra = sorted(configured_processors - OCTOPUS_RUNTIME_PROCESSORS)
         errors.append(
-            f"{relative}: staged production Octopus must use the empty processor "
-            "catalog default, not an environment string"
+            f"{relative}: production Octopus must enable the complete processor catalog; "
+            f"missing={','.join(missing) or '-'} extra={','.join(extra) or '-'}"
         )
-    cutover_inputs = {
-        "OCTOPUS_CUTOVER_ARTIFACT_PATH",
-        "OCTOPUS_CUTOVER_SIGNATURE_PATH",
-        "OCTOPUS_CUTOVER_PUBLIC_KEY_PATH",
-        "OCTOPUS_CUTOVER_PUBLIC_KEY_BASE64",
-        "OCTOPUS_CUTOVER_PUBLIC_KEY_SHA256",
-        "OCTOPUS_CUTOVER_SCHEMA_VERSION",
-        "OCTOPUS_CUTOVER_CLUSTER_ID",
-        "OCTOPUS_CUTOVER_REQUIRED_CONSUMER_GROUPS",
-    }
-    unexpected = sorted(names & cutover_inputs)
+    unexpected = sorted(name for name in names if name.startswith("OCTOPUS_CUTOVER_"))
     if unexpected:
         errors.append(
-            f"{relative}: staged production Octopus must not contain unsigned "
-            f"cutover inputs: {', '.join(unexpected)}"
+            f"{relative}: production Octopus contains retired cutover inputs: "
+            f"{', '.join(unexpected)}"
         )
     return errors
 
@@ -1779,12 +1815,12 @@ def check_repository(root: Path, executable: str) -> list[str]:
         "cyber-stack/matrix/prod/data-plane": (_check_prod_alloy_positions,),
         "cyber-stack/matrix/prod/app-stack": (
             _check_prod_keycloak_external_tidb,
-            _check_prod_octopus_staging,
+            _check_prod_octopus_runtime,
         ),
         "cyber-stack/matrix/prod": (
             _check_prod_alloy_positions,
             _check_prod_keycloak_external_tidb,
-            _check_prod_octopus_staging,
+            _check_prod_octopus_runtime,
         ),
     }
     for relative, checks in production_render_checks.items():

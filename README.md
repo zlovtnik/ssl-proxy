@@ -103,7 +103,7 @@ from the prod Argo CD Applications.
 | `sync.oracle.result` | Octopus-owned TiDB load outcome; legacy name |
 | `wireless.audit` | Sensor-published schema-versioned wireless events |
 
-Delivery is at least once after the signed cutover boundary, with durable TiDB
+Delivery is at least once from committed Kafka consumer-group offsets, with durable TiDB
 dedupe and topic/partition/offset evidence.
 
 ## Common checks

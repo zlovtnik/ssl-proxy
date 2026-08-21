@@ -15,8 +15,8 @@ local Kustomize context.
    Secrets and production endpoint ConfigMap from
    `cyber-stack/platform-input-contract.yaml` without exposing their values.
 5. Review the rendered diff for the exact environment slice being changed.
-6. Record TiDB schema manifest hashes, runtime grants and signed Redpanda
-   cutover offsets when those contracts change.
+6. Record TiDB schema manifest hashes, runtime grants and Redpanda consumer
+   group offsets when those contracts change.
 
 ## Release and promotion
 
@@ -325,7 +325,8 @@ missing Application, unhealthy status or timeout is a failed release check.
 - Check `SYNC_REDPANDA_BOOTSTRAP_SERVERS` in the rendered Kustomize output.
 - Inspect proxy outbox growth and publisher health.
 - Verify Redpanda topic bootstrap and ACLs.
-- Inspect Octopus consumer group offsets and signed cutover gate.
+- Inspect Octopus consumer membership, committed offsets, per-partition lag,
+  processor state and DLQ growth.
 
 ### Sensor has no events
 
@@ -338,7 +339,7 @@ missing Application, unhealthy status or timeout is a failed release check.
 
 - Verify the rendered TiDB host, port, database, account and explicit
   `TIDB_SSL_MODE=DISABLED` setting.
-- Confirm the canonical manifest and signed cutover artifact.
+- Confirm the canonical manifest and versioned Kafka consumer-group settings.
 - Do not fall back to PostgreSQL.
 
 ### Search readiness fails
@@ -376,8 +377,8 @@ rollback that leaves Git stale.
 
 Do not delete TiDB schemas, consumer evidence, outboxes or sensor backlogs
 during diagnosis. Stop producers or consumers only through a reviewed Git
-change at a documented boundary. Any consumer offset change requires a new
-signed cutover artifact and duplicate-delivery review.
+change at a documented boundary. Any consumer offset reset requires an explicit
+duplicate-delivery review and must preserve TiDB ingestion evidence.
 
 For key rotation, use the staged rotator flow in the
 [WireGuard key rotator README](../apps/wg-key-rotator/README.md); do not replace
@@ -386,16 +387,14 @@ active keys without a candidate health and handshake window.
 ### Locked-topic partition expansion
 
 The locked sync topics are configured for 24 partitions. An upgrade may add
-partitions, but it must not activate consumers against evidence covering only
-the old partition set.
+partitions; existing consumer groups discover new partitions from the broker.
 
-1. Stage Octopus with its consumer lane disabled through the app-stack overlay.
-2. Merge the topic manifest change and verify all locked topics have 24
-   partitions after Argo CD reports healthy.
-3. Capture and sign a new cutover artifact covering every partition and group.
-4. Enable the coordinator replicas through Git and confirm each signed
-   partition is assigned and advancing.
-5. Watch lag per partition with `rpk group describe`.
+1. Merge the topic manifest change and verify the expected partition count
+   after Argo CD reports healthy.
+2. Confirm the active consumer groups rebalance and assign every new partition.
+3. Confirm new partitions start at their earliest retained offset and TiDB
+   ingestion evidence advances with Kafka commits.
+4. Watch lag per partition with `rpk group describe`.
 
 Do not decrease a manifest partition count; Kafka partitions cannot be removed
 in place.

@@ -1,4 +1,4 @@
-# TiDB Runtime and Cutover
+# TiDB Runtime
 
 This is the operational contract for application-owned durable state. The
 canonical component and flow model is in [System Architecture](architecture.md).
@@ -68,7 +68,7 @@ production worker grant model.
 
 ## Locked topics and delivery
 
-The cutover does not rename topics:
+The runtime does not rename topics:
 
 - `sync.scan.request` is producer-to-Octopus work discovery.
 - `sync.oracle.load` is Octopus-owned TiDB load dispatch.
@@ -77,10 +77,12 @@ The cutover does not rename topics:
 The two `sync.oracle.*` names are legacy compatibility labels. No Oracle
 connection is implied.
 
-Delivery remains at least once after the signed cutover offset. Octopus records
-topic, partition and offset evidence, uses durable dedupe keys, and advances
-cursors only at the durable boundary. A cutover must never skip an unsigned
-range or reuse consumer identities without proving the intended offset.
+Delivery remains at least once from committed Kafka consumer-group offsets.
+Groups without committed offsets start at the earliest retained record.
+Octopus records topic, partition and offset evidence, uses durable dedupe keys,
+and advances cursors only at the durable boundary. Consumer identities remain
+versioned so an intentional replay can use a new group without mutating an
+existing group's offsets.
 
 ## Required connection configuration
 
@@ -99,7 +101,7 @@ Every connection parameter consumed by an application must have a matching
 Kustomize ConfigMap, Secret or environment patch source. Keep application
 defaults, the base manifests and both environment slices aligned.
 
-## Cutover procedure
+## Runtime activation procedure
 
 1. Back up existing evidence and record the source consumer-group offsets.
 2. Provision password-only Secrets and reconcile dedicated accounts.
@@ -107,25 +109,25 @@ defaults, the base manifests and both environment slices aligned.
    checksum evidence.
 4. Verify database names, account grants, TiDB version and explicit transport
    mode from each workload network.
-5. Produce and sign the cutover artifact containing cluster identity, schema
-   version, required consumer groups and starting offsets.
-6. Start Octopus with consumers/processors gated off; verify `/health` against
-   TiDB.
-7. Activate consumers at the signed boundary and confirm ingestion evidence,
-   dedupe and cursor movement.
-8. Enable projection/processor lanes only after their dependencies are ready.
+5. Start Octopus with the versioned Kafka consumer groups declared in the
+   platform ConfigMap.
+6. Confirm every input topic is assigned and that new groups begin at the
+   earliest retained offset.
+7. Confirm ingestion evidence, dedupe, Kafka commits and TiDB cursor movement.
+8. Confirm all Octopus-owned processors report ready and their fenced work
+   leases advance.
 9. Enable Atheros Search query traffic; enable workers only when document/job
    production, write grants and embedding backend readiness have been proven.
 10. Retain rollback evidence until the compatibility window closes.
 
 ## Acceptance evidence
 
-A cutover is accepted only when operators can show:
+A runtime activation is accepted only when operators can show:
 
 - schema-executor success and all manifest hashes;
 - explicit plaintext transport and password authentication from each direct client;
 - exact grant output for every runtime account;
-- signed topic/partition/offset boundary;
+- consumer membership, committed offsets and per-partition lag for every input;
 - duplicate-delivery and restart tests without duplicate effects;
 - Atheros Search `/readyz` results for database, schema, vector and embedding
   dependencies;
@@ -138,7 +140,7 @@ failover or production vector-index readiness.
 
 ## Rollback
 
-Stop new consumers before changing offsets. Preserve the signed artifact,
-ingestion evidence and TiDB state. Roll back deployment code without deleting
-canonical schemas or rewinding evidence tables. Any offset change requires a
-new signed boundary and an explicit duplicate/replay analysis.
+Stop new consumers before resetting offsets. Preserve ingestion evidence and
+TiDB state. Roll back deployment code without deleting canonical schemas or
+rewinding evidence tables. Any offset reset requires an explicit
+duplicate/replay analysis.

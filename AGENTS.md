@@ -64,8 +64,9 @@ overrides a rule for its subtree.
   - `sync.scan.request` for producer-to-coordinator work discovery
   - `sync.oracle.load` for coordinator-owned TiDB load dispatch (legacy name)
   - `sync.oracle.result` for coordinator-owned TiDB load outcomes (legacy name)
-- Keep delivery semantics at-least-once after the signed cutover offset, with
-  durable TiDB dedupe and per-topic/partition/offset ingestion evidence.
+- Keep delivery semantics at-least-once from committed Kafka consumer-group
+  offsets, with earliest-retained startup for new groups, durable TiDB dedupe,
+  and per-topic/partition/offset ingestion evidence.
 - Keep wireless sensor persistence indirect: publish `wireless.audit` and the
   matching `sync.scan.request`; do not give the sensor direct database ownership.
 - Keep `atheros-search` schema changes in repository-level `sql/` unless a

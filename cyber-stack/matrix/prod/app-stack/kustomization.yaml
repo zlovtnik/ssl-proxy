@@ -40,7 +40,7 @@ patches:
 - path: ../patches/proxy-replicas.yaml
 - path: ../patches/resources.yaml
 - path: ../patches/external-tidb.yaml
-- path: ../patches/octopus-staged.yaml
+- path: ../patches/octopus-runtime.yaml
 configurations:
 - ../../../base/schema-migrator/kustomizeconfig.yaml
 vars:

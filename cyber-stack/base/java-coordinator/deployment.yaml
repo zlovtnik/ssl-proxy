@@ -134,7 +134,7 @@ spec:
             - name: RETENTION_MAINTENANCE_INTERVAL_MS
               value: "3600000"
             - name: OCTOPUS_ARCHIVE_ENABLED
-              value: "false"
+              value: "true"
             - name: MINIO_ENDPOINT
               value: "http://ssl-proxy-minio.$(POD_NAMESPACE).svc.cluster.local:9000"
             - name: MINIO_ACCESS_KEY_ID
@@ -321,7 +321,17 @@ spec:
             - name: OCTOPUS_PROCESSORS_ENABLED
               value: "true"
             - name: OCTOPUS_ENABLED_PROCESSORS
-              value: ""
+              value: >-
+                sync-scan-ingestion,sync-job-planner,sync-backlog-recovery,
+                sync-load-dispatch,sync-load-consumer,sync-result-consumer,
+                sync-outbox-publisher,wireless-frame-normalizer,
+                wireless-inventory-projector,wireless-identity-projector,
+                embedding-preparer,embedding-text-builder,behavior-projector,
+                timing-projector,baseline-projector,sequence-projector,
+                graph-projector,similarity-projector,clustering-projector,
+                dns-alert-projector,rf-alert-projector,risk-projector,
+                event-retention,search-retention,stale-worker-cleanup,
+                scheduled-reconciliation
             - name: OCTOPUS_PROCESSOR_BATCH_SIZE
               value: "250"
             - name: OCTOPUS_PROCESSOR_INTERVAL_SECONDS
@@ -338,8 +348,6 @@ spec:
               value: "true"
             - name: OCTOPUS_ENVIRONMENT
               value: "production"
-            - name: OCTOPUS_CUTOVER_DEV_BYPASS
-              value: "false"
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: "0.05"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

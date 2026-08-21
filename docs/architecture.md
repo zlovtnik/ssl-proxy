@@ -90,9 +90,10 @@ The sync topic names are compatibility surfaces and are intentionally locked:
 | `sync.oracle.result` | Octopus TiDB load consumer to Octopus result consumer | TiDB load outcomes; `oracle` is a legacy name |
 | `wireless.audit` | Sensor to Redpanda/Octopus | Schema-versioned wireless audit events |
 
-Delivery is at least once after the signed cutover offset. TiDB uniqueness,
-dedupe keys and topic/partition/offset evidence make replay and duplicate
-delivery observable and retry safe.
+Delivery is at least once from committed Kafka consumer-group offsets. A group
+without committed offsets starts at the earliest retained record. TiDB
+uniqueness, dedupe keys and topic/partition/offset evidence make replay and
+duplicate delivery observable and retry safe.
 
 Small payloads may use `inline://json/` references. Filesystem-spooled payloads
 use `outbox://` references and must resolve to JSON in the shared outbox.
@@ -174,7 +175,7 @@ complete topology and current instrumentation limits are in
 - The proxy and sensor have elevated network capabilities. They do not receive
   database credentials.
 - TiDB clients use separate accounts and databases, verified TLS and the
-  table-level grant matrix in [TiDB Runtime Cutover](tidb-runtime-cutover.md).
+  table-level grant matrix in [TiDB Runtime](tidb-runtime-cutover.md).
 - Secrets are materialized outside Git and mounted or referenced through
   Kubernetes Secrets. See [Secret Management](secret-management.md).
 - Search analytics store hashes instead of raw queries or session identifiers

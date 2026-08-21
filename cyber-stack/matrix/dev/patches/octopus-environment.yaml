@@ -11,7 +11,5 @@ spec:
           env:
             - name: OCTOPUS_ENVIRONMENT
               value: "development"
-            - name: OCTOPUS_CUTOVER_DEV_BYPASS
-              value: "true"
             - name: OCTOPUS_CONSUMERS_ENABLED
               value: "true"

@@ -46,7 +46,7 @@ patches:
 - path: patches/alloy-positions.yaml
 - path: patches/remove-bundled-tidb.yaml
 - path: patches/external-tidb.yaml
-- path: patches/octopus-staged.yaml
+- path: patches/octopus-runtime.yaml
 - patch: |-
     - op: replace
       path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash

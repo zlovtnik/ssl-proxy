@@ -31,16 +31,11 @@ trusted LAN. Credentials remain mandatory. The host container must use a
 persistent named volume, `restart: unless-stopped`, SQL bound to
 `192.168.1.242:4000`, and metrics bound to `127.0.0.1:10080`.
 
-Octopus is deliberately staged with TiDB schema/readiness checks enabled while
-its consumer and processor lanes and processor catalog remain disabled. The
-staged configuration truthfully declares the bundled Redpanda replication
-factor as one. Production validation permits that value only in this fully
-disabled stage; any active production runtime still requires a replication
-factor of at least three. Octopus uses the setting only when creating a missing
+Octopus runs with both runtime lanes, archival, and all 26 Octopus-owned
+processors enabled. The bundled Redpanda StatefulSet is a single broker and
+the topic manifest uses replication factor one. This is not a highly available
+broker topology, but it is an accepted availability tradeoff for the current
+Wiretrap deployment and does not disable processing. New consumer groups start
+at the earliest retained record; existing groups resume from committed Kafka
+offsets. Octopus uses the replication setting only when creating a missing
 topic and does not alter an existing topic's replica assignment.
-
-The bundled Redpanda StatefulSet is a single broker and its current manifest
-provisions replica-one topics, so it is not a production-HA transport. Do not
-enable either Octopus runtime lane or any processor until a
-three-broker-capable topology, replica placement, and the signed cutover inputs
-have been established and verified.

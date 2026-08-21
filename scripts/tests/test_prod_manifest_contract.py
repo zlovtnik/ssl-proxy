@@ -64,6 +64,7 @@ spec:
 
 
 def octopus() -> list[dict[str, object]]:
+    processors = ",".join(sorted(check_gitops.OCTOPUS_RUNTIME_PROCESSORS))
     return documents(
         """apiVersion: apps/v1
 kind: Deployment
@@ -77,11 +78,12 @@ spec:
             - {name: TIDB_ENABLED, value: "true"}
             - {name: TIDB_SCHEMA_MANIFEST_SHA256, value: canonical-checksum}
             - {name: SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR, value: "1"}
-            - {name: OCTOPUS_PROCESSORS_ENABLED, value: "false"}
-            - {name: OCTOPUS_CONSUMERS_ENABLED, value: "false"}
+            - {name: OCTOPUS_PROCESSORS_ENABLED, value: "true"}
+            - {name: OCTOPUS_CONSUMERS_ENABLED, value: "true"}
+            - {name: OCTOPUS_ARCHIVE_ENABLED, value: "true"}
+            - {name: OCTOPUS_ENABLED_PROCESSORS, value: "__PROCESSORS__"}
             - {name: OCTOPUS_ENVIRONMENT, value: production}
-            - {name: OCTOPUS_CUTOVER_DEV_BYPASS, value: "false"}
-"""
+""".replace("__PROCESSORS__", processors)
     )
 
 
@@ -127,19 +129,18 @@ class ProductionManifestContractTest(unittest.TestCase):
 
         errors = check_gitops._check_prod_keycloak_external_tidb(rendered, "prod")
         self.assertTrue(
-            any("prepare TLS and keycloak-home" in error for error in errors)
+            any("prepare keycloak-home" in error for error in errors)
         )
 
-    def test_octopus_staging_rejects_runtime_or_fake_cutover_inputs(self) -> None:
+    def test_octopus_runtime_requires_all_lanes_and_rejects_retired_cutover_inputs(self) -> None:
         rendered = octopus()
         self.assertEqual(
-            [], check_gitops._check_prod_octopus_staging(rendered, "prod")
+            [], check_gitops._check_prod_octopus_runtime(rendered, "prod")
         )
 
         environment = rendered[0]["spec"]["template"]["spec"]["containers"][0][
             "env"
         ]
-        environment.append({"name": "OCTOPUS_ENABLED_PROCESSORS", "value": ""})
         environment.append(
             {"name": "OCTOPUS_CUTOVER_ARTIFACT_PATH", "value": "/fake/cutover.json"}
         )
@@ -147,12 +148,17 @@ class ProductionManifestContractTest(unittest.TestCase):
             entry
             for entry in environment
             if entry["name"] == "OCTOPUS_CONSUMERS_ENABLED"
-        )["value"] = "true"
+        )["value"] = "false"
+        next(
+            entry
+            for entry in environment
+            if entry["name"] == "OCTOPUS_ENABLED_PROCESSORS"
+        )["value"] = "sync-scan-ingestion"
 
-        errors = check_gitops._check_prod_octopus_staging(rendered, "prod")
-        self.assertTrue(any("OCTOPUS_CONSUMERS_ENABLED=false" in error for error in errors))
-        self.assertTrue(any("empty processor catalog" in error for error in errors))
-        self.assertTrue(any("unsigned cutover inputs" in error for error in errors))
+        errors = check_gitops._check_prod_octopus_runtime(rendered, "prod")
+        self.assertTrue(any("OCTOPUS_CONSUMERS_ENABLED=true" in error for error in errors))
+        self.assertTrue(any("complete processor catalog" in error for error in errors))
+        self.assertTrue(any("retired cutover inputs" in error for error in errors))
 
     def test_octopus_schema_checksum_matches_canonical_manifest(self) -> None:
         rendered = octopus()

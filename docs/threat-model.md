@@ -1,6 +1,6 @@
 # SSL Proxy Threat Model
 
-This threat model covers the current runtime described in [System Architecture](architecture.md), the TiDB ownership model in [TiDB Runtime and Cutover](tidb-runtime-cutover.md), and the live operational guardrails in [Secret Management](secret-management.md). It is an engineering baseline, not a completed compliance assessment.
+This threat model covers the current runtime described in [System Architecture](architecture.md), the TiDB ownership model in [TiDB Runtime](tidb-runtime-cutover.md), and the live operational guardrails in [Secret Management](secret-management.md). It is an engineering baseline, not a completed compliance assessment.
 
 ## Assets
 
@@ -58,7 +58,7 @@ The proxy and sensor are privileged networking components but intentionally do n
 | P1 | Compromised Jenkins pipeline or build engine | Registry poisoning and root-equivalent control over isolated Docker capability | Main-only managed job, private build network, no host Docker socket, mutual TLS and private bind addresses | Jenkins still runs trusted `main` branch code and remains a sensitive platform dependency |
 | P2 | Proxy or sensor secret theft | Unauthorized routing control, API access or downstream data exposure | Secrets are mounted as private files, not stored in Git, and rotated through a dedicated workflow | Local dev artifacts, shell history or operator mistakes can leak values if procedures are not followed |
 | P2 | Outbox or payload-reference tampering | Dangerous file reads, invalid payload resolution or deserialization issues | Canonical paths are enforced beneath an allowlisted root; traversal and symlink escapes are rejected; maximum payload size is enforced; all resolved payloads are strictly parsed and validated against the expected JSON schema before consumer access; `inline://json/` and `outbox://` are the only supported schemes; Octopus owns the durable boundary | A new producer path without schema validation may still bypass the intended contract |
-| P2 | MinIO bucket policy, retention or immutability drift | Unauthorized object access, missing legal-hold capability or unbounded data deletion | Bucket creation via init script, credentials mounted from Vault-sourced Secret, health probes on port 9000 | Init script does not enable versioning or object lock; bucket policy and WORM controls require manual configuration and periodic audit |
+| P2 | MinIO bucket policy, retention or immutability drift | Unauthorized object access, missing legal-hold capability or unbounded data deletion | Octopus idempotently ensures the configured archive bucket, credentials are mounted from a Vault-sourced Secret, and health probes cover port 9000 | Runtime bucket creation does not enable versioning or object lock; bucket policy and WORM controls require manual configuration and periodic audit |
 | P2 | Wireless frame poisoning | False alerts, noisy backlog, resource waste or downstream incorrect search documents | Parser hardening, schema-versioned events, bounded backlog and work-item thresholds | Radio input is inherently unauthenticated, so some attacks cannot be fully eliminated |
 | P2 | WireGuard UDP flood or session exhaustion | Availability loss at the public ingress | Session limits, queue bounds, optional rate limits and resource constrain  ts | Public UDP remains a denial-of-service surface |
 | P2 | TLS/SNI or protocol evasion | Policy bypass or inconsistent classification | WireGuard-first routing, transparent TCP interception and classification taxonomy | Non-SNI, fragmentation, obfuscation and non-TCP paths require explicit policy validation |
@@ -72,7 +72,7 @@ The proxy and sensor are privileged networking components but intentionally do n
 - Wireless persistence flows through Redpanda and the Octopus discovery pipeline; the sensor does not own database state.
 - PostgreSQL is not an internal runtime fallback. It is allowed only as a Schema Migrator external target.
 - The canonical schema manifest is applied only by the provisioning schema executor after checksum verification.
-- `sync.scan.request`, `wireless.audit`, `sync.oracle.load` and `sync.oracle.result` keep fixed meanings and are not renamed during runtime cutover.
+- `sync.scan.request`, `wireless.audit`, `sync.oracle.load` and `sync.oracle.result` keep fixed meanings and are not renamed during runtime operation.
 - Search workers may write only their owned `atheros_search` tables and must complete jobs within the claimed fence/lease path.
 - Search analytics use keyed hashing (HMAC with a protected, rotatable key) rather than raw query text, session IDs or device identifiers by default; unkeyed hashes are not used for analytics.
 - HMAC keys are stored outside the application source, rotated at least quarterly, and accessible only to services that write or query analytics.
@@ -110,7 +110,7 @@ Before production approval, document:
 3. network-policy and host-firewall evidence for every exposed port;
 4. audit retention, backup and restore requirements, including legal hold and evidence immutability;
 5. signed-image, vulnerability and dependency policy;
-6. incident-response SLA for evidence loss, replay mismatch or cutover disagreement;
+6. incident-response SLA for evidence loss, replay mismatch or consumer-offset corruption;
 7. load and failure tests for WireGuard, Redpanda, TiDB/TiFlash and Search worker jobs;
 8. privacy approval for Search analytics, embedding data and any diagnostic opt-ins;
 9. operator access review for Loki, Grafana, Jaeger, MinIO bucket policies and cluster-admin paths;
