@@ -10,7 +10,7 @@ resources:
 - ../../../base/atheros-sensor/daemonset.yaml
 - ../../../base/atheros-search
 images:
-- digest: sha256:a0b3699f0d366b3103b04119d12629d9b618b8c91b8186de00ab1f63c37995f5
+- digest: sha256:bba2c9804f486d884826e95fbb8172c4dae9339b82799dea992d21cffc606fd4
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
 - digest: sha256:1136de277d1fdaa33f07fff09e6b15c348b1faa5959a7ef3c9707dcff4513b0f
@@ -19,7 +19,7 @@ images:
 - digest: sha256:242e046b89016bad7f631bb1050b90ce115d1a34beafd602df93683fc8191bb7
   name: atheros-sensor
   newName: 192.168.1.242:5000/atheros-sensor
-- digest: sha256:4b7327ec7d4239582c04c73a9b993e1cf7062478ac8302ff29fda46bb1e9a87d
+- digest: sha256:16a5fcb86eb277dedf328b486a25be79a4b7d6cc35cc35f49553988611ac37c4
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
 - digest: sha256:b3a21ef09de93a96f4707860c5612ac9fcb1a17390ba16fa38e5ae1dc2aae69e

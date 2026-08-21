@@ -5,7 +5,7 @@ resources:
 - namespace.yaml
 - ../../base
 images:
-- digest: sha256:a0b3699f0d366b3103b04119d12629d9b618b8c91b8186de00ab1f63c37995f5
+- digest: sha256:bba2c9804f486d884826e95fbb8172c4dae9339b82799dea992d21cffc606fd4
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
 - digest: sha256:e0f87044a0ae83c03fcf7fe82e191e058c08b0dc6ccb7ac12b94b4a4a086f0f3
@@ -14,7 +14,7 @@ images:
 - digest: sha256:8f4577bfe795824e13f44b812a2085072c96831e5f1427a66419c5bd1c7450ae
   name: atheros-sensor
   newName: 192.168.1.242:5000/atheros-sensor
-- digest: sha256:c676a7037ea2373092c5984993d1910c60e0e25f040ae2a4e5b212ca0b15ed45
+- digest: sha256:16a5fcb86eb277dedf328b486a25be79a4b7d6cc35cc35f49553988611ac37c4
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
 - digest: sha256:b3a21ef09de93a96f4707860c5612ac9fcb1a17390ba16fa38e5ae1dc2aae69e
