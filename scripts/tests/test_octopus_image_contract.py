@@ -156,6 +156,21 @@ class OctopusImageContractTest(unittest.TestCase):
                 digest,
             )
 
+    def test_octopus_dockerfile_pins_sbt_and_requires_revision_labels(self) -> None:
+        dockerfile = (REPOSITORY_ROOT / "services/octopus/Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        checksum = "cd17daae220ff264faa4251334522444518584f0eb2ee82da01523a9b9002b7e"
+
+        self.assertIn(checksum, dockerfile)
+        self.assertLess(dockerfile.index("sha256sum -c -"), dockerfile.index("tar xzf"))
+        self.assertIn('test -n "$PARENT_COMMIT"', dockerfile)
+        self.assertIn('test -n "$OCTOPUS_COMMIT"', dockerfile)
+        self.assertLess(
+            dockerfile.index('test -n "$PARENT_COMMIT"'),
+            dockerfile.index("LABEL org.opencontainers.image.revision"),
+        )
+
     def test_promotion_record_round_trips_verified_source_and_digest(self) -> None:
         path = self.root / "promotion.json"
         digest = "sha256:" + "b" * 64
