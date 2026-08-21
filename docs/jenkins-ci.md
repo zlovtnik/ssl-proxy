@@ -110,7 +110,8 @@ This prevents an obsolete checkout from waiting on an exact-revision production
 gate after Argo CD has advanced to newer `main`. The pipeline does not expose or
 require a GitHub webhook. Each run:
 
-1. checks out the superproject and its pinned submodules;
+1. checks out the superproject and its pinned submodules, then requires the
+   Octopus checkout to match that pin with both worktrees clean;
 2. creates and bootstraps its shared Buildx builder after bounded Docker and
    registry checks;
 3. runs `make docs-check` and `make gitops-check` in parallel with image
@@ -134,6 +135,11 @@ The target set covers the proxy, Octopus coordinator, Atheros Sensor, Atheros
 Search, key rotator, Search UI, both Schema Migrator images and the TiDB runtime
 schema. The key rotator remains Compose-only because it controls the staged
 local rotation harness via the Docker API.
+
+The Octopus branch also assembles and inspects the JAR. Publication performs
+the same artifact check inside the image build and embeds the exact parent and
+Octopus revisions as OCI labels, so stale cutover classes or the superseded
+replication/TLS validation cannot be pushed as `java-coordinator`.
 
 ## GitOps handoff
 

@@ -43,6 +43,18 @@ digests into the matching prod Kustomizations. After merge, Argo CD reconciles
 the change automatically. Kubernetes uses the committed digest references, not
 the mutable commit or `latest` registry tags.
 
+For an Octopus recovery rebuild, start from a new recursive checkout of `main`,
+run `make octopus-source-integrity`, and use a cache-free Buildx build. Load the
+candidate locally and run
+`make check-java-coordinator-image IMAGE=<local-candidate>` before accepting the
+registry digest. The check verifies both embedded source revisions and rejects
+retired cutover classes and obsolete replication/TLS validation in the JAR.
+Record the digest in dev first and complete runtime acceptance there. Copy that
+exact digest to production in a separate reviewed change; never rebuild between
+environments. If rollback is required, revert the runtime configuration and
+digest promotion together because reverting only the digest can recreate a
+configuration/artifact mismatch.
+
 ## Health and readiness
 
 | Component | Check | Interpretation |

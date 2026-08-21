@@ -24,6 +24,8 @@ KUSTOMIZE ?= kubectl
 KUSTOMIZE_EDITOR ?= kustomize
 PUBLISH_REPOSITORY ?=
 PUBLISH_METADATA_FILE ?=
+override PARENT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null)
+override OCTOPUS_COMMIT := $(shell git -C services/octopus rev-parse HEAD 2>/dev/null)
 
 ATHEROS_SEARCH_UI_API_BASE ?=
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
@@ -38,11 +40,11 @@ BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: build build-all publish publish-all kube-context-check recover-stack production-gate stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all kube-context-check recover-stack production-gate stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry octopus-source-integrity check-java-coordinator-image docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 
-publish:
+publish: octopus-source-integrity
 	python3 scripts/publish_images.py \
 		--environment "$(ENV)" \
 		--tag "$(TAG)" \
@@ -56,7 +58,7 @@ publish:
 
 build-all: $(BUILD_TARGETS)
 
-publish-all: $(PUBLISH_TARGETS)
+publish-all: octopus-source-integrity $(PUBLISH_TARGETS)
 
 kube-context-check:
 	@context="$(strip $(KUBE_CONTEXT))"; \
@@ -129,6 +131,13 @@ stack-health: gitops-check argocd-status recover-stack argocd-wait
 # Read-only image inventory for CI fan-out. Keep build-all for local loaded-image workflows.
 ci-publish-services:
 	@printf '%s\n' $(SERVICES)
+
+octopus-source-integrity:
+	python3 scripts/octopus_image_contract.py source
+
+check-java-coordinator-image:
+	@test -n "$(IMAGE)" || { echo "IMAGE is required" >&2; exit 2; }
+	python3 scripts/octopus_image_contract.py image "$(IMAGE)"
 
 docs-check:
 	python3 scripts/check-docs.py
@@ -210,7 +219,7 @@ publish-$(1):
 endef
 
 $(eval $(call service_rules,ssl-proxy,Dockerfile,--target ssl-proxy --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),ssl-proxy,.))
-$(eval $(call service_rules,java-coordinator,services/octopus/Dockerfile,,java-coordinator,.))
+$(eval $(call service_rules,java-coordinator,services/octopus/Dockerfile,--build-arg PARENT_COMMIT=$(PARENT_COMMIT) --build-arg OCTOPUS_COMMIT=$(OCTOPUS_COMMIT),java-coordinator,.))
 $(eval $(call service_rules,atheros-sensor,Dockerfile,--target atheros-sensor --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),atheros-sensor,.))
 $(eval $(call service_rules,atheros-search,services/atheros-search/Dockerfile,,atheros-search,.))
 $(eval $(call service_rules,wg-key-rotator,apps/wg-key-rotator/Dockerfile,,wg-key-rotator,apps/wg-key-rotator))
@@ -224,6 +233,8 @@ ifneq ($(BUILDX_READY),1)
 $(BUILD_TARGETS) $(PUBLISH_TARGETS): buildx-ready
 endif
 
+publish-java-coordinator: octopus-source-integrity
+
 define bump_digest_rule
 bump-digest-$(1):
 	@test -n "$(ENV)" || { echo "ENV is required (dev or prod)" >&2; exit 2; }
@@ -232,3 +243,5 @@ bump-digest-$(1):
 endef
 
 $(foreach service,$(DEPLOYABLE_SERVICES),$(eval $(call bump_digest_rule,$(service))))
+
+bump-digest-java-coordinator: octopus-source-integrity

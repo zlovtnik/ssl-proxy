@@ -70,6 +70,7 @@ def octopus() -> list[dict[str, object]]:
 kind: Deployment
 metadata: {name: ssl-proxy-java-coordinator}
 spec:
+  replicas: 3
   template:
     spec:
       containers:
@@ -135,7 +136,7 @@ class ProductionManifestContractTest(unittest.TestCase):
     def test_octopus_runtime_requires_all_lanes_and_rejects_retired_cutover_inputs(self) -> None:
         rendered = octopus()
         self.assertEqual(
-            [], check_gitops._check_prod_octopus_runtime(rendered, "prod")
+            [], check_gitops._check_octopus_runtime(rendered, "prod")
         )
 
         environment = rendered[0]["spec"]["template"]["spec"]["containers"][0][
@@ -154,8 +155,10 @@ class ProductionManifestContractTest(unittest.TestCase):
             for entry in environment
             if entry["name"] == "OCTOPUS_ENABLED_PROCESSORS"
         )["value"] = "sync-scan-ingestion"
+        rendered[0]["spec"]["replicas"] = 4
 
-        errors = check_gitops._check_prod_octopus_runtime(rendered, "prod")
+        errors = check_gitops._check_octopus_runtime(rendered, "prod")
+        self.assertTrue(any("exactly 3 replicas" in error for error in errors))
         self.assertTrue(any("OCTOPUS_CONSUMERS_ENABLED=true" in error for error in errors))
         self.assertTrue(any("complete processor catalog" in error for error in errors))
         self.assertTrue(any("retired cutover inputs" in error for error in errors))
