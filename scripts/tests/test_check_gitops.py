@@ -197,7 +197,7 @@ data:
         valid = documents(
             workload(
                 "ssl-proxy-schema-migrator-keycloak",
-                containers="[{env: [{name: KC_DB_PASSWORD, valueFrom: {secretKeyRef: {key: password, name: tidb-keycloak}}}]}]",
+                containers="[{env: [{name: KC_DB_PASSWORD, valueFrom: {secretKeyRef: {key: password, name: postgres-keycloak}}}]}]",
             )
         )
         self.assertEqual([], check_gitops._check_keycloak_database_credential(valid, "test"))
@@ -237,25 +237,25 @@ spec:
             "cyber-stack/matrix/dev/bootstrap": documents("kind: ConfigMap\ndata: {IDENTITY_HOSTNAME: identity.example.internal}\n"),
             "cyber-stack/matrix/prod/bootstrap": documents("data: {IDENTITY_HOSTNAME: identity.example.internal}\nkind: ConfigMap\n"),
         }
-        self.assertEqual(3, len(check_gitops._check_environment_identity_hostnames(rendered)))
+        self.assertEqual(1, len(check_gitops._check_environment_identity_hostnames(rendered)))
         redirect = documents("kind: ConfigMap\ndata: {args: entrypoints.web.http.redirections.entrypoint.port=:443}\n")
         self.assertEqual(1, len(check_gitops._check_traefik_redirect(redirect, "test")))
 
-    def test_tidb_waves_are_selected_by_job_name(self) -> None:
+    def test_postgres_waves_are_selected_by_job_name(self) -> None:
         rendered = documents(
             """kind: Job
-metadata: {name: ssl-proxy-tidb-init, annotations: {argocd.argoproj.io/sync-wave: "1"}}
+metadata: {name: ssl-proxy-postgres-init, annotations: {argocd.argoproj.io/sync-wave: "1"}}
 ---
 metadata:
   annotations: {argocd.argoproj.io/sync-wave: "1"}
-  name: ssl-proxy-tidb-schema-executor
+  name: ssl-proxy-postgres-schema-executor
 kind: Job
 ---
 kind: Job
-metadata: {name: ssl-proxy-tidb-init-grants, annotations: {argocd.argoproj.io/sync-wave: "2"}}
+metadata: {name: ssl-proxy-postgres-init-grants, annotations: {argocd.argoproj.io/sync-wave: "2"}}
 """
         )
-        self.assertTrue(any("init wave" in error for error in check_gitops._check_tidb_waves(rendered, "test")))
+        self.assertTrue(any("init wave" in error for error in check_gitops._check_postgres_waves(rendered, "test")))
 
     def test_phase_one_rejects_bypass_listeners_and_routes(self) -> None:
         rendered = documents(
@@ -551,13 +551,13 @@ spec:
             any("required observability Secret key" in error for error in errors)
         )
 
-    def test_requires_external_tidb_probe_only_in_production(self) -> None:
+    def test_requires_external_postgres_probe_only_in_production(self) -> None:
         rendered = self.rendered_contract()
         errors = check_gitops._check_observability_contract(
             rendered, "cyber-stack/matrix/prod/data-plane"
         )
         self.assertTrue(
-            any("production observability catalog is missing: tidb-external" in error for error in errors)
+            any("production observability catalog is missing: postgres-external" in error for error in errors)
         )
 
         catalog_map = next(
@@ -568,20 +568,20 @@ spec:
             )
         )
         catalog_map["data"]["external-service-catalog.yml"] = (
-            "- labels: {service: tidb-external}\n"
+            "- labels: {service: postgres-external}\n"
         )
         prod_errors = check_gitops._check_observability_contract(
             rendered, "cyber-stack/matrix/prod/data-plane"
         )
         self.assertFalse(
-            any("tidb-external" in error for error in prod_errors)
+            any("postgres-external" in error for error in prod_errors)
         )
 
         dev_errors = check_gitops._check_observability_contract(
             rendered, "cyber-stack/matrix/dev/data-plane"
         )
         self.assertTrue(
-            any("development observability catalog must not probe tidb-external" in error for error in dev_errors)
+            any("development observability catalog must not probe postgres-external" in error for error in dev_errors)
         )
 
     def test_accepts_env_from_and_projected_secret_sources(self) -> None:
@@ -618,19 +618,19 @@ class SchemaExecutorContractTest(unittest.TestCase):
     def test_contract_marker_and_digest_are_structural(self) -> None:
         rendered = documents(
             f"""kind: Job
-metadata: {{name: ssl-proxy-tidb-schema-executor}}
+metadata: {{name: ssl-proxy-postgres-schema-executor}}
 spec:
   template:
     metadata:
       annotations: {{ssl-proxy.io/content-hash: {self.marker}}}
     spec:
       containers:
-        - image: registry/tidb-runtime-schema@sha256:{'b' * 64}
+        - image: registry/postgres-runtime-schema@sha256:{'b' * 64}
 """
         )
         self.assertEqual([], check_gitops._check_schema_executor_contract(rendered, "test", self.marker))
         rendered[0]["spec"]["template"]["metadata"]["annotations"]["ssl-proxy.io/content-hash"] = "stale"
-        rendered[0]["spec"]["template"]["spec"]["containers"][0]["image"] = "registry/tidb-runtime-schema:latest"
+        rendered[0]["spec"]["template"]["spec"]["containers"][0]["image"] = "registry/postgres-runtime-schema:latest"
         self.assertEqual(2, len(check_gitops._check_schema_executor_contract(rendered, "test", self.marker)))
 
 

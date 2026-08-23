@@ -6,106 +6,95 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 )
 
-func setRequiredTiDBEnv(t *testing.T) {
+func setRequiredPostgresEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"ATHSEARCH_TIDB_HOST",
-		"ATHSEARCH_TIDB_PASSWORD",
-		"ATHSEARCH_TIDB_TLS_CERT_FILE",
-		"ATHSEARCH_TIDB_TLS_KEY_FILE",
-		"ATHSEARCH_TIDB_MAX_OPEN_CONNS",
-		"ATHSEARCH_TIDB_MAX_IDLE_CONNS",
+		"ATHSEARCH_POSTGRES_HOST",
+		"ATHSEARCH_POSTGRES_PASSWORD",
+		"ATHSEARCH_POSTGRES_TLS_CERT_FILE",
+		"ATHSEARCH_POSTGRES_TLS_KEY_FILE",
+		"ATHSEARCH_POSTGRES_MAX_OPEN_CONNS",
+		"ATHSEARCH_POSTGRES_MAX_IDLE_CONNS",
 		"ATHSEARCH_DENSE_OVERFETCH_FACTOR",
 	} {
 		t.Setenv(key, "")
 	}
-	t.Setenv("ATHSEARCH_TIDB_DSN", "search:secret@tcp(tidb.example.test:4000)/atheros_search")
-	t.Setenv("ATHSEARCH_TIDB_TLS_CA_FILE", "/tls/ca.crt")
-	t.Setenv("ATHSEARCH_TIDB_TLS_SERVER_NAME", "tidb.example.test")
+	t.Setenv("ATHSEARCH_POSTGRES_DSN", "postgresql://search:secret@postgres.example.test:5432/sync?sslmode=require&search_path=atheros_search")
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_CA_FILE", "/tls/ca.crt")
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", "postgres.example.test")
 	t.Setenv("ATHSEARCH_SCHEMA_MANIFEST_SHA256", hex.EncodeToString(make([]byte, sha256.Size)))
 }
 
-func TestLoadRequiresNativeTiDBConfiguration(t *testing.T) {
-	setRequiredTiDBEnv(t)
+func TestLoadRequiresPostgresConnectionURL(t *testing.T) {
+	setRequiredPostgresEnv(t)
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, "search:secret@tcp(tidb.example.test:4000)/atheros_search", cfg.TiDBDSN)
-	require.Equal(t, "/tls/ca.crt", cfg.TiDBTLSCAFile)
-	require.Equal(t, "tidb.example.test", cfg.TiDBTLSServerName)
-	require.Equal(t, 32, cfg.TiDBMaxOpenConns)
-	require.Equal(t, 8, cfg.TiDBMaxIdleConns)
-	require.Equal(t, 5*time.Minute, cfg.TiDBConnMaxLifetime)
-	require.Equal(t, time.Minute, cfg.TiDBConnMaxIdleTime)
+	require.Contains(t, cfg.PostgresDSN, "postgres.example.test:5432/sync")
+	require.Equal(t, "/tls/ca.crt", cfg.PostgresTLSCAFile)
+	require.Equal(t, "postgres.example.test", cfg.PostgresTLSServerName)
+	require.Equal(t, 32, cfg.PostgresMaxOpenConns)
+	require.Equal(t, 8, cfg.PostgresMaxIdleConns)
+	require.Equal(t, 5*time.Minute, cfg.PostgresConnMaxLifetime)
+	require.Equal(t, time.Minute, cfg.PostgresConnMaxIdleTime)
 	require.Equal(t, 8, cfg.DenseOverfetchFactor)
 }
 
-func TestLoadBuildsPasswordBasedTiDBConfigurationWithoutTLS(t *testing.T) {
-	setRequiredTiDBEnv(t)
-	t.Setenv("ATHSEARCH_TIDB_DSN", "")
-	t.Setenv("ATHSEARCH_TIDB_HOST", "tidb.example.test")
-	t.Setenv("ATHSEARCH_TIDB_PORT", "4000")
-	t.Setenv("ATHSEARCH_TIDB_DATABASE", "atheros_search")
-	t.Setenv("ATHSEARCH_TIDB_USER", "atheros_search_runtime")
-	t.Setenv("ATHSEARCH_TIDB_PASSWORD", "secret")
-	t.Setenv("ATHSEARCH_TIDB_TLS_CA_FILE", "")
-	t.Setenv("ATHSEARCH_TIDB_TLS_SERVER_NAME", "")
+func TestLoadBuildsPasswordBasedPostgresConfigurationWithoutTLS(t *testing.T) {
+	setRequiredPostgresEnv(t)
+	t.Setenv("ATHSEARCH_POSTGRES_DSN", "")
+	t.Setenv("ATHSEARCH_POSTGRES_HOST", "postgres.example.test")
+	t.Setenv("ATHSEARCH_POSTGRES_PORT", "5432")
+	t.Setenv("ATHSEARCH_POSTGRES_DATABASE", "sync")
+	t.Setenv("ATHSEARCH_POSTGRES_USER", "atheros_search_runtime")
+	t.Setenv("ATHSEARCH_POSTGRES_PASSWORD", "secret")
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_CA_FILE", "")
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", "")
 
-	cfg, err := Load()
-	require.NoError(t, err)
-	require.Contains(t, cfg.TiDBDSN, "atheros_search_runtime:secret@tcp(tidb.example.test:4000)/atheros_search")
-	driverConfig, err := mysql.ParseDSN(cfg.TiDBDSN)
-	require.NoError(t, err)
-	require.True(t, driverConfig.AllowNativePasswords)
-	require.Empty(t, cfg.TiDBTLSCAFile)
-	require.Empty(t, cfg.TiDBTLSServerName)
+	_, err := Load()
+	require.ErrorContains(t, err, "ATHSEARCH_POSTGRES_DSN is required")
 }
 
-func TestLoadRejectsURLStyleDSNsAndGenericFallbacks(t *testing.T) {
-	setRequiredTiDBEnv(t)
-	for _, scheme := range []string{
-		"post" + "gres",
-		"post" + "gresql",
-		"my" + "sql",
-	} {
+func TestLoadRejectsRemovedDatabaseURLsAndGenericFallbacks(t *testing.T) {
+	setRequiredPostgresEnv(t)
+	for _, scheme := range []string{"maria" + "db", "oracle"} {
 		t.Run(scheme, func(t *testing.T) {
-			t.Setenv("ATHSEARCH_TIDB_DSN", scheme+"://search:secret@db.example.test:4000/atheros_search")
+			t.Setenv("ATHSEARCH_POSTGRES_DSN", scheme+"://search:secret@db.example.test:5432/sync")
 			_, err := Load()
-			require.ErrorContains(t, err, "native MySQL DSN")
+			require.ErrorContains(t, err, "PostgreSQL connection URL")
 		})
 	}
 
-	t.Setenv("ATHSEARCH_TIDB_DSN", "")
-	t.Setenv("DATABASE"+"_URL", "search:secret@tcp(tidb.example.test:4000)/atheros_search")
+	t.Setenv("ATHSEARCH_POSTGRES_DSN", "")
+	t.Setenv("DATABASE"+"_URL", "postgresql://search:secret@postgres.example.test:5432/sync")
 	_, err := Load()
-	require.ErrorContains(t, err, "ATHSEARCH_TIDB_HOST is required")
+	require.ErrorContains(t, err, "ATHSEARCH_POSTGRES_DSN is required")
 }
 
 func TestLoadAllowsDisabledTLSAndValidatesPartialTLSAndManifest(t *testing.T) {
-	setRequiredTiDBEnv(t)
+	setRequiredPostgresEnv(t)
 
-	t.Setenv("ATHSEARCH_TIDB_TLS_CA_FILE", "")
-	t.Setenv("ATHSEARCH_TIDB_TLS_SERVER_NAME", "")
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_CA_FILE", "")
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", "")
 	_, err := Load()
 	require.NoError(t, err)
 
-	setRequiredTiDBEnv(t)
-	t.Setenv("ATHSEARCH_TIDB_TLS_CERT_FILE", "/tls/client.crt")
+	setRequiredPostgresEnv(t)
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_CERT_FILE", "/tls/client.crt")
 	_, err = Load()
 	require.ErrorContains(t, err, "configured together")
 
-	setRequiredTiDBEnv(t)
+	setRequiredPostgresEnv(t)
 	t.Setenv("ATHSEARCH_SCHEMA_MANIFEST_SHA256", "not-a-checksum")
 	_, err = Load()
 	require.ErrorContains(t, err, "ATHSEARCH_SCHEMA_MANIFEST_SHA256")
 }
 
 func TestLoadValidatesDimensionsAndAuthDigest(t *testing.T) {
-	setRequiredTiDBEnv(t)
+	setRequiredPostgresEnv(t)
 	t.Setenv("ATHSEARCH_EMBEDDING_DIMENSIONS", "384")
 	_, err := Load()
 	require.ErrorContains(t, err, "ATHSEARCH_EMBEDDING_DIMENSIONS")
@@ -123,26 +112,26 @@ func TestLoadValidatesDimensionsAndAuthDigest(t *testing.T) {
 }
 
 func TestLoadValidatesPoolAndOverfetchBounds(t *testing.T) {
-	setRequiredTiDBEnv(t)
+	setRequiredPostgresEnv(t)
 
-	t.Setenv("ATHSEARCH_TIDB_MAX_OPEN_CONNS", "0")
+	t.Setenv("ATHSEARCH_POSTGRES_MAX_OPEN_CONNS", "0")
 	_, err := Load()
-	require.ErrorContains(t, err, "ATHSEARCH_TIDB_MAX_OPEN_CONNS")
+	require.ErrorContains(t, err, "ATHSEARCH_POSTGRES_MAX_OPEN_CONNS")
 
-	setRequiredTiDBEnv(t)
-	t.Setenv("ATHSEARCH_TIDB_MAX_OPEN_CONNS", "4")
-	t.Setenv("ATHSEARCH_TIDB_MAX_IDLE_CONNS", "5")
+	setRequiredPostgresEnv(t)
+	t.Setenv("ATHSEARCH_POSTGRES_MAX_OPEN_CONNS", "4")
+	t.Setenv("ATHSEARCH_POSTGRES_MAX_IDLE_CONNS", "5")
 	_, err = Load()
-	require.ErrorContains(t, err, "ATHSEARCH_TIDB_MAX_IDLE_CONNS")
+	require.ErrorContains(t, err, "ATHSEARCH_POSTGRES_MAX_IDLE_CONNS")
 
-	setRequiredTiDBEnv(t)
+	setRequiredPostgresEnv(t)
 	t.Setenv("ATHSEARCH_DENSE_OVERFETCH_FACTOR", "0")
 	_, err = Load()
 	require.ErrorContains(t, err, "ATHSEARCH_DENSE_OVERFETCH_FACTOR")
 }
 
 func TestLoadRequiresEmbeddingBackendWhenWorkersAreEnabled(t *testing.T) {
-	setRequiredTiDBEnv(t)
+	setRequiredPostgresEnv(t)
 	t.Setenv("ATHSEARCH_WORKER_ENABLED", "true")
 	t.Setenv("ATHSEARCH_EMBEDDING_BACKEND", "")
 	t.Setenv("VECTOR_EMBEDDING_URL", "")

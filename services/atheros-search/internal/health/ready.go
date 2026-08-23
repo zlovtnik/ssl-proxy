@@ -29,7 +29,7 @@ func (r *Readiness) Check(ctx context.Context) error {
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if r.DB == nil {
-		return errors.New("TiDB pool is not initialized")
+		return errors.New("Postgres pool is not initialized")
 	}
 	if err := r.DB.Health(checkCtx); err != nil {
 		return err

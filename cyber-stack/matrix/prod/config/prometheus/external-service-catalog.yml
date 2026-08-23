@@ -1,2 +1,2 @@
 - targets: ["192.168.1.242:4000"]
-  labels: {service: tidb-external, module: tcp_connect, external: "true"}
+  labels: {service: postgres-external, module: tcp_connect, external: "true"}

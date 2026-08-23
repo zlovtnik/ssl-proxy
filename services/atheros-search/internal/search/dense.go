@@ -56,7 +56,7 @@ func denseKind(ctx context.Context, pool *sql.DB, qvec []float32, model, kind st
 	vector := VectorLiteral(qvec)
 	query := denseKindQuery(table)
 
-	rows, err := pool.QueryContext(ctx, query, vector, vector, overfetch, model)
+	rows, err := pool.QueryContext(ctx, query, vector, overfetch, model)
 	if err != nil {
 		return nil, err
 	}
@@ -93,22 +93,22 @@ SELECT
   COALESCE(d.bssid, ''),
   COALESCE(d.ssid, ''),
   COALESCE(d.frame_subtype, ''),
-  CAST(1.0 - nearest.cosine_distance AS FLOAT),
-  COALESCE(CAST(d.tags AS CHAR), '[]'),
-  COALESCE(CAST(d.detail_json AS CHAR), '{}'),
+  CAST(1.0 - nearest.cosine_distance AS DOUBLE PRECISION),
+  COALESCE(d.tags::text, '[]'),
+  COALESCE(d.detail_json::text, '{}'),
   COALESCE(d.security_flags, 0),
-  COALESCE(d.handshake_captured, 0)
+  COALESCE(d.handshake_captured, false)
 FROM (
   SELECT
     document_id,
     embedding_model,
-    VEC_COSINE_DISTANCE(embedding, ?) AS cosine_distance
-  FROM %s
-  ORDER BY VEC_COSINE_DISTANCE(embedding, ?) ASC
-  LIMIT ?
+    embedding <=> $1::vector AS cosine_distance
+  FROM atheros_search.%s
+  ORDER BY embedding <=> $1::vector ASC
+  LIMIT $2
 ) nearest
-JOIN search_documents d ON d.document_id = nearest.document_id
-WHERE nearest.embedding_model = ? AND d.status = 'active'
+JOIN atheros_search.search_documents d ON d.document_id = nearest.document_id
+WHERE nearest.embedding_model = $3 AND d.status = 'active'
 ORDER BY nearest.cosine_distance ASC, d.source_key ASC`, table)
 }
 
@@ -187,7 +187,7 @@ func normalizeJSONObject(value string) string {
 
 func ensureDB(pool *sql.DB) error {
 	if pool == nil {
-		return errors.New("TiDB pool is not initialized")
+		return errors.New("Postgres pool is not initialized")
 	}
 	return nil
 }

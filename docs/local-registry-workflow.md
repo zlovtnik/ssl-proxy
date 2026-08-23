@@ -41,7 +41,7 @@ shared or untrusted.
 
 ```bash
 export TAG="$(git rev-parse --short HEAD)"
-make publish ENV=dev REGISTRY_PLAIN_HTTP=1
+make publish ENV=prod REGISTRY_PLAIN_HTTP=1
 ```
 
 Registry publishing uses HTTPS by default. Set `REGISTRY_PLAIN_HTTP=1`
@@ -85,7 +85,7 @@ First-party publish targets are:
 | `publish-atheros-search-ui` | `$REGISTRY/atheros-search-ui:$TAG` |
 | `publish-schema-migrator-backend` | `$REGISTRY/schema-migrator-backend:$TAG` |
 | `publish-schema-migrator-ui` | `$REGISTRY/schema-migrator-ui:$TAG` |
-| `publish-tidb-runtime-schema` | `$REGISTRY/tidb-runtime-schema:$TAG` |
+| `publish-postgres-runtime-schema` | `$REGISTRY/postgres-runtime-schema:$TAG` |
 
 The deployment identity `java-coordinator` is the Scala Octopus service. The
 former standalone vec-worker is retired. Third-party images are not mirrored by
@@ -125,19 +125,9 @@ make publish-atheros-search-ui \
 The Kubernetes UI uses same-origin nginx proxying for `/v1`; the default API
 base is therefore empty.
 
-## Local development
-
-Docker Compose may consume locally built images only as a development test
-harness:
-
-```bash
-REGISTRY=local IMAGE_TAG=dev \
-  docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
-```
-
 Publishing updates the registry's commit tag and `latest` channel without
 changing Kubernetes desired state. Use the digest and bump command printed by
-`make publish ENV=dev`, then validate the local dev render. Production receives
+`make publish ENV=prod`, then validate the local dev render. Production receives
 only reviewed digests copied from accepted dev desired state.
 
 The Jenkins `ssl-proxy-images` job polls `main` and accepts GitHub push events,
@@ -156,11 +146,11 @@ storage.
 ```bash
 curl -fsS http://10.0.0.10:5000/v2/
 docker buildx inspect
-make recover-stack ENV=dev KUBE_CONTEXT=docker-desktop REGISTRY_PLAIN_HTTP=1
-make recover-stack ENV=prod REGISTRY_PLAIN_HTTP=1
+make stack-health
+make stack-health
 ```
 
-`recover-stack` is read-only. It reports the resolved context and namespace,
+`stack-health` is read-only. It reports the resolved context and namespace,
 renders the canonical Kustomize sources, compares desired and live image
 references/runtime IDs, lists required platform object and key presence without
 values, and includes workload health and recent warning events. Production also reports the three

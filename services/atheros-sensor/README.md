@@ -3,7 +3,7 @@
 `atheros-sensor` is a Linux monitor-mode Wi-Fi sensor, preferably used with an
 AR9271/`ath9k_htc` adapter. It captures 802.11 frames, constructs
 schema-versioned audit and alert events, publishes them through Redpanda and
-keeps a bounded local backlog. It never writes TiDB directly.
+keeps a bounded local backlog. It never writes PostgreSQL directly.
 
 ## Topic direction
 

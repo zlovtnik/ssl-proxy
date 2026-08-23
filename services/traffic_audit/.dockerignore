@@ -1,4 +1,0 @@
-# Environment / secrets — excluded from the build context (see .gitignore).
-.env*
-/secrets/
-/wallet/

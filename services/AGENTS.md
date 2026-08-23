@@ -11,16 +11,16 @@ repository root instructions.
   service for wireless audit data. It owns embedding job processing via a
   worker pool and exposes ETL health monitoring.
 - `octopus/` is the Scala 3 Cats Effect/FS2 coordinator and the sole owner of
-  durable ingestion, leases, outbox, and maintained projections in TiDB.
+  durable ingestion, leases, outbox, and maintained projections in PostgreSQL.
 - Keep cross-service contracts explicit: Redpanda topic names, stream names,
   schema-versioned payloads, SQL function signatures, protobuf fields, and
   HTTP routes are compatibility surfaces.
 
 ## Shared Guardrails
-- Direct TiDB clients are limited to Octopus, Atheros Search, and
-  schema-migrator, each using an isolated database and account.
-- PostgreSQL is not a service runtime dependency. It is allowed only inside
-  schema-migrator as an explicit external target dialect.
+- PostgreSQL clients are limited to Octopus, Atheros Search, and
+  Schema Migrator, each using an isolated schema and account. Octopus
+  and Atheros Search connect at runtime for their domain-scoped data;
+  Schema Migrator runs DDL and schema verification externally.
 - Do not introduce direct database writes from `atheros-sensor/`; persistence
   stays through Redpanda and Octopus request flows.
 - Keep shared schema changes in `/Users/rcs/git/ssl-proxy/sql`, not in
@@ -31,7 +31,7 @@ repository root instructions.
   or user-identifying values unless an existing audited path explicitly allows
   them. Hash or summarize identifiers where the service already does so.
 - Prefer existing config env var families: `ATH_SENSOR_*`, `ATHSEARCH_*`,
-  `TIDB_*`, `SYNC_*`, `WIRELESS_*`, `MINIO_*`, and `OTEL_*`.
+  `POSTGRES_*`, `SYNC_*`, `WIRELESS_*`, `MINIO_*`, and `OTEL_*`.
 - Do not edit runtime output directories such as `.gradle/`, `.omx/`,
   `target/`, generated logs, local outboxes, or downloaded tool caches.
 

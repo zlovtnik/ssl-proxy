@@ -21,7 +21,7 @@ func TestSharedManifestAssignsAtherosSearchProcessorsExactlyOnce(t *testing.T) {
 	if !ok {
 		t.Fatal("resolve test source path")
 	}
-	manifestPath := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "..", "..", "sql", "tidb", "contracts", "processors.json"))
+	manifestPath := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "..", "..", "sql", "postgres", "contracts", "processors.json"))
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatalf("read processor manifest: %v", err)

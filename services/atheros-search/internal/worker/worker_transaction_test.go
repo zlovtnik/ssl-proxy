@@ -32,7 +32,7 @@ func TestProcessBatchCommitsClaimBeforeEmbeddingAndCompletesAtomically(t *testin
 
 	job := testJob()
 	mock.ExpectBegin()
-	mock.ExpectQuery("UPDATE embedding_jobs").
+	mock.ExpectQuery("UPDATE atheros_search\\.embedding_jobs").
 		WithArgs("worker-1", sqlmock.AnyArg(), 1).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"job_id", "document_id", "embedding_kind", "embedding_model",
@@ -41,16 +41,16 @@ func TestProcessBatchCommitsClaimBeforeEmbeddingAndCompletesAtomically(t *testin
 			job.JobID, job.DocumentID, job.EmbeddingKind, job.EmbeddingModel,
 			job.ContentSHA256, job.Priority, job.LeaseToken, job.LeaseFence,
 		))
-	mock.ExpectQuery("SELECT normalized_text FROM search_documents").
+	mock.ExpectQuery("SELECT normalized_text FROM atheros_search\\.search_documents").
 		WithArgs(job.DocumentID).
 		WillReturnRows(sqlmock.NewRows([]string{"normalized_text"}).AddRow("normalized wireless event"))
 	mock.ExpectCommit()
 	mock.ExpectPing()
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO search_vectors_event").
+	mock.ExpectExec("INSERT INTO atheros_search\\.search_vectors_event").
 		WithArgs(job.DocumentID, job.EmbeddingModel, job.ContentSHA256, "[0.25,0.5]").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("UPDATE embedding_jobs").
+	mock.ExpectExec("UPDATE atheros_search\\.embedding_jobs").
 		WithArgs(job.JobID, job.LeaseToken, job.LeaseFence).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -72,10 +72,10 @@ func TestStoreCompletionRollsBackVectorWhenLeaseIsLost(t *testing.T) {
 
 	job := testJob()
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO search_vectors_event").
+	mock.ExpectExec("INSERT INTO atheros_search\\.search_vectors_event").
 		WithArgs(job.DocumentID, job.EmbeddingModel, job.ContentSHA256, "[1]").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("UPDATE embedding_jobs").
+	mock.ExpectExec("UPDATE atheros_search\\.embedding_jobs").
 		WithArgs(job.JobID, job.LeaseToken, job.LeaseFence).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
@@ -93,7 +93,7 @@ func TestStoreCompletionRollsBackWhenVectorWriteFails(t *testing.T) {
 
 	job := testJob()
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO search_vectors_event").
+	mock.ExpectExec("INSERT INTO atheros_search\\.search_vectors_event").
 		WithArgs(job.DocumentID, job.EmbeddingModel, job.ContentSHA256, "[1]").
 		WillReturnError(errors.New("vector write failed"))
 	mock.ExpectRollback()
@@ -124,7 +124,7 @@ func TestRenewJobLeaseUsesTokenFenceAndReportsLeaseLoss(t *testing.T) {
 
 	job := testJob()
 	expiresAt := time.Now().Add(time.Minute)
-	mock.ExpectExec("UPDATE embedding_jobs").
+	mock.ExpectExec("UPDATE atheros_search\\.embedding_jobs").
 		WithArgs(expiresAt, job.JobID, job.LeaseToken, job.LeaseFence).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
@@ -139,7 +139,7 @@ func TestRecoverExpiredLeasesIsBounded(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	mock.ExpectExec("UPDATE embedding_jobs").
+	mock.ExpectExec("UPDATE atheros_search\\.embedding_jobs").
 		WithArgs(25).
 		WillReturnResult(sqlmock.NewResult(0, 3))
 

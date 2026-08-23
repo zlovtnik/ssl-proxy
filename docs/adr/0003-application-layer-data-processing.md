@@ -9,7 +9,7 @@ Accepted
 Distributing business logic between the database and the application creates
 technical debt, hidden side effects, and debugging nightmares. The Scala
 services (Octopus, Schema-Migrator) already use Cats Effect and FS2 for stream
-processing, and all TiDB schemas are DDL-only (tables, indexes, views). This
+processing, and all PostgreSQL schemas are DDL-only (tables, indexes, views). This
 ADR formalizes the existing practice and adds library standards for
 code-review enforcement.
 
@@ -18,10 +18,10 @@ code-review enforcement.
 ### 1. The Rule
 
 Zero business logic in the database. No custom stored procedures, functions,
-or triggers in TiDB. All data processing, ETL pipelines, and complex database
+or triggers in PostgreSQL. All data processing, ETL pipelines, and complex database
 operations must be engineered in the application layer.
 
-TiDB is solely responsible for:
+PostgreSQL is solely responsible for:
 - Data persistence
 - Distributed SQL querying
 - Vector search operations
@@ -32,9 +32,9 @@ TiDB is solely responsible for:
 |---------|---------|-------|----------|
 | **Doobie** (`doobie-core`, `doobie-hikari`) | 1.0.0-RC10 | All Scala services | Mandatory for functional JDBC access. Use `sql` interpolator, `ConnectionIO`, and `Transactor`. |
 | **Skunk** | n/a | n/a | Do not introduce. Doobie is established and proven in this codebase. |
-| **Raw JDBC** (`java.sql.*`) | n/a | Performance-critical batch writes | Permitted only when Doobie overhead is measurable and batch throughput is a constraint. Document the exception in code comments. See `TidbTransactor` for the existing pattern. |
+| **Raw JDBC** (`java.sql.*`) | n/a | Performance-critical batch writes | Permitted only when Doobie overhead is measurable and batch throughput is a constraint. Document the exception in code comments. See `PostgresTransactor` for the existing pattern. |
 | **R2DBC** | 1.3.0 | Schema-migrator only | Keep scoped to migration tooling. Do not use for application-layer services. |
-| **Go `database/sql`** | stdlib | Atheros Search | Go service uses standard library with `go-sql-driver/mysql`. This policy applies to Scala services; Go conventions are separate. |
+| **Go `database/sql`** | stdlib | Atheros Search | Go service uses standard library with `go-sql-driver/postgresql`. This policy applies to Scala services; Go conventions are separate. |
 
 ### 3. Concurrency and Backpressure
 
@@ -53,12 +53,12 @@ Writes must use operation-specific idempotency keys to prevent duplicate effects
 on at-least-once delivery. Where a natural unique key exists, enforce it with
 explicit unique constraints or `ON DUPLICATE KEY UPDATE`. Immutable append-only
 evidence (audit logs, ingestion records) should not be updated on conflict.
-Durable TiDB deduplication records keyed by topic/partition/offset support
+Durable PostgreSQL deduplication records keyed by topic/partition/offset support
 at-least-once delivery after the signed cutover offset.
 
 ### 5. Error Handling
 
-Classify TiDB errors as retryable or permanent:
+Classify PostgreSQL errors as retryable or permanent:
 
 | Code | Meaning | Action |
 |------|---------|--------|
@@ -69,15 +69,15 @@ Classify TiDB errors as retryable or permanent:
 | 9007 | Write conflict | Retry with backoff |
 
 Use jittered exponential backoff for retries (max 5 attempts, max 2 seconds).
-See `TiDBTransactionRetry` for the implementation.
+See `PostgreSQLTransactionRetry` for the implementation.
 
 ### 6. Vector Pipeline Integration
 
-TiDB vector capabilities compose naturally with FS2 streams. The pattern:
+PostgreSQL vector capabilities compose naturally with FS2 streams. The pattern:
 
-1. Source: Stream rows from TiDB
+1. Source: Stream rows from PostgreSQL
 2. Compute: Call embedding models or apply transformations
-3. Sink: Stream vector inserts back to TiDB
+3. Sink: Stream vector inserts back to PostgreSQL
 
 All in a single, type-safe FS2 pipeline with backpressure.
 
@@ -87,8 +87,8 @@ All in a single, type-safe FS2 pipeline with backpressure.
   will be rejected.
 - All Scala services use Doobie as the primary JDBC layer.
 - Raw JDBC exceptions must be justified in code comments and code-reviewed.
-- Retry logic follows the established `TidbErrorClass` and
-  `TiDBTransactionRetry` patterns.
+- Retry logic follows the established `PostgresErrorClass` and
+  `PostgreSQLTransactionRetry` patterns.
 - The Go service (Atheros Search) is governed separately.
 
 ## Example

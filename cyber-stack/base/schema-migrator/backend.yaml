@@ -26,7 +26,7 @@ spec:
       labels:
         app.kubernetes.io/name: ssl-proxy
         app.kubernetes.io/component: schema-migrator-backend
-        ssl-proxy.io/tidb-client: "true"
+        ssl-proxy.io/postgres-client: "true"
     spec:
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
@@ -46,15 +46,15 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-platform-config
-                  key: SCHEMA_MIGRATOR_TIDB_JDBC_URL
+                  key: SCHEMA_MIGRATOR_POSTGRES_JDBC_URL
             - name: SCHEMA_MIGRATOR_DB_KIND
-              value: "tidb"
+              value: "postgres"
             - name: BEDROCK_STATE_DB_USER
               value: "schema_migrator_runtime"
             - name: BEDROCK_STATE_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: tidb-schema-migrator
+                  name: postgres-schema-migrator
                   key: password
             - name: BEDROCK_STATE_DB_POOL_SIZE
               value: "10"

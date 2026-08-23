@@ -16,9 +16,9 @@ type SuggestCache struct {
 
 const suggestSSIDSQL = `
 SELECT DISTINCT filter_value
-FROM search_filter_values
+FROM atheros_search.search_filter_values
 WHERE filter_kind = 'ssid'
-  AND (? = '' OR normalized_value LIKE ? ESCAPE '\\')
+  AND ($1 = '' OR normalized_value LIKE $2 ESCAPE E'\\\\')
 ORDER BY normalized_value, filter_value`
 
 func SuggestFilters(ctx context.Context, pool *sql.DB, prefix string) (*searchv1.SuggestFiltersResponse, error) {
@@ -38,9 +38,9 @@ func SuggestFilters(ctx context.Context, pool *sql.DB, prefix string) (*searchv1
 	} {
 		if err := scanDistinct(ctx, pool, `
 SELECT DISTINCT filter_value
-FROM search_filter_values
-WHERE filter_kind = ?
-  AND (? = '' OR normalized_value LIKE ? ESCAPE '\\')
+FROM atheros_search.search_filter_values
+WHERE filter_kind = $1
+  AND ($2 = '' OR normalized_value LIKE $3 ESCAPE E'\\\\')
 ORDER BY normalized_value, filter_value
 		LIMIT 50`, item.target, item.kind, normalizedPrefix, pattern); err != nil {
 			return nil, err

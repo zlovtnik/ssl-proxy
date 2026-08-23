@@ -21,7 +21,7 @@ func TestTracerProviderExportsSpanWithServiceName(t *testing.T) {
 
 	spans := exporter.GetSpans()
 	require.Len(t, spans, 1)
-	value, found := spans[0].Resource().Set().Value("service.name")
+	value, found := spans[0].Resource.Set().Value("service.name")
 	require.True(t, found)
 	require.Equal(t, "atheros-search", value.AsString())
 }

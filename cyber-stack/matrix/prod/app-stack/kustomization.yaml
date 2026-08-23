@@ -39,8 +39,8 @@ patches:
     labelSelector: app.kubernetes.io/component=platform-config
 - path: ../patches/proxy-replicas.yaml
 - path: ../patches/resources.yaml
-- path: ../patches/external-tidb.yaml
 - path: ../patches/octopus-runtime.yaml
+- path: ../patches/keycloak-direct-postgres.yaml
 configurations:
 - ../../../base/schema-migrator/kustomizeconfig.yaml
 vars:

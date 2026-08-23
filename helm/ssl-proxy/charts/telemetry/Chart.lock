@@ -1,6 +1,0 @@
-dependencies:
-- name: ssl-proxy-common
-  repository: file://../_common
-  version: 0.1.0
-digest: sha256:b24d12077c27bad09798e3e2cf5b3950ca1f0c31104f0d9fd1e5f9549dabcb8a
-generated: "2026-07-22T22:51:44.875335-04:00"

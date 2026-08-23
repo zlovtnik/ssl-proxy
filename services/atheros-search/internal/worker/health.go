@@ -80,7 +80,7 @@ SELECT
   job_orphaned_count,
   backlog_pending_count,
   backlog_failed_count
-FROM v_sync_plane_health
+FROM atheros_search.v_sync_plane_health
 WHERE projection_key = 'current'
 LIMIT 1
 `).Scan(
@@ -115,7 +115,7 @@ SELECT
   SUM(CASE WHEN status = 'leased' THEN 1 ELSE 0 END),
   SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
   SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)
-FROM embedding_jobs
+FROM atheros_search.embedding_jobs
 `).Scan(
 		&health.EmbeddingPending,
 		&health.EmbeddingLeased,
@@ -128,7 +128,7 @@ FROM embedding_jobs
 
 	rows, err := h.db.QueryContext(ctx, `
 SELECT worker_id, worker_type, last_seen_at, metadata
-FROM worker_heartbeat
+FROM atheros_search.worker_heartbeat
 ORDER BY worker_id
 `)
 	if err == nil {

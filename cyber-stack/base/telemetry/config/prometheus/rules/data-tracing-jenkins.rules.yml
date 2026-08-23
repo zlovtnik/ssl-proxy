@@ -1,5 +1,5 @@
 groups:
-  - name: redpanda-and-tidb
+  - name: redpanda-and-postgres
     rules:
       - alert: RedpandaUnavailable
         expr: up{service="redpanda"} == 0
@@ -54,42 +54,42 @@ groups:
           diagnostic: "A broker resource has remained above the warning saturation threshold."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-capacity"
-      - alert: TiDBUnavailable
-        expr: up{service="tidb"} == 0 or absent(up{service="tidb"})
+      - alert: PostgreSQLUnavailable
+        expr: up{service="postgres"} == 0 or absent(up{service="postgres"})
         for: 2m
-        labels: {severity: critical, service: tidb}
+        labels: {severity: critical, service: postgres}
         annotations:
-          summary: "TiDB metrics endpoint is unavailable"
-          diagnostic: "Neither the bundled endpoint nor the production host bridge is delivering TiDB metrics."
-          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tidb-data-services"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#tidb"
-      - alert: TiDBConnectionsHigh
-        expr: tidb_server_connections / clamp_min(tidb_server_max_connections, 1) > 0.8
+          summary: "PostgreSQL metrics endpoint is unavailable"
+          diagnostic: "Neither the bundled endpoint nor the production host bridge is delivering PostgreSQL metrics."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/postgres-data-services"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgres"
+      - alert: PostgreSQLConnectionsHigh
+        expr: postgres_server_connections / clamp_min(postgres_server_max_connections, 1) > 0.8
         for: 10m
-        labels: {severity: warning, service: tidb}
+        labels: {severity: warning, service: postgres}
         annotations:
-          summary: "TiDB connection utilization is above 80%"
+          summary: "PostgreSQL connection utilization is above 80%"
           diagnostic: "Active database connections are approaching the configured limit."
-          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tidb-data-services"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#tidb-connections"
-      - alert: TiDBQueryLatencyHigh
-        expr: histogram_quantile(0.95, sum by (le) (rate(tidb_server_handle_query_duration_seconds_bucket[5m]))) > 1
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/postgres-data-services"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgres-connections"
+      - alert: PostgreSQLQueryLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(postgres_server_handle_query_duration_seconds_bucket[5m]))) > 1
         for: 10m
-        labels: {severity: warning, service: tidb}
+        labels: {severity: warning, service: postgres}
         annotations:
-          summary: "TiDB p95 query latency exceeds one second"
+          summary: "PostgreSQL p95 query latency exceeds one second"
           diagnostic: "Query handling latency has remained elevated for ten minutes."
-          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tidb-data-services"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#tidb-latency"
-      - alert: TiDBErrorsOrDeadlocks
-        expr: sum(rate(tidb_server_query_total{result!="OK"}[5m])) > 0 or sum(rate(tidb_server_deadlock_total[5m])) > 0
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/postgres-data-services"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgres-latency"
+      - alert: PostgreSQLErrorsOrDeadlocks
+        expr: sum(rate(postgres_server_query_total{result!="OK"}[5m])) > 0 or sum(rate(postgres_server_deadlock_total[5m])) > 0
         for: 10m
-        labels: {severity: warning, service: tidb}
+        labels: {severity: warning, service: postgres}
         annotations:
-          summary: "TiDB errors or deadlocks are elevated"
-          diagnostic: "TiDB has reported unsuccessful queries or deadlocks for ten minutes."
-          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/tidb-data-services"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#tidb-errors"
+          summary: "PostgreSQL errors or deadlocks are elevated"
+          diagnostic: "PostgreSQL has reported unsuccessful queries or deadlocks for ten minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/postgres-data-services"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgres-errors"
 
   - name: tracing-and-jaeger
     rules:

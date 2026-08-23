@@ -3,7 +3,7 @@ package db
 import (
 	"testing"
 
-	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,36 +12,34 @@ func TestValidateDriverConfigRequiresDedicatedExternalAtherosSearchDatabase(t *t
 		dsn  string
 		want string
 	}{
-		{"search:secret@unix(/tmp/tidb.sock)/atheros_search", "tcp networking"},
-		{"search:secret@tcp(localhost:4000)/atheros_search", "external non-loopback"},
-		{"search:secret@tcp(127.0.0.1:4000)/atheros_search", "external non-loopback"},
-		{"root:secret@tcp(tidb.example.test:4000)/atheros_search", "non-root"},
-		{"search@tcp(tidb.example.test:4000)/atheros_search", "non-empty credential"},
-		{"search:secret@tcp(tidb.example.test:4000)/octopus_core", "atheros_search"},
+		{"postgresql://search:secret@localhost:5432/sync", "external non-loopback"},
+		{"postgresql://search:secret@127.0.0.1:5432/sync", "external non-loopback"},
+		{"postgresql://postgres:secret@db.example.test:5432/sync", "non-superuser"},
+		{"postgresql://search@db.example.test:5432/sync", "non-empty credential"},
+		{"postgresql://search:secret@db.example.test:5432/other", "sync"},
 	} {
 		t.Run(test.dsn, func(t *testing.T) {
-			cfg, err := mysql.ParseDSN(test.dsn)
+			cfg, err := pgx.ParseConfig(test.dsn)
 			require.NoError(t, err)
 			require.ErrorContains(t, validateDriverConfig(cfg), test.want)
 		})
 	}
-	cfg, err := mysql.ParseDSN("search:secret@tcp(tidb.example.test:4000)/atheros_search")
+	cfg, err := pgx.ParseConfig("postgresql://search:secret@db.example.test:5432/sync")
 	require.NoError(t, err)
 	require.NoError(t, validateDriverConfig(cfg))
 }
 
-func TestValidateTiDBVersion(t *testing.T) {
-	require.NoError(t, validateTiDBVersion("5.7.25-TiDB-v8.5.2"))
-	require.NoError(t, validateTiDBVersion("TiDB v9.0.0"))
-	require.ErrorContains(t, validateTiDBVersion("5.7.25-TiDB-v8.4.0"), "v8.5")
-	require.ErrorContains(t, validateTiDBVersion("8.5.0 MySQL Community Server"), "not identifiable")
+func TestValidatePostgresVersion(t *testing.T) {
+	require.NoError(t, validatePostgresVersion(160004))
+	require.NoError(t, validatePostgresVersion(170001))
+	require.ErrorContains(t, validatePostgresVersion(150008), "16 or newer")
 }
 
-func TestRegisterTLSConfigAllowsExplicitPlaintext(t *testing.T) {
-	name, err := registerTLSConfig(Options{})
+func TestConfigureTLSAllowsExplicitPlaintext(t *testing.T) {
+	cfg, err := pgx.ParseConfig("postgresql://search:secret@db.example.test:5432/sync?sslmode=disable")
 	require.NoError(t, err)
-	require.Empty(t, name)
+	require.NoError(t, configureTLS(cfg, Options{}))
 
-	_, err = registerTLSConfig(Options{TLSServerName: "tidb.example.test"})
+	err = configureTLS(cfg, Options{TLSServerName: "postgres.example.test"})
 	require.ErrorContains(t, err, "CA file")
 }

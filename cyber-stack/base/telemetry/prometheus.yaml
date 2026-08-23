@@ -248,8 +248,3 @@ spec:
             matchLabels: {app.kubernetes.io/component: telemetry-prometheus}
       ports:
         - {protocol: TCP, port: 9090}
-    - from:
-        - podSelector:
-            matchLabels: {app.kubernetes.io/component: telemetry-tidb-metrics-bridge}
-      ports:
-        - {protocol: TCP, port: 9090}

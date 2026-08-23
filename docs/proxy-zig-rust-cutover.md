@@ -3,7 +3,7 @@
 > **Status: Historical / superseded.** This workmap records the proxy cutover
 > sequence and is not current deployment guidance. Use
 > [System Architecture](architecture.md) for the implemented Rust proxy,
-> Octopus and TiDB ownership model.
+> Octopus and PostgreSQL ownership model.
 
 ## Completed in this repo
 - Removed the `oracle-db` build dependency path from the Rust proxy build.
@@ -44,4 +44,4 @@
 
 ## Ownership boundary
 - The proxy produces work signals and metadata.
-- `services/octopus` owns orchestration, batching, dedupe, cursor advancement, and TiDB sink behavior.
+- `services/octopus` owns orchestration, batching, dedupe, cursor advancement, and PostgreSQL sink behavior.

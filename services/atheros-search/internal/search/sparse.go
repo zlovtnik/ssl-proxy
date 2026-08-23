@@ -59,8 +59,8 @@ func sparseKind(ctx context.Context, pool *sql.DB, query, kind string, opts Opti
 
 	clauses := make([]string, 0, len(patterns))
 	args := make([]any, 0, len(patterns)+2)
-	for _, pattern := range patterns {
-		clauses = append(clauses, "t.token LIKE ? ESCAPE '\\\\'")
+	for index, pattern := range patterns {
+		clauses = append(clauses, fmt.Sprintf("t.token LIKE $%d ESCAPE E'\\\\'", index+1))
 		args = append(args, pattern)
 	}
 	args = append(args, kind, overfetch)
@@ -76,23 +76,23 @@ SELECT
   COALESCE(d.bssid, ''),
   COALESCE(d.ssid, ''),
   COALESCE(d.frame_subtype, ''),
-  CAST(0 AS FLOAT),
-  CAST(ranked.keyword_rank AS FLOAT),
-  COALESCE(CAST(d.tags AS CHAR), '[]'),
-  COALESCE(CAST(d.detail_json AS CHAR), '{}'),
+  CAST(0 AS DOUBLE PRECISION),
+  CAST(ranked.keyword_rank AS DOUBLE PRECISION),
+  COALESCE(d.tags::text, '[]'),
+  COALESCE(d.detail_json::text, '{}'),
   COALESCE(d.security_flags, 0),
   COALESCE(d.handshake_captured, 0)
 FROM (
   SELECT t.document_id, SUM(t.term_frequency) AS keyword_rank
-  FROM search_document_tokens t
-  JOIN search_documents filter_doc ON filter_doc.document_id = t.document_id
-  WHERE (%s) AND filter_doc.source_kind = ? AND filter_doc.status = 'active'
+  FROM atheros_search.search_document_tokens t
+  JOIN atheros_search.search_documents filter_doc ON filter_doc.document_id = t.document_id
+  WHERE (%s) AND filter_doc.source_kind = $%d AND filter_doc.status = 'active'
   GROUP BY t.document_id
   ORDER BY keyword_rank DESC, t.document_id ASC
-  LIMIT ?
+  LIMIT $%d
 ) ranked
-JOIN search_documents d ON d.document_id = ranked.document_id
-ORDER BY ranked.keyword_rank DESC, d.observed_at DESC, d.source_key ASC`, strings.Join(clauses, " OR "))
+JOIN atheros_search.search_documents d ON d.document_id = ranked.document_id
+ORDER BY ranked.keyword_rank DESC, d.observed_at DESC, d.source_key ASC`, strings.Join(clauses, " OR "), len(patterns)+1, len(patterns)+2)
 	return scanSparseRows(ctx, pool, querySQL, opts, args...)
 }
 
@@ -109,16 +109,16 @@ SELECT
   COALESCE(d.bssid, ''),
   COALESCE(d.ssid, ''),
   COALESCE(d.frame_subtype, ''),
-  CAST(0 AS FLOAT),
-  CAST(0.1 AS FLOAT),
-  COALESCE(CAST(d.tags AS CHAR), '[]'),
-  COALESCE(CAST(d.detail_json AS CHAR), '{}'),
+  CAST(0 AS DOUBLE PRECISION),
+  CAST(0.1 AS DOUBLE PRECISION),
+  COALESCE(d.tags::text, '[]'),
+  COALESCE(d.detail_json::text, '{}'),
   COALESCE(d.security_flags, 0),
   COALESCE(d.handshake_captured, 0)
-FROM search_documents d
-WHERE d.source_kind = ? AND d.status = 'active'
+FROM atheros_search.search_documents d
+WHERE d.source_kind = $1 AND d.status = 'active'
 ORDER BY d.observed_at DESC, d.source_key ASC
-LIMIT ?`
+LIMIT $2`
 	return scanSparseRows(ctx, pool, query, opts, kind, limit)
 }
 

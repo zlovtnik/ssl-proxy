@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: ssl-proxy-tidb-schema-executor
+  name: ssl-proxy-postgres-schema-executor
   namespace: ssl-proxy
 spec:
   template:
@@ -9,15 +9,32 @@ spec:
       containers:
         - name: schema
           env:
-            - name: TIDB_HOST
+            - name: POSTGRES_HOST
               value: null
               valueFrom:
                 configMapKeyRef:
-                  name: ssl-proxy-prod-tidb-endpoint
-                  key: TIDB_HOST
-            - name: TIDB_PORT
+                  name: ssl-proxy-prod-postgres-endpoint
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
               value: null
               valueFrom:
                 configMapKeyRef:
-                  name: ssl-proxy-prod-tidb-endpoint
-                  key: TIDB_PORT
+                  name: ssl-proxy-prod-postgres-endpoint
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DATABASE
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-postgres-endpoint
+                  key: POSTGRES_DATABASE
+            - name: PGSSLMODE
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-postgres-endpoint
+                  key: POSTGRES_SSL_MODE
+            - name: POSTGRES_SSL_SERVER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-postgres-endpoint
+                  key: POSTGRES_SSL_SERVER_NAME

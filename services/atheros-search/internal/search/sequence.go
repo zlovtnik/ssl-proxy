@@ -33,8 +33,8 @@ func ScoreSequence(ctx context.Context, pool *sql.DB, tokens []string) (float64,
 		var count, total, vocabulary int64
 		err := pool.QueryRowContext(ctx, `
 SELECT transition_count, previous_total, vocabulary_size
-FROM sequence_transitions
-WHERE previous_token = ? AND next_token = ? AND sequence_kind = 'frame_sequence'
+FROM atheros_search.sequence_transitions
+WHERE previous_token = $1 AND next_token = $2 AND sequence_kind = 'frame_sequence'
 LIMIT 1`, tokens[i], tokens[i+1]).Scan(&count, &total, &vocabulary)
 		if errors.Is(err, sql.ErrNoRows) {
 			score += math.Log2(1.0 / defaultVocabularySize)

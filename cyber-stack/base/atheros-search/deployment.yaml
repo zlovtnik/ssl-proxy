@@ -26,7 +26,7 @@ spec:
       labels:
         app.kubernetes.io/name: ssl-proxy
         app.kubernetes.io/component: atheros-search
-        ssl-proxy.io/tidb-client: "true"
+        ssl-proxy.io/postgres-client: "true"
     spec:
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
@@ -43,21 +43,21 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: ATHSEARCH_TIDB_HOST
-              value: "ssl-proxy-tidb.$(POD_NAMESPACE).svc.cluster.local"
-            - name: ATHSEARCH_TIDB_PORT
-              value: "4000"
-            - name: ATHSEARCH_TIDB_DATABASE
-              value: "atheros_search"
-            - name: ATHSEARCH_TIDB_USER
+            - name: ATHSEARCH_POSTGRES_HOST
+              value: "postgres-pgbouncer"
+            - name: ATHSEARCH_POSTGRES_PORT
+              value: "5432"
+            - name: ATHSEARCH_POSTGRES_DATABASE
+              value: "sync"
+            - name: ATHSEARCH_POSTGRES_USER
               value: "atheros_search_runtime"
-            - name: ATHSEARCH_TIDB_PASSWORD
+            - name: ATHSEARCH_POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: tidb-atheros-search
+                  name: postgres-atheros-search
                   key: password
             - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
-              value: "b10612a60b1a3cd3ca8c8c62d4098aaf9ebc8548b061aaefc952e3c020cf872c"
+              value: "531610b2d2876768c08a5cf3531d24e16bf7fe9234fdfee30f32247c9973a2b7"
             - name: ATHSEARCH_EMBEDDING_MODEL
               value: "nomic-embed-text-v2-moe"
             - name: ATHSEARCH_EMBEDDING_DIMENSIONS

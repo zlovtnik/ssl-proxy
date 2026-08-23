@@ -132,7 +132,7 @@ condition messages. Build results remain available in Jenkins; no outbound
 failure webhook is configured.
 
 The target set covers the proxy, Octopus coordinator, Atheros Sensor, Atheros
-Search, key rotator, Search UI, both Schema Migrator images and the TiDB runtime
+Search, key rotator, Search UI, both Schema Migrator images and the PostgreSQL runtime
 schema. The key rotator remains Compose-only because it controls the staged
 local rotation harness via the Docker API.
 
@@ -145,7 +145,7 @@ replication/TLS validation cannot be pushed as `java-coordinator`.
 
 Jenkins publishes immutable image digests but does not mutate Kubernetes or
 Git. Record a published digest in the dev slice with
-`make bump-digest-<service> ENV=dev DIGEST=sha256:<digest>`, validate it on the
+`make bump-digest-<service> ENV=prod DIGEST=sha256:<digest>`, validate it on the
 local Kubernetes context, and review that change normally. Production remains
 a separate reviewed copy of accepted dev digests and is reconciled only by the
 three production Argo CD Applications.

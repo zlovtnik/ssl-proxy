@@ -15,7 +15,7 @@ local Kustomize context.
    Secrets and production endpoint ConfigMap from
    `cyber-stack/platform-input-contract.yaml` without exposing their values.
 5. Review the rendered diff for the exact environment slice being changed.
-6. Record TiDB schema manifest hashes, runtime grants and Redpanda consumer
+6. Record PostgreSQL schema manifest hashes, runtime grants and Redpanda consumer
    group offsets when those contracts change.
 
 ## Release and promotion
@@ -27,7 +27,7 @@ publish to the repositories selected by the canonical environment without
 changing Git or cluster state:
 
 ```bash
-make publish ENV=dev REGISTRY_PLAIN_HTTP=1
+make publish ENV=prod REGISTRY_PLAIN_HTTP=1
 ```
 
 `make publish` defaults to production, derives repositories and pins from the
@@ -63,13 +63,13 @@ configuration/artifact mismatch.
 | Proxy | `GET /ready` on admin port `3002` | Required runtime dependencies are ready |
 | UDP frontdoor | `GET /health` on host-local `3003` | Frontdoor process and backend status |
 | Octopus | `GET /live` on `8081` | HTTP process liveness |
-| Octopus | `GET /ready` on `8081` | TiDB and enabled processor readiness |
+| Octopus | `GET /ready` on `8081` | PostgreSQL and enabled processor readiness |
 | Octopus | `GET /metrics` on `8081` | Prometheus text metrics |
 | Octopus Service | `GET /live` on `ssl-proxy-java-coordinator:8080` | Service port `8080` routes to pod target port `8081` |
 | Octopus Service | `GET /ready` on `ssl-proxy-java-coordinator:8080` | Service-routed dependency readiness |
 | Octopus Service | `GET /metrics` on `ssl-proxy-java-coordinator:8080` | Service-routed Prometheus metrics |
 | Atheros Search | `GET /healthz` on `8080` | Process liveness |
-| Atheros Search | `GET /readyz` on `8080` | TiDB, schema, vector and embedding readiness |
+| Atheros Search | `GET /readyz` on `8080` | PostgreSQL, schema, vector and embedding readiness |
 | Atheros Search | `GET /v1/etl/health` | Worker/job ETL snapshot |
 | Prometheus | `GET /-/ready` on `9090` | Prometheus ready |
 | Grafana | `GET /api/health` on `3004` | Grafana process ready |
@@ -87,17 +87,17 @@ address and must remain active only until every dependency has moved.
 | Server | `SERVER_IP=192.168.1.242` |
 | Registry | `192.168.1.242:5000` |
 | K3s API | `https://192.168.1.242:6443` |
-| External TiDB SQL | `192.168.1.242:4000` |
+| External PostgreSQL SQL | `192.168.1.242:4000` |
 
 Keep the router forward disabled throughout the cutover. Before changing the
 host, confirm that `.242` is reserved to the wired MAC and that DMZ-host mode,
 WAN administration, UPnP/NAT-PMP and public IPv6 exposure are disabled. With
 root evidence, bring the root and image filesystems below 80% by removing only
 approved unused caches or images. Do not remove active images, registry data,
-TiDB data, Jenkins data or named volumes without separate approval.
+PostgreSQL data, Jenkins data or named volumes without separate approval.
 
 Retain recoverable copies of the NetworkManager `netplan-enp2s0f0` profile,
-K3s configuration, firewall rules, Compose runtime configuration, TiDB
+K3s configuration, firewall rules, Compose runtime configuration, PostgreSQL
 container inspection and every kubeconfig. Keep both addresses active while
 staging, and keep an independent administrative session open.
 
@@ -109,12 +109,12 @@ The platform and network owners perform the cutover in this order:
 2. Rebind the untracked CI registry and Jenkins runtime to `.242`, preserving
    their named volumes. Configure K3s/containerd to trust the exact plain-HTTP
    authority `192.168.1.242:5000`, then prove the registry API and a CRI pull.
-3. Recreate standalone TiDB with `pingcap/tidb:v8.5.7`, UniStore, a persistent
+3. Recreate standalone PostgreSQL with `pingcap/postgres:v8.5.7`, UniStore, a persistent
    named volume and `restart: unless-stopped`. Bind SQL only to
    `192.168.1.242:4000`, bind status/metrics to `127.0.0.1:10080`, configure no
    TLS material, and retain the stopped prior container as rollback evidence.
 4. Through the platform prerequisite workflow, update the non-secret
-   `ssl-proxy-prod-tidb-endpoint` values, including `TIDB_HOST` and the JDBC
+   `ssl-proxy-prod-postgres-endpoint` values, including `POSTGRES_HOST` and the JDBC
    URL, to `.242` with `sslMode=DISABLED`. Do not patch the
    ConfigMap interactively.
 5. Merge the reviewed repository address change to `main` and let Argo CD
@@ -131,7 +131,7 @@ The platform and network owners perform the cutover in this order:
    IPv4 TCP `80 -> 192.168.1.242:80` after every gate passes.
 
 Immediately disable the router forward on rollback. Before `.221` is removed,
-restore the prior Git, K3s, registry and TiDB settings. After its removal,
+restore the prior Git, K3s, registry and PostgreSQL settings. After its removal,
 restore the saved NetworkManager profile through the working `.242` session or
 physical console, then revert dependent endpoints.
 
@@ -219,7 +219,7 @@ The evidence must show:
 - requests from a LAN client to both entrypoints return `404`, the observed
   client address matches that client rather than a spoofed forwarding header,
   and each request has a matching JSON access-log record;
-- `192.168.1.242:5000/v2/` responds, a CRI image pull succeeds, TiDB accepts
+- `192.168.1.242:5000/v2/` responds, a CRI image pull succeeds, PostgreSQL accepts
   password-authenticated plaintext clients on `.242:4000`, all workloads are healthy, and the
   Atheros Sensor image-pull failure is resolved.
 
@@ -285,8 +285,8 @@ drift. Correct Git or the platform prerequisite and let Argo CD reconcile it.
 The current recovery incident is blocked by missing platform-owned Secrets,
 not by first-party publication. Republishing `$TAG` or `latest` cannot satisfy
 that contract. Have the platform declarative control plane run its atomic Vault
-KV-v2 sync for the contract, including TiDB root/account passwords and Loki
-htpasswd preflight, then rerun `make recover-stack`; do not create or patch the
+KV-v2 sync for the contract, including PostgreSQL root/account passwords and Loki
+htpasswd preflight, then rerun `make stack-health`; do not create or patch the
 Secrets interactively. Existing pending pods recover through kubelet retries
 and Argo CD self-healing. Do not restart, patch or scale workloads to force
 reconciliation.
@@ -316,7 +316,7 @@ missing Application, unhealthy status or timeout is a failed release check.
 3. Confirm `sync.scan.request` consumer lag is moving.
 4. Confirm Octopus writes topic/partition/offset ingestion evidence in
    `octopus_core`.
-5. Confirm `sync.oracle.load` and `sync.oracle.result` progress as TiDB work and
+5. Confirm `sync.oracle.load` and `sync.oracle.result` progress as PostgreSQL work and
    results; the names do not indicate Oracle.
 6. Confirm the sensor publishes `wireless.audit` and the matching
    `sync.scan.request` without database credentials.
@@ -349,14 +349,14 @@ missing Application, unhealthy status or timeout is a failed release check.
 
 ### Octopus health fails
 
-- Verify the rendered TiDB host, port, database, account and explicit
-  `TIDB_SSL_MODE=DISABLED` setting.
+- Verify the rendered PostgreSQL host, port, database, account and explicit
+  `POSTGRES_SSL_MODE=DISABLED` setting.
 - Confirm the canonical manifest and versioned Kafka consumer-group settings.
 - Do not fall back to PostgreSQL.
 
 ### Search readiness fails
 
-- Validate the discrete TiDB host/port/user/password settings and manifest hash.
+- Validate the discrete PostgreSQL host/port/user/password settings and manifest hash.
 - Confirm the Search account grants and platform-provided Secret keys.
 - Check whether the embedding backend is required for the selected mode.
 - Inspect the rendered app-stack Kustomization for worker configuration.
@@ -387,10 +387,10 @@ Revert the Git commit that introduced the bad desired state and let Argo CD
 reconcile the previous digests/configuration. Do not perform a controller-local
 rollback that leaves Git stale.
 
-Do not delete TiDB schemas, consumer evidence, outboxes or sensor backlogs
+Do not delete PostgreSQL schemas, consumer evidence, outboxes or sensor backlogs
 during diagnosis. Stop producers or consumers only through a reviewed Git
 change at a documented boundary. Any consumer offset reset requires an explicit
-duplicate-delivery review and must preserve TiDB ingestion evidence.
+duplicate-delivery review and must preserve PostgreSQL ingestion evidence.
 
 For key rotation, use the staged rotator flow in the
 [WireGuard key rotator README](../apps/wg-key-rotator/README.md); do not replace
@@ -404,7 +404,7 @@ partitions; existing consumer groups discover new partitions from the broker.
 1. Merge the topic manifest change and verify the expected partition count
    after Argo CD reports healthy.
 2. Confirm the active consumer groups rebalance and assign every new partition.
-3. Confirm new partitions start at their earliest retained offset and TiDB
+3. Confirm new partitions start at their earliest retained offset and PostgreSQL
    ingestion evidence advances with Kafka commits.
 4. Watch lag per partition with `rpk group describe`.
 

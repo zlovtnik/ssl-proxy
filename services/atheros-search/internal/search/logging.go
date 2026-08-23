@@ -32,16 +32,14 @@ func LogQuery(ctx context.Context, pool *sql.DB, queryText, queryKind string, qv
 		return 0, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `
-INSERT INTO search_queries (
+	var queryID int64
+	err = tx.QueryRowContext(ctx, `
+INSERT INTO atheros_search.search_queries (
   query_uuid, hashed_query_text, query_kind, query_vector,
   top_k, session_hash, latency_ms, created_at, expires_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 30 DAY))
-`, queryUUID, sha256Hex(queryText), queryKind, vector, topK, sessionHash, latencyMS)
-	if err != nil {
-		return 0, err
-	}
-	queryID, err := result.LastInsertId()
+) VALUES ($1, $2, $3, $4::vector, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days')
+RETURNING query_id
+`, queryUUID, sha256Hex(queryText), queryKind, vector, topK, sessionHash, latencyMS).Scan(&queryID)
 	if err != nil {
 		return 0, err
 	}
@@ -51,8 +49,8 @@ INSERT INTO search_queries (
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO search_query_results (query_id, ordinal, result_key_hash)
-VALUES (?, ?, ?)
+INSERT INTO atheros_search.search_query_results (query_id, ordinal, result_key_hash)
+VALUES ($1, $2, $3)
 `, queryID, ordinal+1, sha256Hex(key)); err != nil {
 			return 0, err
 		}

@@ -24,7 +24,7 @@ func TestNormalizeGraphFiltersTrimsAndSorts(t *testing.T) {
 	require.Equal(t, graphMaxLimit, got.Limit)
 }
 
-func TestGraphNodesQueryUsesMySQLParametersAndProjectionFilters(t *testing.T) {
+func TestGraphNodesQueryUsesPostgreSQLParametersAndProjectionFilters(t *testing.T) {
 	after := time.Unix(100, 0).UTC()
 	query, args := graphNodesQuery(normalizeGraphFilters(GraphFilters{
 		LocationIDs:   []string{"lab", "hq"},
@@ -35,12 +35,11 @@ func TestGraphNodesQueryUsesMySQLParametersAndProjectionFilters(t *testing.T) {
 		ObservedAfter: &after,
 		Limit:         50,
 	}))
-	require.NotContains(t, query, "$1")
 	require.NotContains(t, strings.ToLower(query), "unnest")
-	require.Contains(t, query, "location_id IN (?,?)")
-	require.Contains(t, query, "normalized_ssid LIKE ?")
-	require.Contains(t, query, "node_kind IN (?)")
-	require.Contains(t, query, "is_threat = 1")
+	require.Contains(t, query, "location_id IN ($1,$2)")
+	require.Contains(t, query, "normalized_ssid LIKE $4 ESCAPE E'\\\\'")
+	require.Contains(t, query, "node_kind IN ($5)")
+	require.Contains(t, query, "is_threat")
 	require.NotContains(t, query, "JSON_EXTRACT")
 	require.Equal(t, []any{"hq", "lab", "aa:bb", "%lab\\%net%", "device", after, 50}, args)
 }

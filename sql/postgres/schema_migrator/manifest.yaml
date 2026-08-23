@@ -1,0 +1,16 @@
+engine: postgres
+layer: schema_migrator
+database: sync
+schema_version: 001
+checksum_algorithm: sha256
+manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
+manifest_sha256: c728bb26dce5f13ec782e924fa61d4f3fe7a981c4611fed0c7c5291d55c621df
+checksums_file: checksums.sha256
+grant_fixture: grants/least_privilege.sql.tmpl
+apply_order:
+  - 00_schemas/001_schema_migrator_database.sql
+  - 01_tables/001_schema_control.sql
+  - 01_tables/002_repository_state.sql
+  - 01_tables/003_run_state.sql
+  - 01_tables/004_control_leases.sql
+retired: []

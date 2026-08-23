@@ -44,12 +44,13 @@ EXPECTED_INPUTS = {
     ("Secret", "schema-migrator-bootstrap"): {"application-admin-password"},
     ("Secret", "schema-migrator-keycloak"): {"bootstrap-admin-password"},
     ("Secret", "ssl-proxy-identity-tls"): {"tls.crt", "tls.key"},
-    ("Secret", "tidb-atheros-search"): {"password"},
-    ("Secret", "tidb-keycloak"): {"password"},
-    ("Secret", "tidb-octopus"): {"password"},
-    ("Secret", "tidb-root"): {"password"},
-    ("Secret", "tidb-schema-migrator"): {"password"},
-    ("Secret", "tidb-schema-owner"): {"password"},
+    ("Secret", "postgres-atheros-search"): {"password"},
+    ("Secret", "postgres-keycloak"): {"password"},
+    ("Secret", "postgres-octopus"): {"password"},
+    ("Secret", "postgres-schema-migrator"): {"password"},
+    ("Secret", "postgres-schema-owner"): {"password"},
+    ("Secret", "postgres-runtime-tls"): {"ca.crt"},
+    ("Secret", "pgbouncer-runtime-users"): {"userlist.txt"},
     ("Secret", "wireguard-config"): {
         "server.conf",
         "Corefile",
@@ -64,10 +65,12 @@ EXPECTED_INPUTS = {
         "publickey-peer2",
         "presharedkey-peer2",
     },
-    ("ConfigMap", "ssl-proxy-prod-tidb-endpoint"): {
-        "TIDB_HOST",
-        "TIDB_PORT",
-        "SCHEMA_MIGRATOR_TIDB_JDBC_URL",
+    ("ConfigMap", "ssl-proxy-prod-postgres-endpoint"): {
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "POSTGRES_DATABASE",
+        "POSTGRES_SSL_MODE",
+        "POSTGRES_SSL_SERVER_NAME",
     },
 }
 
@@ -98,7 +101,7 @@ class PlatformInputContractTest(unittest.TestCase):
         }
 
         self.assertEqual(EXPECTED_INPUTS, actual)
-        self.assertEqual(16, sum(entry.kind == "Secret" for entry in contract.inputs))
+        self.assertEqual(17, sum(entry.kind == "Secret" for entry in contract.inputs))
         self.assertEqual(1, sum(entry.kind == "ConfigMap" for entry in contract.inputs))
         for entry in contract.inputs:
             self.assertEqual(

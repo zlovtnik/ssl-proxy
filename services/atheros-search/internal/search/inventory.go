@@ -147,7 +147,7 @@ func (s *Service) Inventory(ctx context.Context, filters InventoryFilters) (*Inv
 		return nil, err
 	}
 	var totalRegistered int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM inventory_devices WHERE registered = 1").Scan(&totalRegistered); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM atheros_search.inventory_devices WHERE registered").Scan(&totalRegistered); err != nil {
 		return nil, err
 	}
 
@@ -196,7 +196,7 @@ func fetchInventoryDevices(ctx context.Context, tx *sql.Tx, filters InventoryFil
 	addInClause(&clauses, &args, "location_id", stringsToAny(filters.LocationIDs))
 	addInClause(&clauses, &args, "owner_id", stringsToAny(filters.OwnerIDs))
 	if filters.ActiveOnly {
-		clauses = append(clauses, "active = 1")
+		clauses = append(clauses, "active")
 	}
 	overfetch := filters.Limit * 4
 	if overfetch > 4000 {
@@ -207,12 +207,12 @@ func fetchInventoryDevices(ctx context.Context, tx *sql.Tx, filters InventoryFil
 SELECT
   mac, COALESCE(display_name, ''), COALESCE(owner_id, ''), COALESCE(location_id, ''),
   first_registered, last_seen, active, registered,
-  COALESCE(CAST(tags AS CHAR), '[]'), COALESCE(similarity_cluster_id, ''),
-  dedup_confidence, COALESCE(CAST(known_macs AS CHAR), '[]')
-FROM inventory_devices
+  COALESCE(tags::text, '[]'), COALESCE(similarity_cluster_id, ''),
+  dedup_confidence, COALESCE(known_macs::text, '[]')
+FROM atheros_search.inventory_devices
 WHERE `+strings.Join(clauses, " AND ")+`
 ORDER BY last_seen DESC, mac ASC
-LIMIT ?`, args...)
+LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,8 @@ func fetchInventoryCandidates(ctx context.Context, tx *sql.Tx, devices []invento
 	if len(devices) == 0 {
 		return nil, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(devices)), ",")
+	firstPlaceholders := pgPlaceholders(1, len(devices))
+	secondPlaceholders := pgPlaceholders(len(devices)+1, len(devices))
 	args := make([]any, 0, len(devices)*2+2)
 	for _, device := range devices {
 		args = append(args, device.MAC)
@@ -264,15 +265,15 @@ func fetchInventoryCandidates(ctx context.Context, tx *sql.Tx, devices []invento
 	args = append(args, minConfidence, limit)
 	rows, err := tx.QueryContext(ctx, `
 SELECT c.candidate_id, c.mac_a, c.mac_b, c.confidence, c.computed_at
-FROM merge_candidates c
-LEFT JOIN merge_decisions d ON d.candidate_id = c.candidate_id
-WHERE c.mac_a IN (`+placeholders+`)
-  AND c.mac_b IN (`+placeholders+`)
-  AND c.confidence >= ?
+FROM atheros_search.merge_candidates c
+LEFT JOIN atheros_search.merge_decisions d ON d.candidate_id = c.candidate_id
+WHERE c.mac_a IN (`+firstPlaceholders+`)
+  AND c.mac_b IN (`+secondPlaceholders+`)
+  AND c.confidence >= $`+fmt.Sprint(len(devices)*2+1)+`
   AND c.status = 'pending'
   AND (d.candidate_id IS NULL OR d.decision = 'undo_merge')
 ORDER BY c.confidence DESC, c.candidate_id ASC
-LIMIT ?`, args...)
+LIMIT $`+fmt.Sprint(len(devices)*2+2), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -303,15 +304,15 @@ func (s *Service) MergeDecision(ctx context.Context, candidateID string, decisio
 		return nil, err
 	}
 	result, err := s.Pool.ExecContext(ctx, `
-INSERT INTO merge_decisions (
+INSERT INTO atheros_search.merge_decisions (
   decision_id, candidate_id, decision, decided_by, evidence, decided_at
 )
-VALUES (?, ?, ?, 'atheros-search', JSON_OBJECT('source', 'public-api'), UTC_TIMESTAMP(6))
-ON DUPLICATE KEY UPDATE
-  decision = VALUES(decision),
-  decided_by = VALUES(decided_by),
-  evidence = VALUES(evidence),
-  decided_at = VALUES(decided_at)
+VALUES ($1, $2, $3, 'atheros-search', jsonb_build_object('source', 'public-api'), CURRENT_TIMESTAMP)
+ON CONFLICT (candidate_id) DO UPDATE SET
+  decision = EXCLUDED.decision,
+  decided_by = EXCLUDED.decided_by,
+  evidence = EXCLUDED.evidence,
+  decided_at = EXCLUDED.decided_at
 `, decisionID, candidateID, string(decision))
 	if err != nil {
 		return nil, err

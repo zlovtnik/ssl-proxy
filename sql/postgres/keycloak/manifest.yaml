@@ -1,0 +1,12 @@
+engine: postgres
+layer: keycloak
+database: sync
+schema_version: 001
+checksum_algorithm: sha256
+manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
+manifest_sha256: 8475c4f0b49738c4c2f3277b7688f801e8da3ee5e5515ea17fd2d2ad18501278
+checksums_file: checksums.sha256
+grant_fixture: grants/least_privilege.sql.tmpl
+apply_order:
+  - 00_schemas/001_keycloak_schema.sql
+retired: []

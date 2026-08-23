@@ -5,14 +5,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/spf13/viper"
 )
 
@@ -23,101 +21,80 @@ const (
 )
 
 type Config struct {
-	TiDBDSN                  string
-	TiDBTLSCAFile            string
-	TiDBTLSCertFile          string
-	TiDBTLSKeyFile           string
-	TiDBTLSServerName        string
-	TiDBSchemaManifestSHA256 string
-	TiDBMaxOpenConns         int
-	TiDBMaxIdleConns         int
-	TiDBConnMaxLifetime      time.Duration
-	TiDBConnMaxIdleTime      time.Duration
-	EmbeddingModel           string
-	EmbeddingDimensions      int
-	EmbeddingBackend         string
-	GRPCPort                 int
-	HTTPPort                 int
-	MetricsPort              int
-	LogLevel                 string
-	SearchTimeout            time.Duration
-	HybridAlpha              float64
-	DenseOverfetchFactor     int
-	APIKeySHA256             string
-	SchemaReadyRequired      bool
-	SchemaReadyTimeout       time.Duration
-	SchemaReadyPollInterval  time.Duration
-	CORSAllowedOrigins       []string
-	WorkerEnabled            bool
-	WorkerCount              int
-	EmbeddingBatchSize       int
-	LeaseSeconds             int
-	WorkerPollInterval       time.Duration
-	WorkerID                 string
-	WSEnabled                bool
+	PostgresDSN                  string
+	PostgresTLSCAFile            string
+	PostgresTLSCertFile          string
+	PostgresTLSKeyFile           string
+	PostgresTLSServerName        string
+	PostgresSchemaManifestSHA256 string
+	PostgresMaxOpenConns         int
+	PostgresMaxIdleConns         int
+	PostgresConnMaxLifetime      time.Duration
+	PostgresConnMaxIdleTime      time.Duration
+	EmbeddingModel               string
+	EmbeddingDimensions          int
+	EmbeddingBackend             string
+	GRPCPort                     int
+	HTTPPort                     int
+	MetricsPort                  int
+	LogLevel                     string
+	SearchTimeout                time.Duration
+	HybridAlpha                  float64
+	DenseOverfetchFactor         int
+	APIKeySHA256                 string
+	SchemaReadyRequired          bool
+	SchemaReadyTimeout           time.Duration
+	SchemaReadyPollInterval      time.Duration
+	CORSAllowedOrigins           []string
+	WorkerEnabled                bool
+	WorkerCount                  int
+	EmbeddingBatchSize           int
+	LeaseSeconds                 int
+	WorkerPollInterval           time.Duration
+	WorkerID                     string
+	WSEnabled                    bool
 }
 
 func Load() (Config, error) {
 	env := viper.New()
 	env.AutomaticEnv()
-	tidbDSN := strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_DSN"))
-	if tidbDSN == "" {
-		tidbHost := strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_HOST"))
-		tidbPort := envInt("ATHSEARCH_TIDB_PORT", 4000)
-		tidbDatabase := envString("ATHSEARCH_TIDB_DATABASE", "atheros_search")
-		tidbUser := envString("ATHSEARCH_TIDB_USER", "atheros_search_runtime")
-		tidbPassword := os.Getenv("ATHSEARCH_TIDB_PASSWORD")
-		if tidbHost == "" {
-			return Config{}, errors.New("ATHSEARCH_TIDB_HOST is required when ATHSEARCH_TIDB_DSN is not set")
-		}
-		if tidbPort < 1 || tidbPort > 65535 {
-			return Config{}, errors.New("ATHSEARCH_TIDB_PORT must be between 1 and 65535")
-		}
-		if strings.TrimSpace(tidbPassword) == "" {
-			return Config{}, errors.New("ATHSEARCH_TIDB_PASSWORD is required when ATHSEARCH_TIDB_DSN is not set")
-		}
-		tidbDSN = (&mysql.Config{
-			User:                 tidbUser,
-			Passwd:               tidbPassword,
-			Net:                  "tcp",
-			Addr:                 net.JoinHostPort(tidbHost, strconv.Itoa(tidbPort)),
-			DBName:               tidbDatabase,
-			AllowNativePasswords: true,
-		}).FormatDSN()
+	postgresDSN := strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_DSN"))
+	if postgresDSN == "" {
+		return Config{}, errors.New("ATHSEARCH_POSTGRES_DSN is required")
 	}
 	cfg := Config{
-		TiDBDSN:                  tidbDSN,
-		TiDBTLSCAFile:            strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_CA_FILE")),
-		TiDBTLSCertFile:          strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_CERT_FILE")),
-		TiDBTLSKeyFile:           strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_KEY_FILE")),
-		TiDBTLSServerName:        strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_SERVER_NAME")),
-		TiDBSchemaManifestSHA256: strings.ToLower(strings.TrimSpace(os.Getenv("ATHSEARCH_SCHEMA_MANIFEST_SHA256"))),
-		TiDBMaxOpenConns:         envInt("ATHSEARCH_TIDB_MAX_OPEN_CONNS", 32),
-		TiDBMaxIdleConns:         envInt("ATHSEARCH_TIDB_MAX_IDLE_CONNS", 8),
-		TiDBConnMaxLifetime:      time.Duration(envInt("ATHSEARCH_TIDB_CONN_MAX_LIFETIME_MS", 300000)) * time.Millisecond,
-		TiDBConnMaxIdleTime:      time.Duration(envInt("ATHSEARCH_TIDB_CONN_MAX_IDLE_TIME_MS", 60000)) * time.Millisecond,
-		EmbeddingModel:           envString("ATHSEARCH_EMBEDDING_MODEL", envString("VECTOR_EMBEDDING_MODEL", DefaultEmbeddingModel)),
-		EmbeddingDimensions:      envInt("ATHSEARCH_EMBEDDING_DIMENSIONS", envInt("VECTOR_EMBEDDING_DIMENSIONS", DefaultEmbeddingDimensions)),
-		EmbeddingBackend:         firstEnv("ATHSEARCH_EMBEDDING_BACKEND", "VECTOR_EMBEDDING_URL"),
-		GRPCPort:                 envInt("ATHSEARCH_GRPC_PORT", 50051),
-		HTTPPort:                 envInt("ATHSEARCH_HTTP_PORT", 8080),
-		MetricsPort:              envInt("ATHSEARCH_METRICS_PORT", 9090),
-		LogLevel:                 envStringViper(env, "ATHSEARCH_LOG_LEVEL", "info"),
-		SearchTimeout:            time.Duration(envInt("ATHSEARCH_SEARCH_TIMEOUT_MS", 10000)) * time.Millisecond,
-		HybridAlpha:              envFloat("ATHSEARCH_HYBRID_ALPHA", 0.5),
-		DenseOverfetchFactor:     envInt("ATHSEARCH_DENSE_OVERFETCH_FACTOR", 8),
-		APIKeySHA256:             strings.ToLower(strings.TrimSpace(os.Getenv("ATHSEARCH_API_TOKEN_SHA256"))),
-		SchemaReadyRequired:      envBool("ATHSEARCH_SCHEMA_READY_REQUIRED", true),
-		SchemaReadyTimeout:       time.Duration(envInt("ATHSEARCH_SCHEMA_READY_TIMEOUT_MS", 60000)) * time.Millisecond,
-		SchemaReadyPollInterval:  time.Duration(envInt("ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
-		CORSAllowedOrigins:       envCSV("ATHSEARCH_CORS_ALLOWED_ORIGINS", []string{DefaultCORSAllowedOrigin}),
-		WorkerEnabled:            envBool("ATHSEARCH_WORKER_ENABLED", false),
-		WorkerCount:              envInt("ATHSEARCH_WORKER_COUNT", 4),
-		EmbeddingBatchSize:       envInt("ATHSEARCH_EMBEDDING_BATCH_SIZE", 64),
-		LeaseSeconds:             envInt("ATHSEARCH_LEASE_SECONDS", 1800),
-		WorkerPollInterval:       time.Duration(envInt("ATHSEARCH_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
-		WorkerID:                 envString("ATHSEARCH_WORKER_ID", "worker-1"),
-		WSEnabled:                envBool("ATHSEARCH_WS_ENABLED", false),
+		PostgresDSN:                  postgresDSN,
+		PostgresTLSCAFile:            strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_TLS_CA_FILE")),
+		PostgresTLSCertFile:          strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_TLS_CERT_FILE")),
+		PostgresTLSKeyFile:           strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_TLS_KEY_FILE")),
+		PostgresTLSServerName:        strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME")),
+		PostgresSchemaManifestSHA256: strings.ToLower(strings.TrimSpace(os.Getenv("ATHSEARCH_SCHEMA_MANIFEST_SHA256"))),
+		PostgresMaxOpenConns:         envInt("ATHSEARCH_POSTGRES_MAX_OPEN_CONNS", 32),
+		PostgresMaxIdleConns:         envInt("ATHSEARCH_POSTGRES_MAX_IDLE_CONNS", 8),
+		PostgresConnMaxLifetime:      time.Duration(envInt("ATHSEARCH_POSTGRES_CONN_MAX_LIFETIME_MS", 300000)) * time.Millisecond,
+		PostgresConnMaxIdleTime:      time.Duration(envInt("ATHSEARCH_POSTGRES_CONN_MAX_IDLE_TIME_MS", 60000)) * time.Millisecond,
+		EmbeddingModel:               envString("ATHSEARCH_EMBEDDING_MODEL", envString("VECTOR_EMBEDDING_MODEL", DefaultEmbeddingModel)),
+		EmbeddingDimensions:          envInt("ATHSEARCH_EMBEDDING_DIMENSIONS", envInt("VECTOR_EMBEDDING_DIMENSIONS", DefaultEmbeddingDimensions)),
+		EmbeddingBackend:             firstEnv("ATHSEARCH_EMBEDDING_BACKEND", "VECTOR_EMBEDDING_URL"),
+		GRPCPort:                     envInt("ATHSEARCH_GRPC_PORT", 50051),
+		HTTPPort:                     envInt("ATHSEARCH_HTTP_PORT", 8080),
+		MetricsPort:                  envInt("ATHSEARCH_METRICS_PORT", 9090),
+		LogLevel:                     envStringViper(env, "ATHSEARCH_LOG_LEVEL", "info"),
+		SearchTimeout:                time.Duration(envInt("ATHSEARCH_SEARCH_TIMEOUT_MS", 10000)) * time.Millisecond,
+		HybridAlpha:                  envFloat("ATHSEARCH_HYBRID_ALPHA", 0.5),
+		DenseOverfetchFactor:         envInt("ATHSEARCH_DENSE_OVERFETCH_FACTOR", 8),
+		APIKeySHA256:                 strings.ToLower(strings.TrimSpace(os.Getenv("ATHSEARCH_API_TOKEN_SHA256"))),
+		SchemaReadyRequired:          envBool("ATHSEARCH_SCHEMA_READY_REQUIRED", true),
+		SchemaReadyTimeout:           time.Duration(envInt("ATHSEARCH_SCHEMA_READY_TIMEOUT_MS", 60000)) * time.Millisecond,
+		SchemaReadyPollInterval:      time.Duration(envInt("ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
+		CORSAllowedOrigins:           envCSV("ATHSEARCH_CORS_ALLOWED_ORIGINS", []string{DefaultCORSAllowedOrigin}),
+		WorkerEnabled:                envBool("ATHSEARCH_WORKER_ENABLED", false),
+		WorkerCount:                  envInt("ATHSEARCH_WORKER_COUNT", 4),
+		EmbeddingBatchSize:           envInt("ATHSEARCH_EMBEDDING_BATCH_SIZE", 64),
+		LeaseSeconds:                 envInt("ATHSEARCH_LEASE_SECONDS", 1800),
+		WorkerPollInterval:           time.Duration(envInt("ATHSEARCH_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
+		WorkerID:                     envString("ATHSEARCH_WORKER_ID", "worker-1"),
+		WSEnabled:                    envBool("ATHSEARCH_WS_ENABLED", false),
 	}
 
 	if cfg.WorkerEnabled {
@@ -137,32 +114,32 @@ func Load() (Config, error) {
 			return cfg, errors.New("ATHSEARCH_POLL_INTERVAL_MS must be positive when workers are enabled")
 		}
 	}
-	if strings.Contains(cfg.TiDBDSN, "://") {
-		return cfg, errors.New("ATHSEARCH_TIDB_DSN must be a native MySQL DSN")
+	if !strings.HasPrefix(cfg.PostgresDSN, "postgres://") && !strings.HasPrefix(cfg.PostgresDSN, "postgresql://") {
+		return cfg, errors.New("ATHSEARCH_POSTGRES_DSN must be a PostgreSQL connection URL")
 	}
-	if (cfg.TiDBTLSCertFile == "") != (cfg.TiDBTLSKeyFile == "") {
-		return cfg, errors.New("ATHSEARCH_TIDB_TLS_CERT_FILE and ATHSEARCH_TIDB_TLS_KEY_FILE must be configured together")
+	if (cfg.PostgresTLSCertFile == "") != (cfg.PostgresTLSKeyFile == "") {
+		return cfg, errors.New("ATHSEARCH_POSTGRES_TLS_CERT_FILE and ATHSEARCH_POSTGRES_TLS_KEY_FILE must be configured together")
 	}
-	if cfg.TiDBTLSCAFile == "" && (cfg.TiDBTLSCertFile != "" || cfg.TiDBTLSKeyFile != "" || cfg.TiDBTLSServerName != "") {
-		return cfg, errors.New("ATHSEARCH_TIDB_TLS_CA_FILE is required when any TiDB TLS setting is configured")
+	if cfg.PostgresTLSCAFile == "" && (cfg.PostgresTLSCertFile != "" || cfg.PostgresTLSKeyFile != "" || cfg.PostgresTLSServerName != "") {
+		return cfg, errors.New("ATHSEARCH_POSTGRES_TLS_CA_FILE is required when any Postgres TLS setting is configured")
 	}
-	if cfg.TiDBTLSCAFile != "" && cfg.TiDBTLSServerName == "" {
-		return cfg, errors.New("ATHSEARCH_TIDB_TLS_SERVER_NAME is required")
+	if cfg.PostgresTLSCAFile != "" && cfg.PostgresTLSServerName == "" {
+		return cfg, errors.New("ATHSEARCH_POSTGRES_TLS_SERVER_NAME is required")
 	}
-	if len(cfg.TiDBSchemaManifestSHA256) != sha256.Size*2 {
+	if len(cfg.PostgresSchemaManifestSHA256) != sha256.Size*2 {
 		return cfg, errors.New("ATHSEARCH_SCHEMA_MANIFEST_SHA256 must be a 64-character hex SHA-256 digest")
 	}
-	if _, err := hex.DecodeString(cfg.TiDBSchemaManifestSHA256); err != nil {
+	if _, err := hex.DecodeString(cfg.PostgresSchemaManifestSHA256); err != nil {
 		return cfg, errors.New("ATHSEARCH_SCHEMA_MANIFEST_SHA256 must be a 64-character hex SHA-256 digest")
 	}
-	if cfg.TiDBMaxOpenConns < 1 || cfg.TiDBMaxOpenConns > 512 {
-		return cfg, errors.New("ATHSEARCH_TIDB_MAX_OPEN_CONNS must be between 1 and 512")
+	if cfg.PostgresMaxOpenConns < 1 || cfg.PostgresMaxOpenConns > 512 {
+		return cfg, errors.New("ATHSEARCH_POSTGRES_MAX_OPEN_CONNS must be between 1 and 512")
 	}
-	if cfg.TiDBMaxIdleConns < 0 || cfg.TiDBMaxIdleConns > cfg.TiDBMaxOpenConns {
-		return cfg, errors.New("ATHSEARCH_TIDB_MAX_IDLE_CONNS must be between 0 and ATHSEARCH_TIDB_MAX_OPEN_CONNS")
+	if cfg.PostgresMaxIdleConns < 0 || cfg.PostgresMaxIdleConns > cfg.PostgresMaxOpenConns {
+		return cfg, errors.New("ATHSEARCH_POSTGRES_MAX_IDLE_CONNS must be between 0 and ATHSEARCH_POSTGRES_MAX_OPEN_CONNS")
 	}
-	if cfg.TiDBConnMaxLifetime <= 0 || cfg.TiDBConnMaxIdleTime <= 0 {
-		return cfg, errors.New("TiDB connection lifetime and idle time must be positive")
+	if cfg.PostgresConnMaxLifetime <= 0 || cfg.PostgresConnMaxIdleTime <= 0 {
+		return cfg, errors.New("Postgres connection lifetime and idle time must be positive")
 	}
 	if cfg.EmbeddingDimensions != DefaultEmbeddingDimensions {
 		return cfg, fmt.Errorf("ATHSEARCH_EMBEDDING_DIMENSIONS must be %d, got %d", DefaultEmbeddingDimensions, cfg.EmbeddingDimensions)

@@ -5,7 +5,7 @@ Superseded.
 
 This cutover-era decision is retained for provenance. Use
 [System Architecture](../architecture.md) for the implemented proxy,
-Redpanda, Octopus and TiDB boundaries.
+Redpanda, Octopus and PostgreSQL boundaries.
 
 ## Context
 

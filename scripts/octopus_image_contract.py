@@ -24,8 +24,8 @@ FORBIDDEN_ENTRY_FRAGMENTS = (
 )
 FORBIDDEN_BYTECODE_MARKERS = (
     b"kafka.topic-replication-factor must be between 3 and 32767",
-    b"tidb.ssl-mode must be VERIFY_IDENTITY",
-    b"tidb.local-dev-allow-public-key-retrieval requires development cutover bypass",
+    b"postgres.ssl-mode must be VERIFY_IDENTITY",
+    b"postgres.local-dev-allow-public-key-retrieval requires development cutover bypass",
 )
 
 

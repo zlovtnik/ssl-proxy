@@ -106,7 +106,7 @@ class OctopusImageContractTest(unittest.TestCase):
     def test_jar_rejects_obsolete_replication_and_tls_validation(self) -> None:
         for marker in (
             b"kafka.topic-replication-factor must be between 3 and 32767",
-            b"tidb.ssl-mode must be VERIFY_IDENTITY",
+            b"postgres.ssl-mode must be VERIFY_IDENTITY",
         ):
             with self.subTest(marker=marker):
                 jar = self.write_jar(

@@ -4,7 +4,6 @@ namespace: prod-ssl-proxy
 resources:
 - namespace.yaml
 - ../../base
-- ../../base/tidb-bootstrap
 configMapGenerator:
 - behavior: merge
   files:
@@ -34,23 +33,21 @@ images:
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
 - digest: sha256:895c4db2cc5e2ab6632da43bd95913f53f06f4640f6fb175a033698c22cd1057
-  name: tidb-runtime-schema
-  newName: 192.168.1.242:5000/tidb-runtime-schema
+  name: postgres-runtime-schema
+  newName: 192.168.1.242:5000/postgres-runtime-schema
 patches:
 - path: patches/external-schema-executor.yaml
 - path: patches/identity-hostname.yaml
 - path: patches/proxy-replicas.yaml
 - path: patches/resources.yaml
 - path: patches/jaeger-recovery.yaml
-- path: patches/tidb-metrics-bridge.yaml
 - path: patches/alloy-positions.yaml
-- path: patches/remove-bundled-tidb.yaml
-- path: patches/external-tidb.yaml
 - path: patches/octopus-runtime.yaml
+- path: patches/keycloak-direct-postgres.yaml
 - patch: |-
     - op: replace
       path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
-      value: schema-migrator-001-10abd5b1ef8462fe4f521e064fc16193e50dec2cf508db34a4b32a9acc59f703
+      value: schema-migrator-001-c728bb26dce5f13ec782e924fa61d4f3fe7a981c4611fed0c7c5291d55c621df
   target:
     kind: Job
-    name: ssl-proxy-tidb-schema-executor
+    name: ssl-proxy-postgres-schema-executor

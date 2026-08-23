@@ -22,14 +22,14 @@ resources:
   - atheros-search
   # Redis
   - redis-runtime/deployment.yaml
-  # TiDB
-  - tidb/statefulset.yaml
+  # PostgreSQL
   # Redpanda
   - redpanda/statefulset.yaml
   # MinIO
   - minio/statefulset.yaml
-  # TiDB schema executor
-  - tidb-schema-executor
+  # PostgreSQL schema executor
+  - pgbouncer
+  - postgres-schema-executor
   # Telemetry
   - telemetry
 configurations:

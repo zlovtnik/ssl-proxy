@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 )
 
@@ -28,7 +29,7 @@ func ApplyThreatBoosts(ctx context.Context, pool *sql.DB, results []RawResult) (
 	placeholders := make([]string, 0, len(results))
 	args := make([]any, 0, len(results))
 	for _, result := range results {
-		placeholders = append(placeholders, "?")
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(placeholders)+1))
 		args = append(args, result.SourceKey)
 	}
 	rows, err := pool.QueryContext(ctx, `
@@ -39,7 +40,7 @@ SELECT
   risk_score,
   ap_risk,
   threat_tag_count
-FROM threat_signals
+FROM atheros_search.threat_signals
 WHERE source_key IN (`+strings.Join(placeholders, ",")+`)
 `, args...)
 	if err != nil {

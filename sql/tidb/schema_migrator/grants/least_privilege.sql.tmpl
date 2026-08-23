@@ -1,5 +1,0 @@
--- Provision the state account and its credential outside schema migration.
--- External target credentials are separate and receive no grants here.
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON schema_migrator.*
-  TO '{{SCHEMA_MIGRATOR_STATE_ACCOUNT}}';

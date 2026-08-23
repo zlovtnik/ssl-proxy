@@ -1,0 +1,95 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-postgres-schema-executor
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+  labels:
+    app.kubernetes.io/name: postgres-schema-executor
+    app.kubernetes.io/instance: ssl-proxy
+    ssl-proxy.io/postgres-client: "true"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-schema-executor
+        app.kubernetes.io/instance: ssl-proxy
+        ssl-proxy.io/postgres-client: "true"
+      annotations:
+        ssl-proxy.io/content-hash: "schema-image-stable-env-7"
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: schema
+          image: postgres-runtime-schema
+          imagePullPolicy: Always
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POSTGRES_HOST
+              value: "ssl-proxy-prod-postgres-endpoint"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DATABASE
+              value: "sync"
+            - name: POSTGRES_SCHEMA_OWNER_USER
+              value: "schema_owner"
+            - name: POSTGRES_SCHEMA_OWNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-schema-owner
+                  key: password
+            - name: POSTGRES_OCTOPUS_ACCOUNT
+              value: "octopus_runtime"
+            - name: POSTGRES_ATHEROS_SEARCH_ACCOUNT
+              value: "atheros_search_runtime"
+            - name: POSTGRES_SCHEMA_MIGRATOR_ACCOUNT
+              value: "schema_migrator_runtime"
+            - name: POSTGRES_KEYCLOAK_ACCOUNT
+              value: "keycloak_runtime"
+            - name: PGSSLMODE
+              value: "verify-full"
+            - name: PGSSLROOTCERT
+              value: "/var/run/postgres-tls/ca.crt"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: postgres-ca
+              mountPath: /var/run/postgres-tls
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: postgres-ca
+          secret:
+            secretName: postgres-runtime-tls
+            items:
+              - key: ca.crt
+                path: ca.crt

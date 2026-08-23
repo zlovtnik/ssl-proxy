@@ -24,17 +24,18 @@ spec:
       usernameKey: loki-username
       passwordKey: loki-password
       htpasswdKey: loki-htpasswd
-    tidb:
-      endpointConfigMapName: ssl-proxy-prod-tidb-endpoint
-      transport: plaintext
-      bootstrapRootSecretName: tidb-root
-      grantMatrixDocument: docs/tidb-runtime-cutover.md
+    postgres:
+      endpointConfigMapName: ssl-proxy-prod-postgres-endpoint
+      database: sync
+      transport: tls-verify-full
+      tlsSecretName: postgres-runtime-tls
+      grantMatrixDocument: sql/postgres
       accounts:
-        tidb-atheros-search: atheros_search_runtime
-        tidb-keycloak: keycloak
-        tidb-octopus: octopus_runtime
-        tidb-schema-migrator: schema_migrator_runtime
-        tidb-schema-owner: schema_owner
+        postgres-atheros-search: atheros_search_runtime
+        postgres-keycloak: keycloak_runtime
+        postgres-octopus: octopus_runtime
+        postgres-schema-migrator: schema_migrator_runtime
+        postgres-schema-owner: schema_owner
   inputs:
     - kind: Secret
       name: minio-credentials
@@ -101,41 +102,47 @@ spec:
         - tls.crt
         - tls.key
     - kind: Secret
-      name: tidb-atheros-search
+      name: postgres-atheros-search
       type: Opaque
-      vaultPath: secret/ssl-proxy/prod/tidb-atheros-search
+      vaultPath: secret/ssl-proxy/prod/postgres-atheros-search
       keys:
         - password
     - kind: Secret
-      name: tidb-keycloak
+      name: postgres-keycloak
       type: Opaque
-      vaultPath: secret/ssl-proxy/prod/tidb-keycloak
+      vaultPath: secret/ssl-proxy/prod/postgres-keycloak
       keys:
         - password
     - kind: Secret
-      name: tidb-octopus
+      name: postgres-octopus
       type: Opaque
-      vaultPath: secret/ssl-proxy/prod/tidb-octopus
+      vaultPath: secret/ssl-proxy/prod/postgres-octopus
       keys:
         - password
     - kind: Secret
-      name: tidb-root
+      name: postgres-schema-migrator
       type: Opaque
-      vaultPath: secret/ssl-proxy/prod/tidb-root
+      vaultPath: secret/ssl-proxy/prod/postgres-schema-migrator
       keys:
         - password
     - kind: Secret
-      name: tidb-schema-migrator
+      name: postgres-schema-owner
       type: Opaque
-      vaultPath: secret/ssl-proxy/prod/tidb-schema-migrator
+      vaultPath: secret/ssl-proxy/prod/postgres-schema-owner
       keys:
         - password
     - kind: Secret
-      name: tidb-schema-owner
+      name: postgres-runtime-tls
       type: Opaque
-      vaultPath: secret/ssl-proxy/prod/tidb-schema-owner
+      vaultPath: secret/ssl-proxy/prod/postgres-runtime-tls
       keys:
-        - password
+        - ca.crt
+    - kind: Secret
+      name: pgbouncer-runtime-users
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/pgbouncer-runtime-users
+      keys:
+        - userlist.txt
     - kind: Secret
       name: wireguard-config
       type: Opaque
@@ -154,9 +161,11 @@ spec:
         - publickey-peer2
         - presharedkey-peer2
     - kind: ConfigMap
-      name: ssl-proxy-prod-tidb-endpoint
-      vaultPath: secret/ssl-proxy/prod/ssl-proxy-prod-tidb-endpoint
+      name: ssl-proxy-prod-postgres-endpoint
+      vaultPath: secret/ssl-proxy/prod/ssl-proxy-prod-postgres-endpoint
       keys:
-        - TIDB_HOST
-        - TIDB_PORT
-        - SCHEMA_MIGRATOR_TIDB_JDBC_URL
+        - POSTGRES_HOST
+        - POSTGRES_PORT
+        - POSTGRES_DATABASE
+        - POSTGRES_SSL_MODE
+        - POSTGRES_SSL_SERVER_NAME

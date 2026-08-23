@@ -3,10 +3,10 @@
 ## Status
 Superseded.
 
-This ADR is retained for provenance. The current TiDB ownership and topic
+This ADR is retained for provenance. The current PostgreSQL ownership and topic
 semantics are defined in [System Architecture](../architecture.md). In
 particular, PostgreSQL and Oracle are no longer runtime stores, and the
-`sync.oracle.*` names are legacy compatibility labels for TiDB work.
+`sync.oracle.*` names are legacy compatibility labels for PostgreSQL work.
 
 ## Historical decision
 

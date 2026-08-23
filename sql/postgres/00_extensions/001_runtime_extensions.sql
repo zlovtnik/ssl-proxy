@@ -1,0 +1,6 @@
+-- object: runtime_extensions
+-- depends_on:
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;

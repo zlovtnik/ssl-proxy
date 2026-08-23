@@ -192,11 +192,11 @@ func graphNodesQuery(filters GraphFilters) (string, []any) {
 	addInClause(&clauses, &args, "location_id", stringsToAny(filters.LocationIDs))
 	addInClause(&clauses, &args, "sensor_id", stringsToAny(filters.SensorIDs))
 	if filters.SourceMAC != "" {
-		clauses = append(clauses, "normalized_mac = ?")
+		clauses = append(clauses, fmt.Sprintf("normalized_mac = $%d", len(args)+1))
 		args = append(args, filters.SourceMAC)
 	}
 	if filters.SSID != "" {
-		clauses = append(clauses, "normalized_ssid LIKE ? ESCAPE '\\\\'")
+		clauses = append(clauses, fmt.Sprintf("normalized_ssid LIKE $%d ESCAPE E'\\\\'", len(args)+1))
 		args = append(args, "%"+escapeLike(strings.ToLower(filters.SSID))+"%")
 	}
 	if len(filters.Kinds) > 0 {
@@ -207,30 +207,31 @@ func graphNodesQuery(filters GraphFilters) (string, []any) {
 		addInClause(&clauses, &args, "node_kind", values)
 	}
 	if filters.ThreatOnly {
-		clauses = append(clauses, "is_threat = 1")
+		clauses = append(clauses, "is_threat")
 	}
 	if filters.ObservedAfter != nil {
-		clauses = append(clauses, "observed_at >= ?")
+		clauses = append(clauses, fmt.Sprintf("observed_at >= $%d", len(args)+1))
 		args = append(args, filters.ObservedAfter.UTC())
 	}
 	if filters.ObservedBefore != nil {
-		clauses = append(clauses, "observed_at <= ?")
+		clauses = append(clauses, fmt.Sprintf("observed_at <= $%d", len(args)+1))
 		args = append(args, filters.ObservedBefore.UTC())
 	}
 	args = append(args, filters.Limit)
 	return `
-SELECT node_id, node_kind, COALESCE(label, node_id), CAST(node_payload AS CHAR)
-FROM graph_nodes
+SELECT node_id, node_kind, COALESCE(label, node_id), node_payload::text
+FROM atheros_search.graph_nodes
 WHERE ` + strings.Join(clauses, " AND ") + `
 ORDER BY observed_at DESC, node_id ASC
-LIMIT ?`, args
+LIMIT $` + fmt.Sprint(len(args)), args
 }
 
 func fetchGraphEdges(ctx context.Context, tx *sql.Tx, nodes []GraphNode) ([]GraphResponseEdge, error) {
 	if len(nodes) == 0 {
 		return []GraphResponseEdge{}, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(nodes)), ",")
+	firstPlaceholders := pgPlaceholders(1, len(nodes))
+	secondPlaceholders := pgPlaceholders(len(nodes)+1, len(nodes))
 	args := make([]any, 0, len(nodes)*2)
 	for _, node := range nodes {
 		args = append(args, node.ID)
@@ -240,9 +241,9 @@ func fetchGraphEdges(ctx context.Context, tx *sql.Tx, nodes []GraphNode) ([]Grap
 	}
 	rows, err := tx.QueryContext(ctx, `
 SELECT edge_id, source_node_id, target_node_id, edge_kind, weight, COALESCE(label, '')
-FROM graph_edges
-WHERE source_node_id IN (`+placeholders+`)
-  AND target_node_id IN (`+placeholders+`)
+FROM atheros_search.graph_edges
+WHERE source_node_id IN (`+firstPlaceholders+`)
+  AND target_node_id IN (`+secondPlaceholders+`)
 ORDER BY edge_id`, args...)
 	if err != nil {
 		return nil, err
@@ -269,8 +270,16 @@ func addInClause(clauses *[]string, args *[]any, column string, values []any) {
 	if len(values) == 0 {
 		return
 	}
-	*clauses = append(*clauses, column+" IN ("+strings.TrimSuffix(strings.Repeat("?,", len(values)), ",")+")")
+	*clauses = append(*clauses, column+" IN ("+pgPlaceholders(len(*args)+1, len(values))+")")
 	*args = append(*args, values...)
+}
+
+func pgPlaceholders(start, count int) string {
+	values := make([]string, count)
+	for index := range values {
+		values[index] = fmt.Sprintf("$%d", start+index)
+	}
+	return strings.Join(values, ",")
 }
 
 func stringsToAny(values []string) []any {

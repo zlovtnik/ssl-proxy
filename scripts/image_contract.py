@@ -24,7 +24,7 @@ SERVICE_SLICES = (
     ("atheros-search-ui", "app-stack"),
     ("schema-migrator-backend", "app-stack"),
     ("schema-migrator-ui", "app-stack"),
-    ("tidb-runtime-schema", "data-plane"),
+    ("postgres-runtime-schema", "data-plane"),
 )
 FIRST_PARTY_SERVICES = tuple(service for service, _slice in SERVICE_SLICES)
 

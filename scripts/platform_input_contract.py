@@ -123,23 +123,24 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
             "passwordKey": "loki-password",
             "htpasswdKey": "loki-htpasswd",
         },
-        "tidb": {
-            "endpointConfigMapName": "ssl-proxy-prod-tidb-endpoint",
-            "transport": "plaintext",
-            "bootstrapRootSecretName": "tidb-root",
-            "grantMatrixDocument": "docs/tidb-runtime-cutover.md",
+        "postgres": {
+            "endpointConfigMapName": "ssl-proxy-prod-postgres-endpoint",
+            "database": "sync",
+            "transport": "tls-verify-full",
+            "tlsSecretName": "postgres-runtime-tls",
+            "grantMatrixDocument": "sql/postgres",
             "accounts": {
-                "tidb-atheros-search": "atheros_search_runtime",
-                "tidb-keycloak": "keycloak",
-                "tidb-octopus": "octopus_runtime",
-                "tidb-schema-migrator": "schema_migrator_runtime",
-                "tidb-schema-owner": "schema_owner",
+                "postgres-atheros-search": "atheros_search_runtime",
+                "postgres-keycloak": "keycloak_runtime",
+                "postgres-octopus": "octopus_runtime",
+                "postgres-schema-migrator": "schema_migrator_runtime",
+                "postgres-schema-owner": "schema_owner",
             },
         },
     }
     if validation_policy != expected_validation_policy:
         raise PlatformInputContractError(
-            f"{CONTRACT_RELATIVE_PATH} validation policy does not preserve TiDB and Loki checks"
+            f"{CONTRACT_RELATIVE_PATH} validation policy does not preserve PostgreSQL and Loki checks"
         )
 
     inputs: list[PlatformInput] = []

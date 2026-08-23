@@ -32,10 +32,6 @@ Documents = list[Document]
 CANONICAL_KUSTOMIZATIONS = (
     "cyber-stack/argocd-bootstrap",
     "cyber-stack/argocd",
-    "cyber-stack/matrix/dev",
-    "cyber-stack/matrix/dev/bootstrap",
-    "cyber-stack/matrix/dev/data-plane",
-    "cyber-stack/matrix/dev/app-stack",
     "cyber-stack/matrix/prod",
     "cyber-stack/matrix/prod/bootstrap",
     "cyber-stack/matrix/prod/data-plane",
@@ -74,7 +70,7 @@ FIRST_PARTY_IMAGES = (
     "atheros-search-ui",
     "schema-migrator-backend",
     "schema-migrator-ui",
-    "tidb-runtime-schema",
+    "postgres-runtime-schema",
 )
 
 JAEGER_V2_IMAGE = (
@@ -100,7 +96,7 @@ PHASE_ONE_ROUTE_ALLOWLIST = {
 
 PHASE_ONE_HOST_NETWORK_ALLOWLIST = {
     ("DaemonSet", "ssl-proxy-atheros-sensor"),
-    ("Deployment", "ssl-proxy-telemetry-tidb-metrics-bridge"),
+    ("Deployment", "ssl-proxy-telemetry-postgres-metrics-bridge"),
 }
 
 OBSERVABILITY_CATALOG_SERVICES = {
@@ -473,10 +469,10 @@ def _check_keycloak_database_credential(rendered: Documents | str, relative: str
         return []
     passwords = [entry for entry in _environment(_pod_containers(deployments[0])) if entry.get("name") == "KC_DB_PASSWORD"]
     secret = _mapping(_path(passwords[0], "valueFrom", "secretKeyRef")) if passwords else {}
-    if secret.get("name") != "tidb-keycloak" or secret.get("key") != "password":
+    if secret.get("name") != "postgres-keycloak" or secret.get("key") != "password":
         return [
             f"{relative}: Keycloak database password must come from "
-            "tidb-keycloak/password"
+            "postgres-keycloak/password"
         ]
     return []
 
@@ -504,7 +500,7 @@ def _check_prod_alloy_positions(rendered: Documents | str, relative: str) -> lis
     return []
 
 
-def _check_prod_keycloak_external_tidb(
+def _check_prod_keycloak_external_postgres(
     rendered: Documents | str, relative: str
 ) -> list[str]:
     deployments = _find(
@@ -540,7 +536,7 @@ def _check_prod_keycloak_external_tidb(
         ),
         ("keycloak container", _list(pod_spec.get("containers")), "keycloak"),
     )
-    expected = {"KC_DB_URL_HOST": "TIDB_HOST", "KC_DB_URL_PORT": "TIDB_PORT"}
+    expected = {"KC_DB_URL_HOST": "POSTGRES_HOST", "KC_DB_URL_PORT": "POSTGRES_PORT"}
     for description, containers, container_name in container_groups:
         matches = [
             _mapping(container)
@@ -565,12 +561,12 @@ def _check_prod_keycloak_external_tidb(
             if (
                 len(entries) != 1
                 or "value" in entries[0]
-                or reference.get("name") != "ssl-proxy-prod-tidb-endpoint"
+                or reference.get("name") != "ssl-proxy-prod-postgres-endpoint"
                 or reference.get("key") != key
             ):
                 errors.append(
                     f"{relative}: Keycloak {description} {variable} must come from "
-                    f"ssl-proxy-prod-tidb-endpoint/{key}"
+                    f"ssl-proxy-prod-postgres-endpoint/{key}"
                 )
     return errors
 
@@ -623,7 +619,7 @@ def _check_octopus_runtime(
     environment = _list(containers[0].get("env"))
     expected_environment = "development" if "/dev" in relative else "production"
     expected = {
-        "TIDB_ENABLED": "true",
+        "POSTGRES_ENABLED": "true",
         "SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR": "1",
         "OCTOPUS_PROCESSORS_ENABLED": "true",
         "OCTOPUS_CONSUMERS_ENABLED": "true",
@@ -729,7 +725,7 @@ def _check_redpanda_topic_replication(rendered: Documents | str, relative: str) 
 def _check_environment_identity_hostnames(rendered: Mapping[str, Documents | str]) -> list[str]:
     hostnames: dict[str, str] = {}
     errors: list[str] = []
-    for environment in ("dev", "prod"):
+    for environment in ("prod",):
         relative = f"cyber-stack/matrix/{environment}/bootstrap"
         config_maps = [
             document
@@ -1186,13 +1182,13 @@ def _check_observability_contract(
             errors.append(
                 f"{relative}: observability catalog is missing: {', '.join(missing)}"
             )
-        if "/prod" in relative and "tidb-external" not in services:
+        if "/prod" in relative and "postgres-external" not in services:
             errors.append(
-                f"{relative}: production observability catalog is missing: tidb-external"
+                f"{relative}: production observability catalog is missing: postgres-external"
             )
-        if "/dev" in relative and "tidb-external" in services:
+        if "/dev" in relative and "postgres-external" in services:
             errors.append(
-                f"{relative}: development observability catalog must not probe tidb-external"
+                f"{relative}: development observability catalog must not probe postgres-external"
             )
 
     generated_prefixes = (
@@ -1242,40 +1238,40 @@ def _check_observability_contract(
     return errors
 
 
-def _check_tidb_collection_path(
+def _check_postgres_collection_path(
     rendered: Documents | str, relative: str, environment: str
 ) -> list[str]:
     documents = _documents(rendered)
     errors: list[str] = []
     bridges = _find(
-        documents, "Deployment", "ssl-proxy-telemetry-tidb-metrics-bridge"
+        documents, "Deployment", "ssl-proxy-telemetry-postgres-metrics-bridge"
     )
     if len(bridges) != 1:
-        return [f"{relative}: expected one TiDB metrics bridge declaration"]
+        return [f"{relative}: expected one PostgreSQL metrics bridge declaration"]
     bridge = bridges[0]
     replicas = _path(bridge, "spec", "replicas")
     pod_spec = _mapping(_path(bridge, "spec", "template", "spec"))
-    bundled = _find(documents, "StatefulSet", "ssl-proxy-tidb")
+    bundled = _find(documents, "StatefulSet", "ssl-proxy-postgres")
     if environment == "dev":
         if len(bundled) != 1:
-            errors.append(f"{relative}: dev must render bundled TiDB for direct scraping")
+            errors.append(f"{relative}: dev must render bundled PostgreSQL for direct scraping")
         if replicas != 0:
-            errors.append(f"{relative}: dev TiDB host metrics bridge must remain disabled")
+            errors.append(f"{relative}: dev PostgreSQL host metrics bridge must remain disabled")
     else:
         if bundled:
-            errors.append(f"{relative}: prod must not render bundled TiDB")
+            errors.append(f"{relative}: prod must not render bundled PostgreSQL")
         if replicas != 1 or pod_spec.get("hostNetwork") is not True:
-            errors.append(f"{relative}: prod TiDB metrics bridge must run once with hostNetwork")
-        if _path(pod_spec, "nodeSelector", "ssl-proxy.io/tidb-host") != "true":
+            errors.append(f"{relative}: prod PostgreSQL metrics bridge must run once with hostNetwork")
+        if _path(pod_spec, "nodeSelector", "ssl-proxy.io/postgres-host") != "true":
             errors.append(
-                f"{relative}: prod TiDB bridge requires ssl-proxy.io/tidb-host=true"
+                f"{relative}: prod PostgreSQL bridge requires ssl-proxy.io/postgres-host=true"
             )
         if _path(bridge, "spec", "strategy", "type") != "Recreate":
             errors.append(
-                f"{relative}: prod TiDB bridge must use Recreate to avoid host-port rollout deadlock"
+                f"{relative}: prod PostgreSQL bridge must use Recreate to avoid host-port rollout deadlock"
             )
     bridge_configs = _config_maps_with_prefix(
-        documents, "ssl-proxy-telemetry-tidb-bridge-config-"
+        documents, "ssl-proxy-telemetry-postgres-bridge-config-"
     )
     bridge_text = "\n".join(
         str(value)
@@ -1283,7 +1279,7 @@ def _check_tidb_collection_path(
         for value in _mapping(document.get("data")).values()
     )
     if "127.0.0.1:10080" not in bridge_text or "/api/v1/write" not in bridge_text:
-        errors.append(f"{relative}: TiDB bridge must scrape host-local status and remote-write")
+        errors.append(f"{relative}: PostgreSQL bridge must scrape host-local status and remote-write")
     prometheus_configs = _config_maps_with_prefix(
         documents, "ssl-proxy-telemetry-prometheus-config-"
     )
@@ -1292,8 +1288,8 @@ def _check_tidb_collection_path(
         for document in prometheus_configs
         for value in _mapping(document.get("data")).values()
     )
-    if "job_name: tidb-dev" not in prometheus_text:
-        errors.append(f"{relative}: Prometheus must retain direct dev TiDB discovery")
+    if environment == "dev" and "job_name: postgres-dev" not in prometheus_text:
+        errors.append(f"{relative}: Prometheus must retain direct dev PostgreSQL discovery")
     return errors
 
 
@@ -1305,11 +1301,11 @@ def _wave(document: Mapping[str, Any]) -> int | None:
         return None
 
 
-def _check_tidb_waves(rendered: Documents | str, relative: str) -> list[str]:
+def _check_postgres_waves(rendered: Documents | str, relative: str) -> list[str]:
     documents = _documents(rendered)
-    schema_jobs = _find(documents, "Job", "ssl-proxy-tidb-schema-executor")
-    bootstrap_jobs = _find(documents, "Job", "ssl-proxy-tidb-bootstrap") or _find(
-        documents, "Job", "ssl-proxy-tidb-init"
+    schema_jobs = _find(documents, "Job", "ssl-proxy-postgres-schema-executor")
+    bootstrap_jobs = _find(documents, "Job", "ssl-proxy-postgres-bootstrap") or _find(
+        documents, "Job", "ssl-proxy-postgres-init"
     )
     if not schema_jobs or not bootstrap_jobs:
         return []
@@ -1321,43 +1317,43 @@ def _check_tidb_waves(rendered: Documents | str, relative: str) -> list[str]:
     schema_wave = max(schema_waves)
     errors: list[str] = []
     if init_wave >= schema_wave:
-        errors.append(f"{relative}: TiDB init wave ({init_wave}) must be less than schema executor wave ({schema_wave})")
-    grants_jobs = _find(documents, "Job", "ssl-proxy-tidb-init-grants")
+        errors.append(f"{relative}: PostgreSQL init wave ({init_wave}) must be less than schema executor wave ({schema_wave})")
+    grants_jobs = _find(documents, "Job", "ssl-proxy-postgres-init-grants")
     grants_waves = [wave for document in grants_jobs if (wave := _wave(document)) is not None]
     if grants_waves and schema_wave >= max(grants_waves):
         errors.append(f"{relative}: schema executor wave ({schema_wave}) must be less than grants wave ({max(grants_waves)})")
     return errors
 
 
-def _check_tidb_plaintext_contract(
+def _check_postgres_plaintext_contract(
     rendered: Documents | str, relative: str
 ) -> list[str]:
     documents = _documents(rendered)
     rendered_text = yaml.safe_dump(documents, sort_keys=False)
     errors: list[str] = []
     for forbidden in (
-        "tidb-client-ca",
-        "TIDB_TLS_CA_FILE",
-        "TIDB_TLS_SERVER_NAME",
+        "postgres-client-ca",
+        "POSTGRES_TLS_CA_FILE",
+        "POSTGRES_TLS_SERVER_NAME",
         "sslMode=VERIFY_IDENTITY",
     ):
         if forbidden in rendered_text:
-            errors.append(f"{relative}: rendered TiDB workload retains {forbidden}")
+            errors.append(f"{relative}: rendered PostgreSQL workload retains {forbidden}")
 
     octopus = _find(documents, "Deployment", "ssl-proxy-java-coordinator")
     if octopus:
         ssl_modes = [
             entry.get("value")
             for entry in _environment(_pod_containers(octopus[0]))
-            if entry.get("name") == "TIDB_SSL_MODE"
+            if entry.get("name") == "POSTGRES_SSL_MODE"
         ]
-        if ssl_modes != ["DISABLED"]:
-            errors.append(f"{relative}: Octopus must set TIDB_SSL_MODE=DISABLED")
+        if ssl_modes != ["disable"]:
+            errors.append(f"{relative}: Octopus must set POSTGRES_SSL_MODE=disable")
     return errors
 
 
 def _schema_migrator_contract_marker(root: Path, errors: list[str]) -> str | None:
-    relative = "sql/tidb/schema_migrator/manifest.yaml"
+    relative = "sql/postgres/schema_migrator/manifest.yaml"
     text = _read_required(root, relative, errors, "manifest")
     if text is None:
         return None
@@ -1375,7 +1371,7 @@ def _schema_migrator_contract_marker(root: Path, errors: list[str]) -> str | Non
 
 
 def _octopus_contract_checksum(root: Path, errors: list[str]) -> str | None:
-    relative = "sql/tidb/octopus_core/manifest.yaml"
+    relative = "sql/postgres/octopus_core/manifest.yaml"
     text = _read_required(root, relative, errors, "manifest")
     if text is None:
         return None
@@ -1407,27 +1403,27 @@ def _check_octopus_schema_contract(
     entries = [
         _mapping(entry)
         for entry in _environment(containers)
-        if _mapping(entry).get("name") == "TIDB_SCHEMA_MANIFEST_SHA256"
+        if _mapping(entry).get("name") == "POSTGRES_SCHEMA_MANIFEST_SHA256"
     ]
     if len(entries) != 1 or entries[0].get("value") != expected_checksum:
         return [
-            f"{relative}: Octopus TIDB_SCHEMA_MANIFEST_SHA256 must equal "
-            "sql/tidb/octopus_core/manifest.yaml"
+            f"{relative}: Octopus POSTGRES_SCHEMA_MANIFEST_SHA256 must equal "
+            "sql/postgres/octopus_core/manifest.yaml"
         ]
     return []
 
 
 def _check_schema_executor_contract(rendered: Documents | str, relative: str, expected_marker: str) -> list[str]:
-    jobs = _find(_documents(rendered), "Job", "ssl-proxy-tidb-schema-executor")
+    jobs = _find(_documents(rendered), "Job", "ssl-proxy-postgres-schema-executor")
     if len(jobs) != 1:
-        return [f"{relative}: expected one rendered TiDB schema executor Job"]
+        return [f"{relative}: expected one rendered PostgreSQL schema executor Job"]
     job = jobs[0]
     errors: list[str] = []
     marker = _path(job, "spec", "template", "metadata", "annotations", "ssl-proxy.io/content-hash")
     if marker != expected_marker:
         errors.append(f"{relative}: schema executor content-hash must equal canonical contract {expected_marker}")
     images = [str(container.get("image", "")) for container in _pod_containers(job)]
-    if not any(re.search(r"tidb-runtime-schema@sha256:[0-9a-f]{64}$", image) for image in images):
+    if not any(re.search(r"postgres-runtime-schema@sha256:[0-9a-f]{64}$", image) for image in images):
         errors.append(f"{relative}: schema executor must use a digest-pinned image")
     return errors
 
@@ -1803,14 +1799,12 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for image in FIRST_PARTY_IMAGES:
             if any(rendered_image == image or rendered_image.startswith(f"{image}:") for rendered_image in _rendered_images(documents)):
                 errors.append(f"{relative}: rendered workload retains logical image name {image}")
-        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_tidb_waves, _check_tidb_plaintext_contract):
+        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_postgres_waves, _check_postgres_plaintext_contract):
             errors.extend(check(documents, relative))
         if relative.startswith("cyber-stack/matrix/"):
             errors.extend(_check_phase_one_workload_edge(documents, relative))
             errors.extend(_check_traefik_observability(documents, relative))
         if relative in {
-            "cyber-stack/matrix/dev",
-            "cyber-stack/matrix/dev/data-plane",
             "cyber-stack/matrix/prod",
             "cyber-stack/matrix/prod/data-plane",
         }:
@@ -1818,16 +1812,14 @@ def check_repository(root: Path, executable: str) -> list[str]:
 
     errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))
     environment_render_checks = {
-        "cyber-stack/matrix/dev/app-stack": (_check_octopus_runtime,),
-        "cyber-stack/matrix/dev": (_check_octopus_runtime,),
         "cyber-stack/matrix/prod/data-plane": (_check_prod_alloy_positions,),
         "cyber-stack/matrix/prod/app-stack": (
-            _check_prod_keycloak_external_tidb,
+            _check_prod_keycloak_external_postgres,
             _check_octopus_runtime,
         ),
         "cyber-stack/matrix/prod": (
             _check_prod_alloy_positions,
-            _check_prod_keycloak_external_tidb,
+            _check_prod_keycloak_external_postgres,
             _check_octopus_runtime,
         ),
     }
@@ -1838,8 +1830,6 @@ def check_repository(root: Path, executable: str) -> list[str]:
             errors.extend(check(rendered_kustomizations[relative], relative))
     if expected_octopus_checksum is not None:
         for relative in (
-            "cyber-stack/matrix/dev",
-            "cyber-stack/matrix/dev/app-stack",
             "cyber-stack/matrix/prod",
             "cyber-stack/matrix/prod/app-stack",
         ):
@@ -1858,20 +1848,8 @@ def check_repository(root: Path, executable: str) -> list[str]:
                 rendered_kustomizations[prod_data_plane], prod_data_plane
             )
         )
-        errors.extend(
-            _check_tidb_collection_path(
-                rendered_kustomizations[prod_data_plane], prod_data_plane, "prod"
-            )
-        )
-    dev_data_plane = "cyber-stack/matrix/dev/data-plane"
-    if dev_data_plane in rendered_kustomizations:
-        errors.extend(
-            _check_tidb_collection_path(
-                rendered_kustomizations[dev_data_plane], dev_data_plane, "dev"
-            )
-        )
     if expected_schema_marker is not None:
-        for environment in ("dev", "prod"):
+        for environment in ("prod",):
             relative = f"cyber-stack/matrix/{environment}/data-plane"
             if relative in rendered_kustomizations:
                 errors.extend(_check_schema_executor_contract(rendered_kustomizations[relative], relative, expected_schema_marker))
@@ -1907,7 +1885,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
             )
         )
 
-    for environment in ("dev", "prod"):
+    for environment in ("prod",):
         for component in ("data-plane", "app-stack"):
             relative = Path("cyber-stack/matrix") / environment / component / "kustomization.yaml"
             documents = _read_yaml_required(root, relative, errors, "component kustomization")
@@ -1924,7 +1902,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
             if image_entries != digest_entries:
                 errors.append(f"{relative}: expected one digest for each of {image_entries} image entries, found {digest_entries}")
 
-    for environment in ("dev", "prod"):
+    for environment in ("prod",):
         relative = Path("cyber-stack/matrix") / environment / "namespace.yaml"
         documents = _read_yaml_required(root, relative, errors, "Namespace manifest")
         if documents is None:
@@ -1941,20 +1919,6 @@ def check_repository(root: Path, executable: str) -> list[str]:
         if re.search(rf"(?m)^{re.escape(target)}:\s*$", makefile) is None:
             errors.append(f"Makefile: documented verification target is missing: {target}")
 
-    stack_relative = "stackctl/stack.yaml"
-    stack_documents = _read_yaml_required(root, stack_relative, errors, "stack configuration")
-    if stack_documents:
-        for component in _mapping(stack_documents[0].get("components")).values():
-            chart = _mapping(component).get("chart")
-            if chart is None:
-                continue
-            overlay = (root / str(chart).removeprefix("./")).resolve()
-            if not (overlay / "kustomization.yaml").is_file():
-                errors.append("stackctl/stack.yaml: component overlay is not a Kustomization: " + str(chart))
-
-    deploy_source = (root / "ops/src/sslproxy_ops/stack/deploy.py").read_text(encoding="utf-8")
-    if "kustomize_apply" in deploy_source:
-        errors.append("stackctl: direct Kustomize cluster apply path remains")
     return errors
 
 

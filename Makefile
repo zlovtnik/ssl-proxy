@@ -30,17 +30,17 @@ override OCTOPUS_COMMIT := $(shell git -C services/octopus rev-parse HEAD 2>/dev
 ATHEROS_SEARCH_UI_API_BASE ?=
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
 
-SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui tidb-runtime-schema traffic-audit
+SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui postgres-runtime-schema
 # traffic_audit is a CI-only escript gate (no long-lived K8s workload), so like
 # wg-key-rotator it is excluded from image digest promotion.
-DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator traffic-audit,$(SERVICES))
+DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator,$(SERVICES))
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: build build-all publish publish-all kube-context-check recover-stack production-gate stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry octopus-source-integrity check-java-coordinator-image docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all kube-context-check production-gate stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry octopus-source-integrity check-java-coordinator-image docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 
@@ -84,14 +84,6 @@ kube-context-check:
 	$(KUBECTL) --context "$$context" version --request-timeout=5s -o json >/dev/null; \
 	printf 'Kubernetes context: %s (%s)\nKubernetes API:     %s\n' "$$context" "$$source" "$$server"
 
-recover-stack: kube-context-check
-	python3 scripts/recover_stack.py \
-		--environment "$(ENV)" \
-		--kubectl "$(KUBECTL)" \
-		--kube-context "$(KUBE_CONTEXT)" \
-		--kustomize "$(KUSTOMIZE)" \
-		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)"
-
 production-gate:
 	@test -n "$(PRODUCTION_GATE_REVISION)" || { echo "PRODUCTION_GATE_REVISION is required" >&2; exit 2; }
 	python3 scripts/production_gate.py \
@@ -126,7 +118,7 @@ argocd-wait: argocd-server-health
 			application/$$application --timeout="$(ARGOCD_TIMEOUT)"; \
 	done
 
-stack-health: gitops-check argocd-status recover-stack argocd-wait
+stack-health: gitops-check argocd-status argocd-wait
 
 # Read-only image inventory for CI fan-out. Keep build-all for local loaded-image workflows.
 ci-publish-services:
@@ -143,7 +135,6 @@ docs-check:
 	python3 scripts/check-docs.py
 
 gitops-check:
-	python3 scripts/image_contract.py contract --environment dev >/dev/null
 	python3 scripts/image_contract.py contract --environment prod >/dev/null
 	python3 scripts/check-gitops.py --kustomize "$(KUSTOMIZE_EDITOR)"
 
@@ -226,8 +217,7 @@ $(eval $(call service_rules,wg-key-rotator,apps/wg-key-rotator/Dockerfile,,wg-ke
 $(eval $(call service_rules,atheros-search-ui,apps/integration-console/atheros-search-ui/Dockerfile,--build-arg 'VITE_API_BASE=$(ATHEROS_SEARCH_UI_API_BASE)' --build-arg 'VITE_APP_TITLE=$(ATHEROS_SEARCH_UI_TITLE)',atheros-search-ui,apps/integration-console/atheros-search-ui))
 $(eval $(call service_rules,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,apps/schema-migrator))
 $(eval $(call service_rules,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,apps/schema-migrator))
-$(eval $(call service_rules,tidb-runtime-schema,k8s/tidb-schema-executor/Dockerfile,,tidb-runtime-schema,.))
-$(eval $(call service_rules,traffic-audit,services/traffic_audit/Dockerfile,,traffic-audit,services/traffic_audit))
+$(eval $(call service_rules,postgres-runtime-schema,k8s/postgres-schema-executor/Dockerfile,,postgres-runtime-schema,.))
 
 ifneq ($(BUILDX_READY),1)
 $(BUILD_TARGETS) $(PUBLISH_TARGETS): buildx-ready
@@ -237,7 +227,7 @@ publish-java-coordinator: octopus-source-integrity
 
 define bump_digest_rule
 bump-digest-$(1):
-	@test -n "$(ENV)" || { echo "ENV is required (dev or prod)" >&2; exit 2; }
+	@test "$(ENV)" = "prod" || { echo "ENV=prod is required" >&2; exit 2; }
 	@test -n "$(DIGEST)" || { echo "DIGEST is required (sha256:...)" >&2; exit 2; }
 	KUSTOMIZE="$(KUSTOMIZE_EDITOR)" ./scripts/bump-image-digest.sh "$(1)" "$(ENV)" "$(DIGEST)"
 endef

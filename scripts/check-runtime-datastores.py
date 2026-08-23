@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject active PostgreSQL or MongoDB runtime configuration outside allowlists."""
+"""Reject active retired datastore configuration outside allowlists."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def main() -> int:
         for violation in found:
             print(violation, file=sys.stderr)
         return 1
-    print("Runtime datastore policy passed: TiDB is authoritative; Redis is ephemeral.")
+    print("Runtime datastore policy passed: PostgreSQL is authoritative; Redis is ephemeral.")
     return 0
 
 

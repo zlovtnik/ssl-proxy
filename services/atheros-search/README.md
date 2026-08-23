@@ -1,7 +1,7 @@
 # Atheros Search
 
 Atheros Search is the Go HTTP/gRPC search, vector and ETL control-plane service
-for wireless audit data. It queries the `atheros_search` TiDB domain and owns
+for wireless audit data. It queries the `atheros_search` Postgres domain and owns
 embedding job processing through an opt-in worker pool. Octopus owns durable
 ingestion, search-document/job preparation, maintained projections and alert
 derivation.
@@ -24,7 +24,7 @@ there is no Rails Search console.
   `embedding_jobs` are the bounded-retry dead-letter queue
 
 The service does not apply DDL. Canonical schema lives in
-[`sql/tidb/atheros_search`](../../sql/tidb/atheros_search/).
+[`sql/postgres/atheros_search`](../../sql/postgres/atheros_search/).
 
 ## Database and readiness
 
@@ -33,31 +33,31 @@ Database settings:
 An explicit, valid `ATHSEARCH_*` value takes precedence over the shared
 fallback shown below. `None` means that no shared-variable fallback exists.
 In particular, `DATABASE_URL` and `SYNC_DATABASE_URL` are not fallbacks for
-`ATHSEARCH_TIDB_DSN` and are ignored.
+`ATHSEARCH_POSTGRES_DSN` and are ignored.
 
 | Variable | Shared fallback | Purpose |
 |---|---|---|
-| `ATHSEARCH_TIDB_DSN` | None | Compatibility native MySQL DSN; when absent, the discrete settings below are required |
-| `ATHSEARCH_TIDB_HOST` | None | TiDB host used to build the native DSN |
-| `ATHSEARCH_TIDB_PORT` | `4000` | TiDB SQL port |
-| `ATHSEARCH_TIDB_DATABASE` | `atheros_search` | Required canonical database |
-| `ATHSEARCH_TIDB_USER` | `atheros_search_runtime` | Dedicated non-root account |
-| `ATHSEARCH_TIDB_PASSWORD` | None | Required password when the compatibility DSN is absent |
-| `ATHSEARCH_TIDB_TLS_CA_FILE` | None | Optional PEM CA that enables verified TLS |
-| `ATHSEARCH_TIDB_TLS_CERT_FILE` | None | Optional PEM client certificate; must be supplied with the key |
-| `ATHSEARCH_TIDB_TLS_KEY_FILE` | None | Optional PEM client private key; must be supplied with the certificate |
-| `ATHSEARCH_TIDB_TLS_SERVER_NAME` | None | Required certificate identity only when a CA is configured |
+| `ATHSEARCH_POSTGRES_DSN` | None | Compatibility native PostgreSQL DSN; when absent, the discrete settings below are required |
+| `ATHSEARCH_POSTGRES_HOST` | None | Postgres host used to build the native DSN |
+| `ATHSEARCH_POSTGRES_PORT` | `4000` | Postgres SQL port |
+| `ATHSEARCH_POSTGRES_DATABASE` | `atheros_search` | Required canonical database |
+| `ATHSEARCH_POSTGRES_USER` | `atheros_search_runtime` | Dedicated non-root account |
+| `ATHSEARCH_POSTGRES_PASSWORD` | None | Required password when the compatibility DSN is absent |
+| `ATHSEARCH_POSTGRES_TLS_CA_FILE` | None | Optional PEM CA that enables verified TLS |
+| `ATHSEARCH_POSTGRES_TLS_CERT_FILE` | None | Optional PEM client certificate; must be supplied with the key |
+| `ATHSEARCH_POSTGRES_TLS_KEY_FILE` | None | Optional PEM client private key; must be supplied with the certificate |
+| `ATHSEARCH_POSTGRES_TLS_SERVER_NAME` | None | Required certificate identity only when a CA is configured |
 | `ATHSEARCH_SCHEMA_MANIFEST_SHA256` | None | Exact 64-character canonical manifest checksum |
 
-Startup verifies the selected database, UTC/strict SQL session, TiDB version,
+Startup verifies the selected database, UTC/strict SQL session, Postgres version,
 manifest checksum and vector readiness. Pool/search controls include:
 
 | Variable | Default | Shared fallback |
 |---|---:|---|
-| `ATHSEARCH_TIDB_MAX_OPEN_CONNS` | `32` | None |
-| `ATHSEARCH_TIDB_MAX_IDLE_CONNS` | `8` | None |
-| `ATHSEARCH_TIDB_CONN_MAX_LIFETIME_MS` | `300000` | None |
-| `ATHSEARCH_TIDB_CONN_MAX_IDLE_TIME_MS` | `60000` | None |
+| `ATHSEARCH_POSTGRES_MAX_OPEN_CONNS` | `32` | None |
+| `ATHSEARCH_POSTGRES_MAX_IDLE_CONNS` | `8` | None |
+| `ATHSEARCH_POSTGRES_CONN_MAX_LIFETIME_MS` | `300000` | None |
+| `ATHSEARCH_POSTGRES_CONN_MAX_IDLE_TIME_MS` | `60000` | None |
 | `ATHSEARCH_SEARCH_TIMEOUT_MS` | `10000` | None |
 | `ATHSEARCH_HYBRID_ALPHA` | `0.5` | None |
 | `ATHSEARCH_DENSE_OVERFETCH_FACTOR` | `8` | None |
@@ -92,7 +92,7 @@ OpenAI-compatible and Ollama response shapes. Enabling workers requires a
 non-empty backend URL and fails startup otherwise. With workers disabled, an
 empty backend selects the zero-vector client for search wiring tests only.
 
-The app-stack Kustomization passes worker, embedding, TiDB TLS and manifest
+The app-stack Kustomization passes worker, embedding, Postgres TLS and manifest
 settings to the container. Octopus produces search documents and embedding
 jobs only when `embedding-text-builder` and `embedding-preparer` are enabled
 after their dependencies; both remain disabled by default.
@@ -125,7 +125,7 @@ Key routes:
 | `GET` | `/v1/etl/workers` | Worker heartbeat state |
 | `GET` | `/v1/etl/stream` | NDJSON ETL snapshots when WebSockets are enabled |
 | `GET` | `/healthz` | Liveness |
-| `GET` | `/readyz` | TiDB/schema/vector/embedding readiness |
+| `GET` | `/readyz` | Postgres/schema/vector/embedding readiness |
 
 The public protobuf contract is
 [`proto/atheros/search/v1/search.proto`](proto/atheros/search/v1/search.proto).

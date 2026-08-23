@@ -34,9 +34,13 @@ This file governs `services/atheros-search` relative to the repository root.
   cancellation, and timeout handling intact.
 - Do not log raw search queries, source keys, session IDs, API tokens, or MACs
   when existing code hashes or summarizes them.
-- Keep config in `ATHSEARCH_*` env vars. The only database setting is the
-  TiDB/MySQL `ATHSEARCH_TIDB_DSN`; do not add PostgreSQL URL fallbacks.
-- Keep shared TiDB/vector schema changes in the repository `sql/tidb/atheros_search`
+- Keep config in `ATHSEARCH_*` env vars. The preferred PostgreSQL connection
+  setting is `ATHSEARCH_POSTGRES_DSN`; the discrete settings
+  `ATHSEARCH_POSTGRES_HOST`, `ATHSEARCH_POSTGRES_PORT`, `ATHSEARCH_POSTGRES_DATABASE`,
+  `ATHSEARCH_POSTGRES_USER`, and `ATHSEARCH_POSTGRES_PASSWORD` remain supported
+  when the DSN is absent. Shared PostgreSQL URL fallbacks outside the
+  `ATHSEARCH_POSTGRES_*` family are prohibited.
+- Keep shared PostgreSQL/vector schema changes in the repository `sql/postgres/atheros_search`
   domain.
   Service-local migrations are only for future private schema.
 - Do not hand-edit generated protobuf files. Change `search.proto`, regenerate,

@@ -9,17 +9,16 @@ import (
 
 func TestDenseKindQueryKeepsANNLookupUnfiltered(t *testing.T) {
 	query := denseKindQuery(vectorTableByKind["event"])
-	innerStart := strings.Index(query, "FROM search_vectors_event")
+	innerStart := strings.Index(query, "FROM atheros_search.search_vectors_event")
 	innerEnd := strings.Index(query, ") nearest")
 	require.Greater(t, innerStart, -1)
 	require.Greater(t, innerEnd, innerStart)
 	inner := query[innerStart:innerEnd]
-	require.Contains(t, inner, "ORDER BY VEC_COSINE_DISTANCE(embedding, ?) ASC")
-	require.Contains(t, inner, "LIMIT ?")
+	require.Contains(t, inner, "ORDER BY embedding <=> $1::vector ASC")
+	require.Contains(t, inner, "LIMIT $2")
 	require.NotContains(t, inner, "WHERE")
-	require.Contains(t, query, "WHERE nearest.embedding_model = ?")
-	require.NotContains(t, query, "$1")
-	require.NotContains(t, strings.ToLower(query), "::vector")
+	require.Contains(t, query, "WHERE nearest.embedding_model = $3")
+	require.Contains(t, strings.ToLower(query), "::vector")
 }
 
 func TestVectorTablesAreFixedByPublicKind(t *testing.T) {

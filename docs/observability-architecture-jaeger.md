@@ -65,7 +65,7 @@ move to v2 requires an explicit configuration and stored-data migration.
 |---|---|---|---|
 | Rust proxy/frontdoor | Structured pod logs | Proxy/frontdoor Prometheus routes | OTLP configuration is wired |
 | Atheros Sensor | Structured pod logs | Prometheus server on `ATH_SENSOR_METRICS_PORT` | OTLP configuration is wired |
-| Octopus | Structured logs | Micrometer exposition | OTLP SDK spans around Kafka and TiDB durable boundaries |
+| Octopus | Structured logs | Micrometer exposition | OTLP SDK spans around Kafka and PostgreSQL durable boundaries |
 | Atheros Search | Structured logs | Dedicated Prometheus server | HTTP/gRPC hooks exist, but no SDK exporter/provider is initialized |
 | Redpanda, MinIO and nodes | Platform logs | Native endpoints/exporters | Not expected |
 

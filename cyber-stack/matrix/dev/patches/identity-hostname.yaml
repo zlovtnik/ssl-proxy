@@ -1,8 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ssl-proxy-platform-config
-  namespace: ssl-proxy
-data:
-  ENVIRONMENT: dev
-  IDENTITY_HOSTNAME: identity.dev.ssl-proxy.internal

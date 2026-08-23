@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
 	"flag"
@@ -13,16 +11,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/rs/zerolog"
+
+	athdb "github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/db"
 )
 
 func main() {
-	dsn := flag.String("dsn", envOr("ATHSEARCH_TIDB_DSN", ""), "TiDB DSN (required)")
-	tlsCA := flag.String("tls-ca", envOr("ATHSEARCH_TIDB_TLS_CA_FILE", ""), "Optional TiDB TLS CA file")
-	tlsCert := flag.String("tls-cert", envOr("ATHSEARCH_TIDB_TLS_CERT_FILE", ""), "TiDB TLS cert file")
-	tlsKey := flag.String("tls-key", envOr("ATHSEARCH_TIDB_TLS_KEY_FILE", ""), "TiDB TLS key file")
-	tlsServer := flag.String("tls-server", envOr("ATHSEARCH_TIDB_TLS_SERVER_NAME", ""), "TiDB TLS server name")
+	dsn := flag.String("dsn", envOr("ATHSEARCH_POSTGRES_DSN", ""), "Postgres DSN (required)")
+	tlsCA := flag.String("tls-ca", envOr("ATHSEARCH_POSTGRES_TLS_CA_FILE", ""), "Optional Postgres TLS CA file")
+	tlsCert := flag.String("tls-cert", envOr("ATHSEARCH_POSTGRES_TLS_CERT_FILE", ""), "Postgres TLS cert file")
+	tlsKey := flag.String("tls-key", envOr("ATHSEARCH_POSTGRES_TLS_KEY_FILE", ""), "Postgres TLS key file")
+	tlsServer := flag.String("tls-server", envOr("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", ""), "Postgres TLS server name")
 	schemaManifestSHA256 := flag.String("schema-manifest-sha256", envOr("ATHSEARCH_SCHEMA_MANIFEST_SHA256", ""), "Expected schema manifest SHA-256 (required)")
 	action := flag.String("action", "status", "Action: status, reset-stale, retry-failed")
 	staleMinutes := flag.Int("stale-minutes", 60, "Minutes after which a leased job is considered stale")
@@ -31,7 +30,7 @@ func main() {
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 
 	if *dsn == "" {
-		logger.Fatal().Msg("ATHSEARCH_TIDB_DSN is required")
+		logger.Fatal().Msg("ATHSEARCH_POSTGRES_DSN is required")
 	}
 	manifestSHA256 := strings.ToLower(strings.TrimSpace(*schemaManifestSHA256))
 	if len(manifestSHA256) != sha256.Size*2 {
@@ -43,7 +42,7 @@ func main() {
 
 	db, err := openDB(*dsn, *tlsCA, *tlsCert, *tlsKey, *tlsServer)
 	if err != nil {
-		logger.Fatal().Err(err).Msg("connect to TiDB")
+		logger.Fatal().Err(err).Msg("connect to Postgres")
 	}
 	defer db.Close()
 
@@ -78,52 +77,15 @@ func envOr(key, fallback string) string {
 }
 
 func openDB(dsn, tlsCA, tlsCert, tlsKey, tlsServer string) (*sql.DB, error) {
-	driverConfig, err := mysql.ParseDSN(dsn)
-	if err != nil {
-		return nil, fmt.Errorf("parse DSN: %w", err)
-	}
-
-	if tlsCA != "" {
-		caPEM, err := os.ReadFile(tlsCA)
-		if err != nil {
-			return nil, fmt.Errorf("read CA file: %w", err)
-		}
-		roots := x509.NewCertPool()
-		if !roots.AppendCertsFromPEM(caPEM) {
-			return nil, fmt.Errorf("no valid certs in CA file")
-		}
-		tlsCfg := &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			RootCAs:    roots,
-			ServerName: tlsServer,
-		}
-		if tlsCert != "" && tlsKey != "" {
-			cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
-			if err != nil {
-				return nil, fmt.Errorf("load client cert: %w", err)
-			}
-			tlsCfg.Certificates = []tls.Certificate{cert}
-		}
-		digest := sha256.Sum256([]byte(tlsCA))
-		tlsName := "repair-" + hex.EncodeToString(digest[:8])
-		if err := mysql.RegisterTLSConfig(tlsName, tlsCfg); err != nil {
-			return nil, err
-		}
-		driverConfig.TLSConfig = tlsName
-	}
-
-	driverConfig.ParseTime = true
-	driverConfig.Loc = time.UTC
-
-	db, err := sql.Open("mysql", driverConfig.FormatDSN())
+	pool, err := athdb.NewPool(context.Background(), athdb.Options{
+		DSN: dsn, TLSCAFile: tlsCA, TLSCertFile: tlsCert, TLSKeyFile: tlsKey,
+		TLSServerName: tlsServer, MaxOpenConns: 4, MaxIdleConns: 1,
+		ConnMaxLifetime: 5 * time.Minute, ConnMaxIdleTime: time.Minute,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return db, nil
+	return pool.DB, nil
 }
 
 func showStatus(ctx context.Context, db *sql.DB, logger zerolog.Logger) error {
@@ -164,15 +126,15 @@ ORDER BY status
 
 func resetStaleJobs(ctx context.Context, db *sql.DB, logger zerolog.Logger, staleThreshold time.Duration) error {
 	result, err := db.ExecContext(ctx, `
-UPDATE embedding_jobs
+UPDATE atheros_search.embedding_jobs
 SET status = 'pending',
     owner_id = NULL,
     lease_token = NULL,
     lease_expires_at = NULL,
-    next_attempt_at = NOW(6),
-    updated_at = CURRENT_TIMESTAMP(6)
+    next_attempt_at = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP
 WHERE status = 'leased'
-  AND lease_expires_at < ?
+  AND lease_expires_at < $1
 `, time.Now().Add(-staleThreshold))
 	if err != nil {
 		return fmt.Errorf("reset stale jobs: %w", err)
@@ -184,15 +146,15 @@ WHERE status = 'leased'
 
 func retryFailedJobs(ctx context.Context, db *sql.DB, logger zerolog.Logger) error {
 	result, err := db.ExecContext(ctx, `
-UPDATE embedding_jobs
+UPDATE atheros_search.embedding_jobs
 SET status = 'pending',
     owner_id = NULL,
     lease_token = NULL,
     lease_expires_at = NULL,
     attempt_count = 0,
-    next_attempt_at = NOW(6),
+    next_attempt_at = CURRENT_TIMESTAMP,
     last_error = NULL,
-    updated_at = CURRENT_TIMESTAMP(6)
+    updated_at = CURRENT_TIMESTAMP
 WHERE status = 'failed'
 `)
 	if err != nil {
@@ -208,7 +170,7 @@ func verifySchemaGate(ctx context.Context, database *sql.DB, expectedSHA256 stri
 	var ready, vectorReady bool
 	err := database.QueryRowContext(ctx, `
 SELECT manifest_sha256, schema_ready, vector_ready
-FROM schema_manifest
+FROM atheros_search.schema_manifest
 WHERE component = 'atheros-search'
 LIMIT 1
 `).Scan(&manifestSHA256, &ready, &vectorReady)

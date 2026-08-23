@@ -63,19 +63,19 @@ func main() {
 	}()
 
 	pool, err := db.NewPool(ctx, db.Options{
-		DSN:                  cfg.TiDBDSN,
-		TLSCAFile:            cfg.TiDBTLSCAFile,
-		TLSCertFile:          cfg.TiDBTLSCertFile,
-		TLSKeyFile:           cfg.TiDBTLSKeyFile,
-		TLSServerName:        cfg.TiDBTLSServerName,
-		SchemaManifestSHA256: cfg.TiDBSchemaManifestSHA256,
-		MaxOpenConns:         cfg.TiDBMaxOpenConns,
-		MaxIdleConns:         cfg.TiDBMaxIdleConns,
-		ConnMaxLifetime:      cfg.TiDBConnMaxLifetime,
-		ConnMaxIdleTime:      cfg.TiDBConnMaxIdleTime,
+		DSN:                  cfg.PostgresDSN,
+		TLSCAFile:            cfg.PostgresTLSCAFile,
+		TLSCertFile:          cfg.PostgresTLSCertFile,
+		TLSKeyFile:           cfg.PostgresTLSKeyFile,
+		TLSServerName:        cfg.PostgresTLSServerName,
+		SchemaManifestSHA256: cfg.PostgresSchemaManifestSHA256,
+		MaxOpenConns:         cfg.PostgresMaxOpenConns,
+		MaxIdleConns:         cfg.PostgresMaxIdleConns,
+		ConnMaxLifetime:      cfg.PostgresConnMaxLifetime,
+		ConnMaxIdleTime:      cfg.PostgresConnMaxIdleTime,
 	})
 	if err != nil {
-		logger.Fatal().Err(err).Msg("connect TiDB")
+		logger.Fatal().Err(err).Msg("connect Postgres")
 	}
 	defer pool.Close()
 	if cfg.SchemaReadyRequired {
@@ -172,7 +172,7 @@ func logStartupConfig(logger zerolog.Logger, cfg config.Config) {
 		Int("dense_overfetch_factor", cfg.DenseOverfetchFactor).
 		Bool("worker_enabled", cfg.WorkerEnabled).
 		Int("worker_count", cfg.WorkerCount).
-		Msg("atheros-search TiDB query facade configured")
+		Msg("atheros-search Postgres query facade configured")
 }
 
 type workerEmbedderAdapter struct {

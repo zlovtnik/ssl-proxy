@@ -159,20 +159,20 @@ scrape_configs:
       - target_label: service
         replacement: kubelet
 
-  - job_name: tidb-dev
+  - job_name: postgres-dev
     metrics_path: /metrics
     kubernetes_sd_configs:
       - role: endpoints
         namespaces: {own_namespace: true}
     relabel_configs:
       - source_labels: [__meta_kubernetes_service_name]
-        regex: ssl-proxy-tidb
+        regex: ssl-proxy-postgres
         action: keep
       - source_labels: [__meta_kubernetes_endpoint_port_name]
         regex: metrics
         action: keep
       - target_label: service
-        replacement: tidb
+        replacement: postgres
 
   - job_name: argocd
     static_configs:

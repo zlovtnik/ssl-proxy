@@ -16,7 +16,7 @@ go run ./cmd/embedding-job-repair -action=reset-stale -stale-minutes=60
 go run ./cmd/embedding-job-repair -action=retry-failed
 ```
 
-Run repair commands with the same TiDB DSN, CA and server-name verification as
+Run repair commands with the same Postgres DSN, CA and server-name verification as
 the service. Start with `status`, capture evidence and confirm the exact
 affected jobs before a mutation. The canonical service behavior and worker
 configuration are in the [Atheros Search README](../README.md).

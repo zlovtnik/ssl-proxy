@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ssl-proxy is a WireGuard-first transparent proxy with wireless audit,
-Redpanda-backed processing, TiDB persistence and vector search. The Rust proxy
+Redpanda-backed processing, PostgreSQL persistence and vector search. The Rust proxy
 and Linux Atheros Sensor publish events; the Scala Octopus coordinator owns
 durable ingestion and maintained projections; the Go Atheros Search service
 owns query APIs and embedding workers; and the SolidJS Atheros Search UI is the
@@ -11,9 +11,7 @@ Integration Console.
 
 The canonical runtime model and data ownership are documented in
 [System Architecture](docs/architecture.md). Kubernetes desired state lives
-only in [`cyber-stack/`](cyber-stack/). Production is reconciled by Argo CD;
-development is rendered and applied to an explicit local Kubernetes context
-with Kustomize.
+only in [`cyber-stack/`](cyber-stack/). Production is reconciled by Argo CD.
 
 ## Component ownership
 
@@ -22,28 +20,28 @@ with Kustomize.
 | `ssl-proxy` | WireGuard ingress, transparent proxying, classification and sync publishing | [Architecture](docs/architecture.md) |
 | `sync-plane` | Shared Redpanda producer configuration and contracts | [`crates/sync-plane/`](crates/sync-plane/) |
 | Atheros Sensor | Monitor-mode wireless capture and indirect persistence through Redpanda | [Sensor README](services/atheros-sensor/README.md) |
-| Octopus | Durable ingestion, dedupe, evidence, leases, batching, outbox, TiDB load/results and maintained projections | [Octopus README](services/octopus/README.md) |
+| Octopus | Durable ingestion, dedupe, evidence, leases, batching, outbox, PostgreSQL load/results and maintained projections | [Octopus README](services/octopus/README.md) |
 | Atheros Search | HTTP/gRPC search, ETL health, embedding-job claims and vector writes | [Search README](services/atheros-search/README.md) |
 | Integration Console | SolidJS UI for Search, graph, inventory and ETL health | [`atheros-search-ui`](apps/integration-console/atheros-search-ui/) |
-| Schema Migrator | Migration authoring/execution and TiDB-backed internal control state | [Schema Migrator README](apps/schema-migrator/README.md) |
+| Schema Migrator | Migration authoring/execution and PostgreSQL-backed internal control state | [Schema Migrator README](apps/schema-migrator/README.md) |
 | WireGuard key rotator | Staged WireGuard key rotation and optional notifications | [Rotator README](apps/wg-key-rotator/README.md) |
 
 `java-coordinator` remains an image and Kubernetes resource identity for the
 Octopus service. Likewise, `sync.oracle.load` and `sync.oracle.result` are
-locked legacy topic names; both carry coordinator-owned TiDB work and results.
+locked legacy topic names; both carry coordinator-owned PostgreSQL work and results.
 
 ## Data boundaries
 
-Canonical DDL lives in [`sql/tidb/`](sql/tidb/) for four application databases:
+Canonical DDL lives in [`sql/postgres/`](sql/postgres/) for four schemas in the
+external `sync` database:
 
 - `octopus_core`
 - `atheros_search`
-- `integration_console`
 - `schema_migrator`
+- `keycloak`
 
-The in-cluster identity service uses a separate `keycloak` database.
-PostgreSQL is supported only as an external Schema Migrator target. Oracle is
-deprecated compatibility or historical material, not a runtime dependency.
+The Integration Console is database-free. Oracle remains deprecated external
+target compatibility in Schema Migrator, not a stack runtime dependency.
 
 ## Get started
 
@@ -66,13 +64,13 @@ canonical environment (`prod` by default), then compare their pushed digests
 with the committed pins:
 
 ```bash
-make publish ENV=dev REGISTRY_PLAIN_HTTP=1
+make publish ENV=prod REGISTRY_PLAIN_HTTP=1
 ```
 
 Jenkins, component publishing, and the Compose-only key rotator retain
 `make publish-all REGISTRY=192.168.1.242:5000 REGISTRY_PLAIN_HTTP=1`. Publishing changes registry
 tags only; it does not mutate Git or a cluster. Diagnose desired and live state
-read-only with `make recover-stack ENV=prod`; it uses the active Kubernetes
+read-only with `make stack-health`; it uses the active Kubernetes
 context unless `KUBE_CONTEXT` is explicitly set. Record
 new dev digests with the printed `make bump-digest-<service>` commands, validate
 them on the local cluster, then copy the exact tested digests in a separate
@@ -81,29 +79,26 @@ and [operations runbook](docs/runbook.md).
 
 ## Local development
 
-Docker Compose is an optional local test harness only. It is not a Kubernetes
-management, promotion or production workflow.
+Database integration tests use ephemeral PostgreSQL 16 Testcontainers. No
+development database or database Compose stack is bundled.
 
 ```bash
-REGISTRY=local IMAGE_TAG=dev \
-  docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
+(cd services/octopus && sbt test)
+(cd apps/schema-migrator && sbt test)
 ```
 
-For local Kubernetes development, render and apply
-`cyber-stack/matrix/dev` only with an explicit local context as documented in
-the [GitOps guide](cyber-stack/README.md). Production readiness is determined
-from the prod Argo CD Applications.
+Production readiness is determined from the production Argo CD Applications.
 
 ## Topic contracts
 
 | Topic | Current meaning |
 |---|---|
 | `sync.scan.request` | Producer-to-Octopus work discovery |
-| `sync.oracle.load` | Octopus-owned TiDB load dispatch; legacy name |
-| `sync.oracle.result` | Octopus-owned TiDB load outcome; legacy name |
+| `sync.oracle.load` | Octopus-owned PostgreSQL load dispatch; legacy name |
+| `sync.oracle.result` | Octopus-owned PostgreSQL load outcome; legacy name |
 | `wireless.audit` | Sensor-published schema-versioned wireless events |
 
-Delivery is at least once from committed Kafka consumer-group offsets, with durable TiDB
+Delivery is at least once from committed Kafka consumer-group offsets, with durable PostgreSQL
 dedupe and topic/partition/offset evidence.
 
 ## Common checks
@@ -124,7 +119,6 @@ python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 - [Jenkins image CI](docs/jenkins-ci.md)
 - [System architecture](docs/architecture.md)
 - [Operations runbook](docs/runbook.md)
-- [TiDB runtime and cutover](docs/tidb-runtime-cutover.md)
 - [Observability architecture](docs/observability-architecture-jaeger.md)
 - [Secret management](docs/secret-management.md)
 - [Threat model](docs/threat-model.md)

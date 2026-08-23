@@ -26,7 +26,7 @@ class BumpImageDigestTest(unittest.TestCase):
             for slice_name in ("app-stack", "data-plane"):
                 overlay = self.root / "cyber-stack" / "matrix" / environment / slice_name
                 overlay.mkdir(parents=True)
-                image = "tidb-runtime-schema" if slice_name == "data-plane" else "ssl-proxy"
+                image = "postgres-runtime-schema" if slice_name == "data-plane" else "ssl-proxy"
                 (overlay / "kustomization.yaml").write_text(
                     "apiVersion: kustomize.config.k8s.io/v1beta1\n"
                     "kind: Kustomization\n"
@@ -44,8 +44,8 @@ class BumpImageDigestTest(unittest.TestCase):
                 "  - name: ssl-proxy\n"
                 "    newName: registry/ssl-proxy\n"
                 "    digest: sha256:" + "b" * 64 + "\n"
-                "  - name: tidb-runtime-schema\n"
-                "    newName: registry/tidb-runtime-schema\n"
+                "  - name: postgres-runtime-schema\n"
+                "    newName: registry/postgres-runtime-schema\n"
                 "    digest: sha256:" + "b" * 64 + "\n",
                 encoding="utf-8",
             )
@@ -111,7 +111,7 @@ class BumpImageDigestTest(unittest.TestCase):
         self.assertIn("build --load-restrictor LoadRestrictionsNone", self.log.read_text())
 
     def test_maps_schema_image_to_data_plane(self) -> None:
-        result = self.run_helper("tidb-runtime-schema", "prod", DIGEST)
+        result = self.run_helper("postgres-runtime-schema", "prod", DIGEST)
 
         self.assertEqual(0, result.returncode, result.stderr)
         data_plane = self.root / "cyber-stack/matrix/prod/data-plane/kustomization.yaml"

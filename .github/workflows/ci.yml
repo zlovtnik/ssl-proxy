@@ -69,14 +69,14 @@ jobs:
       - name: Install GitOps checker dependencies
         run: python -m pip install --requirement scripts/requirements.txt
 
-      - name: Reject PostgreSQL and MongoDB runtime paths
+      - name: Enforce PostgreSQL-only runtime paths
         run: scripts/check-runtime-datastores.py
 
       - name: Test signed cutover evidence
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
-      - name: Validate four-domain TiDB schema
-        run: scripts/check-tidb-schema-contract.py
+      - name: Validate four-domain PostgreSQL schema
+        run: scripts/check-postgres-schema-contract.py
 
   schema-column-limits:
     name: Schema column limits
@@ -127,49 +127,3 @@ jobs:
           cd services/octopus
           sbt assembly
           python3 ../../scripts/octopus_image_contract.py jar target/scala-3.*/octopus.jar
-
-  traffic-audit:
-    name: Traffic audit gate
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out repository and nested repositories
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Elixir
-        uses: erlef/setup-elixir@v1
-        with:
-          elixir-version: "1.17.3"
-          otp-version: "26.2"
-
-      - name: Restore Mix dependencies
-        uses: actions/cache@v4
-        with:
-          path: services/traffic_audit/deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('services/traffic_audit/mix.lock') }}
-          restore-keys: ${{ runner.os }}-mix-
-
-      - name: Fetch dependencies
-        run: cd services/traffic_audit && mix deps.get
-
-      - name: Check formatting and lint
-        run: cd services/traffic_audit && mix format --check-formatted && mix credo --strict
-
-      - name: Run tests
-        run: cd services/traffic_audit && mix test
-
-      - name: Build escript
-        run: cd services/traffic_audit && MIX_ENV=prod mix escript.build
-
-      - name: Reject malformed CLI usage with exit 64
-        run: |
-          cd services/traffic_audit
-          ./traffic-audit run || test $? -eq 64
-
-      - name: Build the runtime image
-        run: docker build -t traffic-audit:ci -f services/traffic_audit/Dockerfile services/traffic_audit
-
-      - name: Run the gate in fixture mode inside the image
-        run: docker run --rm -e TRAFFIC_AUDIT_CAPTURE_MODE=fixture traffic-audit:ci run $GITHUB_SHA

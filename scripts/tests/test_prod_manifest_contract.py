@@ -49,16 +49,16 @@ spec:
         - name: bootstrap-admin-service
           env:
             - name: KC_DB_URL_HOST
-              valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-tidb-endpoint, key: TIDB_HOST}}
+              valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_HOST}}
             - name: KC_DB_URL_PORT
-              valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-tidb-endpoint, key: TIDB_PORT}}
+              valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_PORT}}
       containers:
         - name: keycloak
           env:
             - name: KC_DB_URL_HOST
-              valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-tidb-endpoint, key: TIDB_HOST}}
+              valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_HOST}}
             - name: KC_DB_URL_PORT
-              valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-tidb-endpoint, key: TIDB_PORT}}
+              valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_PORT}}
 """
     )
 
@@ -76,8 +76,8 @@ spec:
       containers:
         - name: java-coordinator
           env:
-            - {name: TIDB_ENABLED, value: "true"}
-            - {name: TIDB_SCHEMA_MANIFEST_SHA256, value: canonical-checksum}
+            - {name: POSTGRES_ENABLED, value: "true"}
+            - {name: POSTGRES_SCHEMA_MANIFEST_SHA256, value: canonical-checksum}
             - {name: SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR, value: "1"}
             - {name: OCTOPUS_PROCESSORS_ENABLED, value: "true"}
             - {name: OCTOPUS_CONSUMERS_ENABLED, value: "true"}
@@ -102,10 +102,10 @@ class ProductionManifestContractTest(unittest.TestCase):
             1, len(check_gitops._check_prod_alloy_positions(rendered, "prod"))
         )
 
-    def test_keycloak_bootstrap_and_main_use_external_tidb(self) -> None:
+    def test_keycloak_bootstrap_and_main_use_external_postgres(self) -> None:
         rendered = keycloak()
         self.assertEqual(
-            [], check_gitops._check_prod_keycloak_external_tidb(rendered, "prod")
+            [], check_gitops._check_prod_keycloak_external_postgres(rendered, "prod")
         )
 
         bootstrap = next(
@@ -117,8 +117,8 @@ class ProductionManifestContractTest(unittest.TestCase):
         )
         entry = bootstrap["env"][0]
         entry.pop("valueFrom")
-        entry["value"] = "ssl-proxy-tidb"
-        errors = check_gitops._check_prod_keycloak_external_tidb(rendered, "prod")
+        entry["value"] = "ssl-proxy-postgres"
+        errors = check_gitops._check_prod_keycloak_external_postgres(rendered, "prod")
         self.assertTrue(any("bootstrap-admin-service" in error for error in errors))
 
     def test_keycloak_bootstrap_runs_after_home_preparation(self) -> None:
@@ -128,7 +128,7 @@ class ProductionManifestContractTest(unittest.TestCase):
         ]
         init_containers.insert(0, init_containers.pop())
 
-        errors = check_gitops._check_prod_keycloak_external_tidb(rendered, "prod")
+        errors = check_gitops._check_prod_keycloak_external_postgres(rendered, "prod")
         self.assertTrue(
             any("prepare keycloak-home" in error for error in errors)
         )
@@ -178,7 +178,7 @@ class ProductionManifestContractTest(unittest.TestCase):
         next(
             entry
             for entry in environment
-            if entry["name"] == "TIDB_SCHEMA_MANIFEST_SHA256"
+            if entry["name"] == "POSTGRES_SCHEMA_MANIFEST_SHA256"
         )["value"] = "stale-checksum"
         errors = check_gitops._check_octopus_schema_contract(
             rendered, "prod", "canonical-checksum"

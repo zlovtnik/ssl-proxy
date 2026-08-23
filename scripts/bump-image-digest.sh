@@ -32,7 +32,7 @@ case "$digest" in
 esac
 
 case "$service" in
-  tidb-runtime-schema)
+  postgres-runtime-schema)
     slice="data-plane"
     ;;
   ssl-proxy|java-coordinator|atheros-sensor|atheros-search|atheros-search-ui|schema-migrator-backend|schema-migrator-ui)

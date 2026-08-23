@@ -103,26 +103,26 @@ replication health before adjusting clients.
 Determine whether disk or memory crossed the threshold and whether the problem
 is isolated to one broker. Capacity changes remain Git-managed.
 
-## TiDB
+## PostgreSQL
 
 In dev, Prometheus discovers the bundled `:10080` Service endpoint. In prod,
 the host-network bridge must be scheduled on a node labelled
-`ssl-proxy.io/tidb-host=true`, scrape `127.0.0.1:10080`, and remote-write to the
+`ssl-proxy.io/postgres-host=true`, scrape `127.0.0.1:10080`, and remote-write to the
 cluster Prometheus Service.
 
-## TiDB connections
+## PostgreSQL connections
 
 Compare active and maximum connections with application pool use. Identify the
 owning service before adjusting isolated pool settings.
 
-## TiDB latency
+## PostgreSQL latency
 
 Correlate p95 query latency with QPS, transaction, lock, and application call
 metrics. Metric labels must never contain raw SQL.
 
-## TiDB errors
+## PostgreSQL errors
 
-Inspect bounded TiDB error/deadlock metrics and correlated application logs.
+Inspect bounded PostgreSQL error/deadlock metrics and correlated application logs.
 Database repair and schema changes must follow the repository's provisioning
 contracts.
 

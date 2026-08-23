@@ -8,7 +8,7 @@ READMEs describe only their local code and operations.
 
 ssl-proxy is a WireGuard-first transparent proxy with a Redpanda-backed audit
 and processing plane. The Rust proxy and Atheros Sensor publish events and work
-discovery messages. Octopus durably ingests those messages into TiDB, records
+discovery messages. Octopus durably ingests those messages into PostgreSQL, records
 per-topic/partition/offset evidence, manages leases and batches, publishes
 outbox work, and maintains projections. Atheros Search serves the search API
 and, when enabled, claims embedding jobs and writes vectors. The SolidJS
@@ -23,17 +23,17 @@ flowchart LR
     proxy -->|events and sync.scan.request| redpanda[Redpanda]
     sensor[Atheros Sensor] -->|wireless.audit and sync.scan.request| redpanda
     redpanda --> octopus[Octopus]
-    octopus -->|durable ingestion, evidence, projections| tidb[(TiDB)]
+    octopus -->|durable ingestion, evidence, projections| postgres[(PostgreSQL)]
     octopus -->|sync.oracle.load| redpanda
     redpanda -->|sync.oracle.load| octopus
     octopus -->|sync.oracle.result| redpanda
     redpanda -->|sync.oracle.result| octopus
 
-    search[Atheros Search] -->|queries| tidb
-    search -->|claims jobs and writes vectors| tidb
+    search[Atheros Search] -->|queries| postgres
+    search -->|claims jobs and writes vectors| postgres
     ui[SolidJS Integration Console] -->|HTTP and gRPC gateway APIs| search
 
-    octopus -->|search documents and embedding jobs| tidb
+    octopus -->|search documents and embedding jobs| postgres
 ```
 
 Solid edges are implemented flows. New Octopus processors and Atheros Search
@@ -46,12 +46,12 @@ explicitly enabled.
 |---|---|---|---|
 | Proxy | Rust in [`src/`](../src/) | WireGuard ingress, transparent proxying, classification, admin/readiness surface, proxy-side sync publishing | Durable application state or database connections |
 | Sync Plane | Rust in [`crates/sync-plane/`](../crates/sync-plane/) | Shared Redpanda producer configuration and message contracts | Ingestion state or projections |
-| Atheros Sensor | Rust in [`services/atheros-sensor/`](../services/atheros-sensor/) | Monitor-mode capture, wireless event construction, Redpanda publishing, local backlog | Direct TiDB persistence |
-| Octopus | Scala 3 in [`services/octopus/`](../services/octopus/) | Durable ingestion, dedupe, evidence, cursoring, leases, batching, outbox, TiDB load/results, maintained projections and alert derivation | Embedding execution or public search APIs |
+| Atheros Sensor | Rust in [`services/atheros-sensor/`](../services/atheros-sensor/) | Monitor-mode capture, wireless event construction, Redpanda publishing, local backlog | Direct PostgreSQL persistence |
+| Octopus | Scala 3 in [`services/octopus/`](../services/octopus/) | Durable ingestion, dedupe, evidence, cursoring, leases, batching, outbox, PostgreSQL load/results, maintained projections and alert derivation | Embedding execution or public search APIs |
 | Atheros Search | Go in [`services/atheros-search/`](../services/atheros-search/) | HTTP/gRPC search, ETL health APIs, embedding-job claims, embedding calls, vector writes | Projection maintenance or alert derivation |
 | Integration Console | SolidJS in [`apps/integration-console/atheros-search-ui/`](../apps/integration-console/atheros-search-ui/) | Browser UI for search, graph, inventory and ETL health | Rails runtime or direct database access |
 | Schema Migrator | Scala 3 in [`apps/schema-migrator/`](../apps/schema-migrator/) | Migration definitions, validation, execution history and target connection CRUD | Provisioning the four application schemas at runtime |
-| TiDB schema executor | Shell/container in [`k8s/tidb-schema-executor/`](../k8s/tidb-schema-executor/) | Applying the checksummed canonical manifests | Application data processing |
+| PostgreSQL schema executor | Shell/container in [`k8s/postgres-schema-executor/`](../k8s/postgres-schema-executor/) | Applying the checksummed canonical manifests | Application data processing |
 | WireGuard key rotator | Elixir in [`apps/wg-key-rotator/`](../apps/wg-key-rotator/) | Staged peer and server key rotation | Proxy traffic handling |
 
 The Kubernetes resource and image identity `java-coordinator` is a legacy name
@@ -59,17 +59,16 @@ for the Scala Octopus service.
 
 ## Durable state and database boundaries
 
-The canonical schema source is [`sql/tidb/`](../sql/tidb/). It defines four
+The canonical schema source is [`sql/postgres/`](../sql/postgres/). It defines four
 application domains and a shared contract layer:
 
 | Database | Runtime owner | Purpose |
 |---|---|---|
 | `octopus_core` | Octopus | Ingestion evidence, dedupe, jobs, batches, cursors, leases, outbox and core projections |
 | `atheros_search` | Octopus and Atheros Search with table-level grants | Search documents, embedding jobs, vectors and search-facing projections |
-| `integration_console` | No current application runtime | Reserved console-domain tables; see [Known gaps](#known-gaps) |
 | `schema_migrator` | Schema Migrator | Internal connection, execution and migration-control state |
 
-The shared [`contracts`](../sql/tidb/contracts/) manifest records cross-domain
+The shared [`contracts`](../sql/postgres/contracts/) manifest records cross-domain
 schema contracts. The in-cluster identity service uses a separate `keycloak`
 database. It is not one of the four application manifests.
 
@@ -86,12 +85,12 @@ The sync topic names are compatibility surfaces and are intentionally locked:
 | Topic | Direction | Meaning |
 |---|---|---|
 | `sync.scan.request` | Proxy or sensor to Octopus | Work discovery with stream, dedupe and payload-reference metadata |
-| `sync.oracle.load` | Octopus dispatch to Octopus TiDB load consumer | Coordinator-owned TiDB load work; `oracle` is a legacy name |
-| `sync.oracle.result` | Octopus TiDB load consumer to Octopus result consumer | TiDB load outcomes; `oracle` is a legacy name |
+| `sync.oracle.load` | Octopus dispatch to Octopus PostgreSQL load consumer | Coordinator-owned PostgreSQL load work; `oracle` is a legacy name |
+| `sync.oracle.result` | Octopus PostgreSQL load consumer to Octopus result consumer | PostgreSQL load outcomes; `oracle` is a legacy name |
 | `wireless.audit` | Sensor to Redpanda/Octopus | Schema-versioned wireless audit events |
 
 Delivery is at least once from committed Kafka consumer-group offsets. A group
-without committed offsets starts at the earliest retained record. TiDB
+without committed offsets starts at the earliest retained record. PostgreSQL
 uniqueness, dedupe keys and topic/partition/offset evidence make replay and
 duplicate delivery observable and retry safe.
 
@@ -103,7 +102,7 @@ use `outbox://` references and must resolve to JSON in the shared outbox.
 ```mermaid
 sequenceDiagram
     participant O as Octopus
-    participant D as TiDB atheros_search
+    participant D as PostgreSQL atheros_search
     participant W as Atheros Search workers
     participant E as Embedding backend
     participant A as Search API
@@ -155,7 +154,7 @@ The complete management and workload-onboarding contract is in the
 ## Local development
 
 Docker Compose may be used as a local test harness for component integration.
-Local Kubernetes development uses the `cyber-stack/matrix/dev` Kustomization
+Local Kubernetes development uses the `cyber-stack/matrix/prod` Kustomization
 with an explicit local context. Local health does not replace production Argo
 CD application health.
 
@@ -174,8 +173,8 @@ complete topology and current instrumentation limits are in
   surfaces should remain host-local or cluster-internal.
 - The proxy and sensor have elevated network capabilities. They do not receive
   database credentials.
-- TiDB clients use separate accounts and databases, verified TLS and the
-  table-level grant matrix in [TiDB Runtime](tidb-runtime-cutover.md).
+- PostgreSQL clients use separate accounts and databases, verified TLS and the
+  table-level grant matrix in [PostgreSQL manifests](../sql/postgres/).
 - Secrets are materialized outside Git and mounted or referenced through
   Kubernetes Secrets. See [Secret Management](secret-management.md).
 - Search analytics store hashes instead of raw queries or session identifiers
@@ -185,15 +184,14 @@ complete topology and current instrumentation limits are in
 
 These are documentation of current limitations, not hidden future behavior:
 
-1. No current application runtime owns the `integration_console` tables. The
    Integration Console is the SolidJS Atheros Search UI and reads through the
    Search API.
 2. Atheros Search installs HTTP/gRPC tracing hooks, but the server does not
    initialize an OTLP exporter or SDK tracer provider. Setting
    `OTEL_EXPORTER_OTLP_ENDPOINT` alone does not export its spans.
-3. The dev Kubernetes overlay runs TiDB with UniStore. That topology does not
+3. The dev Kubernetes overlay runs PostgreSQL with UniStore. That topology does not
    demonstrate production TiFlash placement, distributed failure tolerance or
-   vector-index readiness. Production claims require a real TiDB/TiFlash
+   vector-index readiness. Production claims require a real PostgreSQL/TiFlash
    cluster and an explicit readiness rehearsal.
 
 Until these gaps are closed, deployment success means the declared health

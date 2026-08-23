@@ -9,7 +9,7 @@ in [System Architecture](architecture.md).
 
 Rows in `search_queries` expire after 30 days by default through `expires_at`
 and the schema's purge operation. Runtime retention automation must be verified
-in the deployed TiDB topology; a schema declaration alone does not prove that a
+in the deployed PostgreSQL topology; a schema declaration alone does not prove that a
 purge scheduler is running.
 
 Normal write paths must not store raw `query_text`, `session_id` or
@@ -42,7 +42,7 @@ derived vectors when the source document is lawfully removed.
 ## Operator checklist
 
 1. Verify API auth and CORS for every exposed Search route.
-2. Confirm analytics expiration and deletion behavior against live TiDB.
+2. Confirm analytics expiration and deletion behavior against live PostgreSQL.
 3. Review diagnostic opt-ins and remove them when the incident closes.
 4. Confirm Grafana, Loki, Prometheus and Jaeger are not publicly reachable.
 5. Test deletion across documents, jobs, vectors, analytics, logs and exports.

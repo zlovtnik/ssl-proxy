@@ -21,7 +21,7 @@ spec:
         app.kubernetes.io/name: ssl-proxy
         app.kubernetes.io/component: java-coordinator
         app.kubernetes.io/name-alias: octopus
-        ssl-proxy.io/tidb-client: "true"
+        ssl-proxy.io/postgres-client: "true"
     spec:
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
@@ -289,35 +289,35 @@ spec:
               value: "5000"
             - name: SYNC_HEARTBEAT_LOG_INTERVAL_MS
               value: "15000"
-            - name: TIDB_ENABLED
+            - name: POSTGRES_ENABLED
               value: "true"
-            - name: TIDB_SCHEMA_MANIFEST_SHA256
-              value: "10252d0d22394756115f78de2986cf7cb468412f6113bf51c8222307899baed5"
-            - name: TIDB_HOST
-              value: "ssl-proxy-tidb.$(POD_NAMESPACE).svc.cluster.local"
-            - name: TIDB_PORT
-              value: "4000"
-            - name: TIDB_DATABASE
-              value: "octopus_core"
-            - name: TIDB_USER
+            - name: POSTGRES_SCHEMA_MANIFEST_SHA256
+              value: "aa7b959953e75d287bea35161bbdc47498e577b3e629368773e5569e6e77d57b"
+            - name: POSTGRES_HOST
+              value: "postgres-pgbouncer"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DATABASE
+              value: "sync"
+            - name: POSTGRES_USER
               value: "octopus_runtime"
-            - name: TIDB_PASSWORD
+            - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: tidb-octopus
+                  name: postgres-octopus
                   key: password
-            - name: TIDB_POOL_SIZE
+            - name: POSTGRES_POOL_SIZE
               value: "20"
-            - name: TIDB_HEALTHCHECK_RESERVE
+            - name: POSTGRES_HEALTHCHECK_RESERVE
               value: "2"
-            - name: TIDB_CONNECTION_TIMEOUT_MS
+            - name: POSTGRES_CONNECTION_TIMEOUT_MS
               value: "5000"
-            - name: TIDB_STATEMENT_TIMEOUT_SECS
+            - name: POSTGRES_STATEMENT_TIMEOUT_SECS
               value: "30"
-            - name: TIDB_WARN_ONLY
+            - name: POSTGRES_WARN_ONLY
               value: "false"
-            - name: TIDB_SSL_MODE
-              value: "DISABLED"
+            - name: POSTGRES_SSL_MODE
+              value: "disable"
             - name: OCTOPUS_PROCESSORS_ENABLED
               value: "true"
             - name: OCTOPUS_ENABLED_PROCESSORS

@@ -14,7 +14,7 @@ The platform team provides and operates:
 - registration of `cyber-stack/argocd` as this repository's production-only
   control-plane path;
 - registry access for `192.168.1.242:5000`;
-- workload Secrets and the production TiDB endpoint ConfigMap required by the
+- workload Secrets and the production PostgreSQL endpoint ConfigMap required by the
   rendered manifests, sourced through the value-free
   [`platform-input-contract.yaml`](platform-input-contract.yaml);
 - DNS and an `ssl-proxy-identity-tls` certificate for
@@ -30,12 +30,12 @@ cluster as a shortcut.
 ## Layout and applications
 
 Environment-neutral resources live under `base/`. Environment configuration
-lives under `matrix/dev/` and `matrix/prod/`.
+lives under `matrix/prod/` and `matrix/prod/`.
 
 | Slice | Production application | Responsibility |
 |---|---|---|
 | `bootstrap` | `ssl-proxy-prod-bootstrap` | Namespace, service account and shared ConfigMaps |
-| `data-plane` | `ssl-proxy-prod-data-plane` | TiDB integration, Redpanda, MinIO, Redis, schema execution and telemetry |
+| `data-plane` | `ssl-proxy-prod-data-plane` | PostgreSQL integration, Redpanda, MinIO, Redis, schema execution and telemetry |
 | `app-stack` | `ssl-proxy-prod-app-stack` | Proxy, Octopus, Search/UI, sensor and Schema Migrator |
 
 `applicationset-workloads.yaml` creates only those three production
@@ -64,13 +64,13 @@ interactive Kubernetes changes.
 
 ## Local Kubernetes development
 
-The aggregate `matrix/dev` Kustomization is the local deployment target. Use an
+The aggregate `matrix/prod` Kustomization is the local deployment target. Use an
 explicit local context on every command so the production context cannot be
 selected accidentally:
 
 ```bash
 kubectl config get-contexts
-kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/dev \
+kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/prod \
   | kubectl --context docker-desktop apply --server-side -f -
 kubectl --context docker-desktop get pods -n dev-ssl-proxy -o wide
 ```
@@ -90,7 +90,7 @@ explicit context when its PVC data is no longer needed.
   patch or Secret/ConfigMap reference in both environments.
 - Keep credential values out of Git. Reference the smallest platform-owned
   Secret and key required by each workload.
-- TiDB Secrets are password-only. Canonical dev and prod renders set plaintext
+- PostgreSQL Secrets are password-only. Canonical dev and prod renders set plaintext
   transport explicitly; the production bootstrap rotates an empty root only
   when the external instance is verified to be fresh.
 - Use the standard labels `app.kubernetes.io/name`,
@@ -107,14 +107,14 @@ explicit context when its PVC data is no longer needed.
 1. Let the private Jenkins `ssl-proxy-images` pipeline publish all first-party
    images from `main` through the unchanged `make publish-all REGISTRY=...`
    interface. For an environment-aware manual publication of the eight
-   Kubernetes images, run `make publish ENV=dev` or `make publish ENV=prod`
+   Kubernetes images, run `make publish ENV=prod` or `make publish ENV=prod`
    (`prod` is the default). This target derives every repository and current pin
    from the selected owning slice and aggregate; `REGISTRY` and image tags do
    not define deployment identity.
 2. Use the pushed manifest digest and exact bump command printed by
    environment-aware publication. `MATCH` means the selected Kustomization
    already pins that content; `UNPINNED` still means publication succeeded and
-   requires a reviewed `make bump-digest-<service> ENV=dev
+   requires a reviewed `make bump-digest-<service> ENV=prod
    DIGEST=sha256:<digest>` Git change. The helper keeps the owning dev slice and
    local aggregate synchronized.
 3. CI must pass `make gitops-check`, documentation checks and component tests.
@@ -170,12 +170,12 @@ Read-only cluster checks:
 
 ```bash
 export KUBE_CONTEXT="$(kubectl config current-context)"
-make recover-stack ENV=prod REGISTRY_PLAIN_HTTP=1
-make recover-stack ENV=dev REGISTRY_PLAIN_HTTP=1
-kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/dev >/dev/null
+make stack-health
+make stack-health
+kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/prod >/dev/null
 ```
 
-`recover-stack` defaults to production and the current Kubernetes context. It
+`stack-health` defaults to production and the current Kubernetes context. It
 is usually simplest to omit `KUBE_CONTEXT`; exporting the current context as
 shown above freezes that selection for a sequence of commands. Context names
 are local to each host, so do not copy a workstation context name onto a
@@ -201,7 +201,7 @@ When an Application is unhealthy, inspect its conditions, the rendered Git
 revision, workload events and container logs. Correct workload manifests in
 the appropriate `cyber-stack/base` or environment-overlay Git source and allow
 Argo CD to reconcile them. Changes to platform-owned Secrets and the production
-TiDB endpoint ConfigMap must instead go through the platform's declarative
+PostgreSQL endpoint ConfigMap must instead go through the platform's declarative
 control plane; they are prerequisite contracts and are not owned by an
 unspecified workload repository.
 

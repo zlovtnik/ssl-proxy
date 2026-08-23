@@ -3,7 +3,7 @@
 Secrets are runtime inputs, never repository content. This policy applies to
 Kustomize resources, Argo CD reconciliation, local development and nested
 repositories. Read it with the [threat model](threat-model.md) and
-[TiDB runtime contract](tidb-runtime-cutover.md).
+[PostgreSQL runtime manifests](../sql/postgres/).
 
 ## Secret classes
 
@@ -11,8 +11,8 @@ repositories. Read it with the [threat model](threat-model.md) and
 |---|---|---|
 | WireGuard server, peer and preshared keys | Proxy, frontdoor and rotator | Restrictive files mounted read-only |
 | Admin API token | Proxy | `ADMIN_API_KEY_FILE` or Kubernetes Secret |
-| TiDB account passwords and DSNs | Octopus, Search, Schema Migrator, Keycloak | Separate Kubernetes Secrets per account |
-| TiDB CA and optional client keypair | Direct TiDB clients | Read-only Secret volume |
+| PostgreSQL account passwords and DSNs | Octopus, Search, Schema Migrator, Keycloak | Separate Kubernetes Secrets per account |
+| PostgreSQL CA and optional client keypair | Direct PostgreSQL clients | Read-only Secret volume |
 | Search API token digest | Atheros Search | Kubernetes Secret; store the digest, not a plaintext token |
 | MinIO credentials | Octopus/export workflows | Kubernetes Secret |
 | Grafana credentials | Grafana | Secret/environment injected at deployment |
@@ -57,9 +57,9 @@ must remain untracked.
   and Vault KV-v2 logical paths; this repository stores no values.
 - Create one Secret per trust boundary rather than a platform-wide credential
   bundle.
-- Keep the TiDB accounts for `octopus_core`, `atheros_search`,
+- Keep the PostgreSQL accounts for `octopus_core`, `atheros_search`,
   `schema_migrator` and Keycloak separate.
-- Mount only the TiDB CA by default. Add client certificates only when the
+- Mount only the PostgreSQL CA by default. Add client certificates only when the
   cluster requires mutual TLS.
 - Disable service-account token automount for workloads that do not use the
   Kubernetes API.
@@ -72,14 +72,14 @@ must remain untracked.
 
 The platform-owned Vault sync workflow must read every logical path under
 `secret/ssl-proxy/prod` declared by the contract. Before writing anything, it
-validates that all 16 Secrets and the TiDB endpoint ConfigMap have every
+validates that all 16 Secrets and the PostgreSQL endpoint ConfigMap have every
 declared key. It must not log values, and its Kubernetes writer identity is
 external to application workloads.
 
 The same preflight verifies that the identity certificate covers
-`identity.prod.ssl-proxy.internal`, the TiDB CA and server name agree, each DSN
+`identity.prod.ssl-proxy.internal`, the PostgreSQL CA and server name agree, each DSN
 uses the isolated account recorded in the contract, and the grant matrix in
-the TiDB cutover document is applied. It also verifies that `loki-htpasswd`
+the PostgreSQL cutover document is applied. It also verifies that `loki-htpasswd`
 corresponds to the declared Loki username and password. Only after every check
 passes may the platform workflow materialize all objects idempotently in
 `prod-ssl-proxy`. A partial write is a failed sync.
@@ -102,8 +102,8 @@ or placed under the ignored local `secrets/` directory.
 6. Record the rotation without recording the secret.
 
 Use the [rotator README](../apps/wg-key-rotator/README.md) for WireGuard keys.
-For TiDB, rotate accounts independently and re-run the TLS/grant checks in the
-[TiDB cutover guide](tidb-runtime-cutover.md).
+For PostgreSQL, rotate accounts independently and re-run the TLS/grant checks in the
+[PostgreSQL runtime manifests](../sql/postgres/).
 
 ## Incident response
 

@@ -140,12 +140,12 @@
       "id": 5,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (service_name, db_operation, le) (rate(traces_spanmetrics_duration_milliseconds_bucket{db_system=~\"mysql|tidb\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (service_name, db_operation, le) (rate(traces_spanmetrics_duration_milliseconds_bucket{db_system=~\"postgresql|postgres\"}[5m])))",
           "legendFormat": "p95 {{service_name}} {{db_operation}}",
           "refId": "A"
         }
       ],
-      "title": "TiDB Call Latency p95",
+      "title": "PostgreSQL Call Latency p95",
       "type": "timeseries"
     },
     {
@@ -168,22 +168,22 @@
       "id": 6,
       "targets": [
         {
-          "expr": "hikaricp_connections{pool=\"tidb-pool\"}",
+          "expr": "hikaricp_connections{pool=\"postgres-pool\"}",
           "legendFormat": "connections",
           "refId": "A"
         },
         {
-          "expr": "hikaricp_connections_idle{pool=\"tidb-pool\"}",
+          "expr": "hikaricp_connections_idle{pool=\"postgres-pool\"}",
           "legendFormat": "idle",
           "refId": "B"
         },
         {
-          "expr": "hikaricp_connections_max{pool=\"tidb-pool\"}",
+          "expr": "hikaricp_connections_max{pool=\"postgres-pool\"}",
           "legendFormat": "max",
           "refId": "C"
         }
       ],
-      "title": "TiDB Pool State",
+      "title": "PostgreSQL Pool State",
       "type": "timeseries"
     }
   ],
