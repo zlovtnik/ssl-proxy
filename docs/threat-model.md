@@ -91,9 +91,7 @@ These are current limitations and must not be hidden by a passing readiness prob
 
 | Gap | Owner | Severity | Affected environment | Required exit evidence | Production-blocking |
 |-----|-------|----------|---------------------|----------------------|-------------------|
-| PostgreSQL runs on UniStore in dev overlay | platform-team | P1 | dev | PostgreSQL/UniStore placement validation, load test, failure-recovery test, vector-index readiness validation | Yes — blocks prod unless dev parity demonstrated |
 | Atheros Search OTLP exporter not initialized | search-team | P2 | all | Traces exported to Jaeger and verified in dashboard | No — observability gap, not data-path |
-| Dev worker settings need render validation; PostgreSQL init job lacks worker-write grants | platform-team | P2 | dev | Render validation pass, grant matrix verified | No — dev-only |
 | End-to-end search document/job producer flow incomplete | search-team | P1 | all | Embedding pipeline runs end-to-end with verified output | Yes — blocks prod unless pipeline proven |
 | Operational checks confirm liveness, not data integrity | platform-team | P2 | all | End-to-end contract verification across all services | No — readiness improvement, not data-path |
 | Node firewall, router forwarding and public IPv6 rejection are not yet evidenced | platform-team | P1 | prod Internet edge | Recorded host ruleset and listener inventory; router DMZ/WAN administration/UPnP/NAT-PMP disabled; no AAAA record; internal tests prove Traefik TCP 80/443 returns only `404`, and independent external scans prove only IPv4 TCP 80 plus the approved WireGuard UDP entrypoint are reachable while TCP 443 is closed; matching access logs and metrics are visible | Yes — router forwarding must remain disabled until evidence is approved |

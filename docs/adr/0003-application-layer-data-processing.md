@@ -62,11 +62,11 @@ Classify PostgreSQL errors as retryable or permanent:
 
 | Code | Meaning | Action |
 |------|---------|--------|
-| 1205 | Lock wait timeout | Retry with backoff |
-| 1213 | Deadlock | Retry with backoff |
-| 8028 | Metadata/schema-change transaction conflict | Retry with backoff |
-| 9003 | TiKV server busy | Retry with backoff |
-| 9007 | Write conflict | Retry with backoff |
+| `40001` | Serialization failure | Retry with backoff |
+| `40P01` | Deadlock detected | Retry with backoff |
+| `55P03` | Lock not available | Retry with backoff |
+| `08006` | Connection failure | Retry after reconnecting |
+| Other integrity errors | Permanent statement/data failure | Fail closed |
 
 Use jittered exponential backoff for retries (max 5 attempts, max 2 seconds).
 See `PostgreSQLTransactionRetry` for the implementation.

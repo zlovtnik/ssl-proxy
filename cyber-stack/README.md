@@ -1,10 +1,9 @@
 # Kubernetes GitOps Guide
 
 This directory is the only source of Kubernetes desired state for ssl-proxy.
-Kustomize renders both environments. Argo CD on `192.168.1.242` reconciles
-production from `main`; development is rendered and applied only to an
-explicit local Kubernetes context. Configuration, releases, rollbacks and
-workload onboarding happen by reviewed Git changes.
+Kustomize renders the production slices, which Argo CD reconciles from `main`.
+Configuration, releases, rollbacks and workload onboarding happen by reviewed
+Git changes.
 
 ## Ownership boundary
 
@@ -83,16 +82,16 @@ explicit context when its PVC data is no longer needed.
 
 ## Configuration rules
 
-- Keep reusable manifests and safe defaults in `base/`; keep environment
-  differences in the matching `matrix/<environment>/` patches.
+- Keep reusable manifests and safe defaults in `base/`; keep production
+  differences in `matrix/prod/` patches.
 - Put shared non-secret values in the platform ConfigMaps. Every environment
   variable consumed by a workload must have a visible base value, overlay
-  patch or Secret/ConfigMap reference in both environments.
+  patch or Secret/ConfigMap reference in the production render.
 - Keep credential values out of Git. Reference the smallest platform-owned
   Secret and key required by each workload.
-- PostgreSQL Secrets are password-only. Canonical dev and prod renders set plaintext
-  transport explicitly; the production bootstrap rotates an empty root only
-  when the external instance is verified to be fresh.
+- PostgreSQL credentials and TLS material are platform-owned prerequisites.
+  Production uses verified TLS to the direct endpoint and PgBouncer for
+  application runtime traffic; no root credential is consumed by the stack.
 - Use the standard labels `app.kubernetes.io/name`,
   `app.kubernetes.io/component` and `app.kubernetes.io/managed-by`.
 - Pin third-party images to an immutable version. First-party images in the

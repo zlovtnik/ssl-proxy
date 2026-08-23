@@ -109,13 +109,12 @@ The platform and network owners perform the cutover in this order:
 2. Rebind the untracked CI registry and Jenkins runtime to `.242`, preserving
    their named volumes. Configure K3s/containerd to trust the exact plain-HTTP
    authority `192.168.1.242:5000`, then prove the registry API and a CRI pull.
-3. Recreate standalone PostgreSQL with `pingcap/postgres:v8.5.7`, UniStore, a persistent
-   named volume and `restart: unless-stopped`. Bind SQL only to
-   `192.168.1.242:4000`, bind status/metrics to `127.0.0.1:10080`, configure no
-   TLS material, and retain the stopped prior container as rollback evidence.
+3. Have the platform owner provision or update the external PostgreSQL 16
+   endpoint for database `sync`, preserving backups and verified TLS. Do not
+   deploy a database container from this repository.
 4. Through the platform prerequisite workflow, update the non-secret
    `ssl-proxy-prod-postgres-endpoint` values, including `POSTGRES_HOST` and the JDBC
-   URL, to `.242` with `sslMode=DISABLED`. Do not patch the
+   URL, to the approved endpoint with verified TLS. Do not patch the
    ConfigMap interactively.
 5. Merge the reviewed repository address change to `main` and let Argo CD
    reconcile the digest-identical `.242:5000` image references. Require

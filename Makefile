@@ -31,8 +31,7 @@ ATHEROS_SEARCH_UI_API_BASE ?=
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
 
 SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui postgres-runtime-schema
-# traffic_audit is a CI-only escript gate (no long-lived K8s workload), so like
-# wg-key-rotator it is excluded from image digest promotion.
+# wg-key-rotator is an operational tool, not a long-lived Kubernetes workload.
 DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator,$(SERVICES))
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
@@ -142,7 +141,7 @@ test:
 	cargo test -p sync-plane
 	cargo test -p ssl-proxy
 	cargo test -p atheros-sensor
-	cd apps/schema-migrator && sbt test
+	cd apps/schema-migrator && sbt 'Test / testFull'
 	cd services/octopus && sbt test
 	$(MAKE) atheros-search-test
 	$(MAKE) dependency-boundaries

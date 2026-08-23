@@ -1,7 +1,7 @@
 -- object: atheros_search_vectors
 -- depends_on: atheros_search_documents
--- HNSW indexes are intentionally absent here. Apply post_tiflash only after
--- each table reports AVAILABLE=1 in INFORMATION_SCHEMA.TIFLASH_REPLICA.
+-- Native pgvector HNSW indexes are created after the four vector tables so
+-- repeated manifest application remains deterministic.
 
 CREATE TABLE IF NOT EXISTS atheros_search.search_vectors_event (
   vector_id       bigserial,

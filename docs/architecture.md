@@ -62,21 +62,22 @@ for the Scala Octopus service.
 The canonical schema source is [`sql/postgres/`](../sql/postgres/). It defines four
 application domains and a shared contract layer:
 
-| Database | Runtime owner | Purpose |
+| Schema | Runtime owner | Purpose |
 |---|---|---|
 | `octopus_core` | Octopus | Ingestion evidence, dedupe, jobs, batches, cursors, leases, outbox and core projections |
 | `atheros_search` | Octopus and Atheros Search with table-level grants | Search documents, embedding jobs, vectors and search-facing projections |
 | `schema_migrator` | Schema Migrator | Internal connection, execution and migration-control state |
+| `keycloak` | Keycloak | Identity-provider-owned state |
 
 The shared [`contracts`](../sql/postgres/contracts/) manifest records cross-domain
-schema contracts. The in-cluster identity service uses a separate `keycloak`
-database. It is not one of the four application manifests.
+schema contracts. The in-cluster identity service owns the `keycloak` schema,
+which is the fourth canonical manifest in the shared `sync` database.
 
 Only the provisioning schema executor may apply canonical DDL. Application
 runtimes verify the recorded manifest checksum and fail closed when the schema
-contract is not ready. PostgreSQL is not an internal runtime store. Schema
-Migrator supports it only as an explicitly configured external migration
-target. Oracle material is deprecated or historical.
+contract is not ready. Schema Migrator keeps its own control state in
+`schema_migrator`; PostgreSQL and deprecated Oracle remain explicit external
+migration target dialects.
 
 ## Topic contracts
 
@@ -173,7 +174,7 @@ complete topology and current instrumentation limits are in
   surfaces should remain host-local or cluster-internal.
 - The proxy and sensor have elevated network capabilities. They do not receive
   database credentials.
-- PostgreSQL clients use separate accounts and databases, verified TLS and the
+- PostgreSQL clients use separate accounts and schemas in the `sync` database, verified TLS and the
   table-level grant matrix in [PostgreSQL manifests](../sql/postgres/).
 - Secrets are materialized outside Git and mounted or referenced through
   Kubernetes Secrets. See [Secret Management](secret-management.md).
@@ -184,15 +185,11 @@ complete topology and current instrumentation limits are in
 
 These are documentation of current limitations, not hidden future behavior:
 
-   Integration Console is the SolidJS Atheros Search UI and reads through the
-   Search API.
-2. Atheros Search installs HTTP/gRPC tracing hooks, but the server does not
+1. Atheros Search installs HTTP/gRPC tracing hooks, but the server does not
    initialize an OTLP exporter or SDK tracer provider. Setting
    `OTEL_EXPORTER_OTLP_ENDPOINT` alone does not export its spans.
-3. The dev Kubernetes overlay runs PostgreSQL with UniStore. That topology does not
-   demonstrate production TiFlash placement, distributed failure tolerance or
-   vector-index readiness. Production claims require a real PostgreSQL/TiFlash
-   cluster and an explicit readiness rehearsal.
+2. Production performance acceptance still requires representative data,
+   equivalent hardware, and a captured baseline outside this repository.
 
 Until these gaps are closed, deployment success means the declared health
-gates passed; it does not prove production-grade TiFlash/vector capacity.
+gates passed; it does not prove production-grade latency or capacity.

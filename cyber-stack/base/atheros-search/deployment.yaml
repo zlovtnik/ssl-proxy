@@ -57,7 +57,7 @@ spec:
                   name: postgres-atheros-search
                   key: password
             - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
-              value: "531610b2d2876768c08a5cf3531d24e16bf7fe9234fdfee30f32247c9973a2b7"
+              value: "d4d4eb2240270ee52c8411eb7363a3c2c058d846818cab1e6a25e2ba500075b1"
             - name: ATHSEARCH_EMBEDDING_MODEL
               value: "nomic-embed-text-v2-moe"
             - name: ATHSEARCH_EMBEDDING_DIMENSIONS
