@@ -39,6 +39,21 @@ spec:
               ADMIN_CONFIG="$REALM_CONFIG"
               used_recovery=false
 
+              echo "Waiting for Keycloak to be ready..."
+              for i in $(seq 1 120); do
+                if curl -sf --max-time 3 \
+                  "${KEYCLOAK_URL}/realms/middleware/.well-known/openid-configuration" \
+                  >/dev/null 2>&1; then
+                  echo "Keycloak is ready."
+                  break
+                fi
+                if [ "$i" -eq 120 ]; then
+                  echo "Keycloak did not become ready within 10 minutes" >&2
+                  exit 1
+                fi
+                sleep 5
+              done
+
               if ! "$KCADM" config credentials \
                 --config "$REALM_CONFIG" \
                 --server "$KEYCLOAK_URL" \

@@ -19,7 +19,8 @@ done
 
 export PGPASSWORD="${db_password}"
 psql_run() {
-  psql --no-psqlrc --set=ON_ERROR_STOP=1 +    --host="${db_host}" --port="${db_port}" --username="${db_user}" --dbname="${db_name}" "$@"
+  psql --no-psqlrc --set=ON_ERROR_STOP=1 \
+    --host="${db_host}" --port="${db_port}" --username="${db_user}" --dbname="${db_name}" "$@"
 }
 
 manifest_digest() {
@@ -73,10 +74,16 @@ psql_run --tuples-only --no-align --command="
   WHERE n.nspname IN ('octopus_core','atheros_search','schema_migrator')
     AND NOT t.tgisinternal" | grep -qx 0
 
-sed -e "s/{{OCTOPUS_ACCOUNT}}/${octopus_account}/g" +    -e "s/{{ATHEROS_SEARCH_ACCOUNT}}/${search_account}/g" +    "${schema_root}/octopus_core/grants/least_privilege.sql.tmpl" | psql_run
-sed -e "s/{{OCTOPUS_ACCOUNT}}/${octopus_account}/g" +    -e "s/{{ATHEROS_SEARCH_ACCOUNT}}/${search_account}/g" +    "${schema_root}/atheros_search/grants/least_privilege.sql.tmpl" | psql_run
-sed -e "s/{{SCHEMA_MIGRATOR_STATE_ACCOUNT}}/${migrator_account}/g" +    "${schema_root}/schema_migrator/grants/least_privilege.sql.tmpl" | psql_run
-sed -e "s/{{KEYCLOAK_ACCOUNT}}/${keycloak_account}/g" +    "${schema_root}/keycloak/grants/least_privilege.sql.tmpl" | psql_run
+sed -e "s/{{OCTOPUS_ACCOUNT}}/${octopus_account}/g" \
+    -e "s/{{ATHEROS_SEARCH_ACCOUNT}}/${search_account}/g" \
+    "${schema_root}/octopus_core/grants/least_privilege.sql.tmpl" | psql_run
+sed -e "s/{{OCTOPUS_ACCOUNT}}/${octopus_account}/g" \
+    -e "s/{{ATHEROS_SEARCH_ACCOUNT}}/${search_account}/g" \
+    "${schema_root}/atheros_search/grants/least_privilege.sql.tmpl" | psql_run
+sed -e "s/{{SCHEMA_MIGRATOR_STATE_ACCOUNT}}/${migrator_account}/g" \
+    "${schema_root}/schema_migrator/grants/least_privilege.sql.tmpl" | psql_run
+sed -e "s/{{KEYCLOAK_ACCOUNT}}/${keycloak_account}/g" \
+    "${schema_root}/keycloak/grants/least_privilege.sql.tmpl" | psql_run
 
 ath_sha="$(awk '/^manifest_sha256:/{print $2; exit}' "${schema_root}/atheros_search/manifest.yaml")"
 oct_version="$(awk '/^schema_version:/{print $2; exit}' "${schema_root}/octopus_core/manifest.yaml")"
