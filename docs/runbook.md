@@ -273,9 +273,14 @@ The recovery report renders all canonical slices,
 reports Git and production Argo revisions, inventories desired and live images
 including init containers and runtime IDs, lists required platform object and
 key presence without values, and includes workload health and recent warnings. It prints the
-whole report before returning nonzero for blockers. Registry tag lookup failure
-is reported as `UNKNOWN` and does not by itself fail recovery. Dev reports skip
-Argo because dev Applications are prohibited on the production controller.
+whole report before returning nonzero for blockers. That nonzero result means
+the read-only command detected recovery blockers; it does not mean the reporting
+command malfunctioned. Unmanaged debug pods and pods owned by superseded
+ReplicaSets remain visible as informational evidence, while unhealthy pods and
+runtime-image drift under the current desired controller remain blockers.
+Registry tag lookup failure is reported as `UNKNOWN` and does not by itself fail
+recovery. Dev reports skip Argo because dev Applications are prohibited on the
+production controller.
 
 Capture the report with incident timestamps and do not paste Secret values into
 tickets. Do not use interactive edits, patches, scaling or restarts to repair

@@ -187,9 +187,12 @@ CD (production only), desired and live images, registry tags, runtime image
 IDs, required platform object/key presence, workload and pod health, and recent
 warning events. It prints the complete report before returning nonzero for
 unhealthy Applications, missing required objects or keys, verified image drift,
-or unhealthy workloads. The Secret query emits only type and key names; values
-are suppressed. The report never changes Git, registry state, Argo CD or
-Kubernetes.
+or unhealthy workloads. A nonzero result reports detected recovery blockers; it
+does not indicate that the reporting command failed. Unmanaged debug pods and
+pods from superseded ReplicaSets are informational, while current managed pods
+still enforce health and runtime-digest checks. The Secret query emits only type
+and key names; values are suppressed. The report never changes Git, registry
+state, Argo CD or Kubernetes.
 
 `make production-gate PRODUCTION_GATE_REVISION=<full-main-sha>` is the narrower
 CI check. It validates the read-only identity and waits up to 30 minutes for the

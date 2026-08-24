@@ -151,6 +151,10 @@ class FakeRunner:
         cluster_error: str = "connection refused",
         missing_input_key: tuple[str, str, str] | None = None,
         event_message: str | None = None,
+        pod_unhealthy: bool = False,
+        runtime_digest: str | None = None,
+        extra_pods: tuple[dict[str, object], ...] = (),
+        extra_replica_sets: tuple[dict[str, object], ...] = (),
     ) -> None:
         self.environment = environment
         self.secret_present = secret_present
@@ -164,6 +168,10 @@ class FakeRunner:
         self.cluster_error = cluster_error
         self.missing_input_key = missing_input_key
         self.event_message = event_message
+        self.pod_unhealthy = pod_unhealthy
+        self.runtime_digest = runtime_digest
+        self.extra_pods = extra_pods
+        self.extra_replica_sets = extra_replica_sets
         self.commands: list[tuple[str, ...]] = []
         self.rendered = rendered_documents(environment)
 
@@ -246,7 +254,10 @@ class FakeRunner:
             ]
             output = "\n".join(("__SSL_PROXY_PRESENT__", *keys, ""))
             return CommandResult(0, output, "")
-        if "deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch" in command:
+        if (
+            "deployments.apps,statefulsets.apps,daemonsets.apps,replicasets.apps,jobs.batch"
+            in command
+        ):
             live_digest = STALE if self.drift else PIN
             ready = 0 if self.drift else 1
             document = {
@@ -254,7 +265,10 @@ class FakeRunner:
                     {
                         "apiVersion": "apps/v1",
                         "kind": "Deployment",
-                        "metadata": {"name": "proxy"},
+                        "metadata": {
+                            "name": "proxy",
+                            "annotations": {"deployment.kubernetes.io/revision": "2"},
+                        },
                         "spec": {
                             "replicas": 1,
                             "template": {
@@ -276,14 +290,41 @@ class FakeRunner:
                             "availableReplicas": ready,
                             "updatedReplicas": ready,
                         },
-                    }
+                    },
+                    {
+                        "apiVersion": "apps/v1",
+                        "kind": "ReplicaSet",
+                        "metadata": {
+                            "name": "proxy-current",
+                            "annotations": {"deployment.kubernetes.io/revision": "2"},
+                            "ownerReferences": [
+                                {
+                                    "controller": True,
+                                    "kind": "Deployment",
+                                    "name": "proxy",
+                                }
+                            ],
+                        },
+                    },
+                    *self.extra_replica_sets,
                 ]
             }
             return CommandResult(0, json.dumps(document), "")
         if command[-3:] == ("pods", "-o", "json"):
             live_digest = STALE if self.drift else PIN
+            runtime_digest = self.runtime_digest or live_digest
+            unhealthy = self.drift or self.pod_unhealthy
             pod = {
-                "metadata": {"name": "proxy-abc"},
+                "metadata": {
+                    "name": "proxy-abc",
+                    "ownerReferences": [
+                        {
+                            "controller": True,
+                            "kind": "ReplicaSet",
+                            "name": "proxy-current",
+                        }
+                    ],
+                },
                 "spec": {
                     "initContainers": [{"name": "prepare", "image": "busybox:1.36"}],
                     "containers": [
@@ -294,20 +335,24 @@ class FakeRunner:
                     ],
                 },
                 "status": {
-                    "phase": "Pending" if self.drift else "Running",
-                    "conditions": [{"type": "Ready", "status": "False" if self.drift else "True"}],
+                    "phase": "Pending" if unhealthy else "Running",
+                    "conditions": [
+                        {"type": "Ready", "status": "False" if unhealthy else "True"}
+                    ],
                     "initContainerStatuses": [
                         {"name": "prepare", "imageID": "containerd://sha256:" + "c" * 64}
                     ],
                     "containerStatuses": [
                         {
                             "name": "proxy",
-                            "imageID": f"docker-pullable://registry.test:5000/{self.environment}/ssl-proxy@{live_digest}",
+                            "imageID": f"docker-pullable://registry.test:5000/{self.environment}/ssl-proxy@{runtime_digest}",
                         }
                     ],
                 },
             }
-            return CommandResult(0, json.dumps({"items": [pod]}), "")
+            return CommandResult(
+                0, json.dumps({"items": [pod, *self.extra_pods]}), ""
+            )
         if "events" in command:
             items = []
             if self.drift or self.event_message is not None:
@@ -558,6 +603,102 @@ class RecoverStackTest(unittest.TestCase):
         self.assertIn("image pull failed", report)
         self.assertLess(report.index("RECENT WARNING EVENTS"), report.index("BLOCKER SUMMARY"))
         self.assertTrue(report.rstrip().endswith("blockers)"))
+
+    def test_unmanaged_failed_pod_is_informational(self) -> None:
+        debugger = {
+            "metadata": {"name": "node-debugger-failed"},
+            "spec": {"containers": [{"name": "debugger", "image": "busybox"}]},
+            "status": {"phase": "Failed", "conditions": []},
+        }
+        runner = FakeRunner("prod", extra_pods=(debugger,))
+
+        returncode, report = self.reporter("prod", runner).run()
+
+        self.assertEqual(0, returncode, report)
+        self.assertIn(
+            "Pod/node-debugger-failed: UNHEALTHY "
+            "(phase=Failed ready=False; informational unmanaged pod (no controller))",
+            report,
+        )
+        self.assertNotIn(
+            "pod is unhealthy: prod-ssl-proxy/node-debugger-failed",
+            report.split("BLOCKER SUMMARY", 1)[1],
+        )
+
+    def test_pod_from_superseded_replica_set_is_informational(self) -> None:
+        old_replica_set = {
+            "apiVersion": "apps/v1",
+            "kind": "ReplicaSet",
+            "metadata": {
+                "name": "proxy-old",
+                "annotations": {"deployment.kubernetes.io/revision": "1"},
+                "ownerReferences": [
+                    {"controller": True, "kind": "Deployment", "name": "proxy"}
+                ],
+            },
+        }
+        stale_pod = {
+            "metadata": {
+                "name": "proxy-old-failed",
+                "ownerReferences": [
+                    {"controller": True, "kind": "ReplicaSet", "name": "proxy-old"}
+                ],
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "name": "proxy",
+                        "image": f"registry.test:5000/prod/ssl-proxy@{STALE}",
+                    }
+                ]
+            },
+            "status": {
+                "phase": "Failed",
+                "conditions": [],
+                "containerStatuses": [
+                    {
+                        "name": "proxy",
+                        "imageID": f"registry.test:5000/prod/ssl-proxy@{STALE}",
+                    }
+                ],
+            },
+        }
+        runner = FakeRunner(
+            "prod",
+            extra_pods=(stale_pod,),
+            extra_replica_sets=(old_replica_set,),
+        )
+
+        returncode, report = self.reporter("prod", runner).run()
+
+        self.assertEqual(0, returncode, report)
+        self.assertIn(
+            "informational stale ReplicaSet/proxy-old for Deployment/proxy", report
+        )
+        blocker_summary = report.split("BLOCKER SUMMARY", 1)[1]
+        self.assertNotIn("proxy-old-failed", blocker_summary)
+
+    def test_current_managed_unhealthy_pod_is_a_blocker(self) -> None:
+        runner = FakeRunner("prod", pod_unhealthy=True)
+
+        returncode, report = self.reporter("prod", runner).run()
+
+        self.assertEqual(1, returncode)
+        self.assertIn(
+            "managed by Deployment/proxy via ReplicaSet/proxy-current", report
+        )
+        self.assertIn("pod is unhealthy: prod-ssl-proxy/proxy-abc", report)
+
+    def test_current_managed_runtime_digest_drift_is_a_blocker(self) -> None:
+        runner = FakeRunner("prod", runtime_digest=STALE)
+
+        returncode, report = self.reporter("prod", runner).run()
+
+        self.assertEqual(1, returncode)
+        self.assertIn(
+            f"runtime image drift: proxy-abc/proxy desired {PIN}, runtime {STALE}",
+            report,
+        )
 
     def test_missing_platform_key_is_reported_without_values(self) -> None:
         runner = FakeRunner(
