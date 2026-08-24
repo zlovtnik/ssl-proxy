@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -60,7 +61,30 @@ func Load() (Config, error) {
 	env.AutomaticEnv()
 	postgresDSN := strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_DSN"))
 	if postgresDSN == "" {
-		return Config{}, errors.New("ATHSEARCH_POSTGRES_DSN is required")
+		postgresHost := strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_HOST"))
+		postgresPort := envInt("ATHSEARCH_POSTGRES_PORT", 5432)
+		postgresDatabase := envString("ATHSEARCH_POSTGRES_DATABASE", "sync")
+		postgresUser := envString("ATHSEARCH_POSTGRES_USER", "atheros_search_runtime")
+		postgresPassword := os.Getenv("ATHSEARCH_POSTGRES_PASSWORD")
+		if postgresHost == "" {
+			return Config{}, errors.New("ATHSEARCH_POSTGRES_HOST is required when ATHSEARCH_POSTGRES_DSN is not set")
+		}
+		if postgresPort < 1 || postgresPort > 65535 {
+			return Config{}, errors.New("ATHSEARCH_POSTGRES_PORT must be between 1 and 65535")
+		}
+		if strings.TrimSpace(postgresPassword) == "" {
+			return Config{}, errors.New("ATHSEARCH_POSTGRES_PASSWORD is required when ATHSEARCH_POSTGRES_DSN is not set")
+		}
+		connectionURL := &url.URL{
+			Scheme: "postgresql",
+			User:   url.UserPassword(postgresUser, postgresPassword),
+			Host:   net.JoinHostPort(strings.Trim(postgresHost, "[]"), strconv.Itoa(postgresPort)),
+			Path:   "/" + postgresDatabase,
+		}
+		query := connectionURL.Query()
+		query.Set("sslmode", "disable")
+		connectionURL.RawQuery = query.Encode()
+		postgresDSN = connectionURL.String()
 	}
 	cfg := Config{
 		PostgresDSN:                  postgresDSN,

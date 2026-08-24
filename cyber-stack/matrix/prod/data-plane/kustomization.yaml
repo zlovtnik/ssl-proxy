@@ -30,6 +30,7 @@ images:
   name: prom/prometheus
 patches:
 - path: ../patches/external-schema-executor.yaml
+- path: ../patches/pgbouncer-external-postgres.yaml
 - path: ../patches/alloy-positions.yaml
 - path: ../patches/jaeger-recovery.yaml
 - patch: |-

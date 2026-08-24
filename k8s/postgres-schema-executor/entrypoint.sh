@@ -7,12 +7,18 @@ db_port="${POSTGRES_PORT:-5432}"
 db_name="${POSTGRES_DATABASE:-sync}"
 db_user="${POSTGRES_SCHEMA_OWNER_USER:?POSTGRES_SCHEMA_OWNER_USER is required}"
 db_password="${POSTGRES_SCHEMA_OWNER_PASSWORD:?POSTGRES_SCHEMA_OWNER_PASSWORD is required}"
+db_ssl_mode="${PGSSLMODE:?PGSSLMODE is required}"
+db_ssl_server_name="${POSTGRES_SSL_SERVER_NAME:?POSTGRES_SSL_SERVER_NAME is required}"
+db_ssl_root_cert="${PGSSLROOTCERT:?PGSSLROOTCERT is required}"
 octopus_account="${POSTGRES_OCTOPUS_ACCOUNT:?POSTGRES_OCTOPUS_ACCOUNT is required}"
 search_account="${POSTGRES_ATHEROS_SEARCH_ACCOUNT:?POSTGRES_ATHEROS_SEARCH_ACCOUNT is required}"
 migrator_account="${POSTGRES_SCHEMA_MIGRATOR_ACCOUNT:?POSTGRES_SCHEMA_MIGRATOR_ACCOUNT is required}"
 keycloak_account="${POSTGRES_KEYCLOAK_ACCOUNT:?POSTGRES_KEYCLOAK_ACCOUNT is required}"
 
 [ "${db_name}" = "sync" ] || { echo "POSTGRES_DATABASE must be sync" >&2; exit 2; }
+[ "${db_ssl_mode}" = "verify-full" ] || { echo "PGSSLMODE must be verify-full" >&2; exit 2; }
+[ "${db_ssl_server_name}" = "${db_host}" ] || { echo "POSTGRES_SSL_SERVER_NAME must equal POSTGRES_HOST" >&2; exit 2; }
+[ -f "${db_ssl_root_cert}" ] || { echo "PGSSLROOTCERT must be a regular file" >&2; exit 2; }
 for account in "${octopus_account}" "${search_account}" "${migrator_account}" "${keycloak_account}"; do
   case "${account}" in *[!A-Za-z0-9_]*|'') echo "runtime role names contain invalid characters" >&2; exit 2;; esac
 done

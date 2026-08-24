@@ -37,6 +37,7 @@ images:
   newName: 192.168.1.242:5000/ssl-proxy
 patches:
 - path: patches/external-schema-executor.yaml
+- path: patches/pgbouncer-external-postgres.yaml
 - path: patches/identity-hostname.yaml
 - path: patches/proxy-replicas.yaml
 - path: patches/resources.yaml

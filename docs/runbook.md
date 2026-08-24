@@ -113,9 +113,9 @@ The platform and network owners perform the cutover in this order:
    endpoint for database `sync`, preserving backups and verified TLS. Do not
    deploy a database container from this repository.
 4. Through the platform prerequisite workflow, update the non-secret
-   `ssl-proxy-prod-postgres-endpoint` values, including `POSTGRES_HOST` and the JDBC
-   URL, to the approved endpoint with verified TLS. Do not patch the
-   ConfigMap interactively.
+   `ssl-proxy-prod-postgres-endpoint` host, port, database, TLS mode and TLS
+   server-name values to the approved endpoint. Do not patch the ConfigMap
+   interactively.
 5. Merge the reviewed repository address change to `main` and let Argo CD
    reconcile the digest-identical `.242:5000` image references. Require
    `ssl-proxy-prod-bootstrap`, `ssl-proxy-prod-data-plane` and
@@ -289,11 +289,11 @@ drift. Correct Git or the platform prerequisite and let Argo CD reconcile it.
 The current recovery incident is blocked by missing platform-owned Secrets,
 not by first-party publication. Republishing `$TAG` or `latest` cannot satisfy
 that contract. Have the platform declarative control plane run its atomic Vault
-KV-v2 sync for the contract, including PostgreSQL root/account passwords and Loki
-htpasswd preflight, then rerun `make stack-health`; do not create or patch the
-Secrets interactively. Existing pending pods recover through kubelet retries
-and Argo CD self-healing. Do not restart, patch or scale workloads to force
-reconciliation.
+KV-v2 sync for the contract, including the PostgreSQL owner/runtime accounts,
+CA bundle, PgBouncer user list and Loki htpasswd preflight, then rerun
+`make stack-health`; do not create or patch the Secrets interactively. Existing
+pending pods recover through kubelet retries and Argo CD self-healing. Do not
+restart, patch or scale workloads to force reconciliation.
 
 The production recovery report queries only object type and key names from the
 contract and suppresses every value. It reports a missing object or missing

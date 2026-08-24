@@ -39,8 +39,8 @@ In particular, `DATABASE_URL` and `SYNC_DATABASE_URL` are not fallbacks for
 |---|---|---|
 | `ATHSEARCH_POSTGRES_DSN` | None | Compatibility native PostgreSQL DSN; when absent, the discrete settings below are required |
 | `ATHSEARCH_POSTGRES_HOST` | None | Postgres host used to build the native DSN |
-| `ATHSEARCH_POSTGRES_PORT` | `4000` | Postgres SQL port |
-| `ATHSEARCH_POSTGRES_DATABASE` | `atheros_search` | Required canonical database |
+| `ATHSEARCH_POSTGRES_PORT` | `5432` | Postgres SQL port |
+| `ATHSEARCH_POSTGRES_DATABASE` | `sync` | Required canonical database |
 | `ATHSEARCH_POSTGRES_USER` | `atheros_search_runtime` | Dedicated non-root account |
 | `ATHSEARCH_POSTGRES_PASSWORD` | None | Required password when the compatibility DSN is absent |
 | `ATHSEARCH_POSTGRES_TLS_CA_FILE` | None | Optional PEM CA that enables verified TLS |

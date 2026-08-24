@@ -568,6 +568,130 @@ def _check_prod_keycloak_external_postgres(
                     f"{relative}: Keycloak {description} {variable} must come from "
                     f"ssl-proxy-prod-postgres-endpoint/{key}"
                 )
+        literal_environment = {
+            str(_mapping(entry).get("name")): _mapping(entry).get("value")
+            for entry in environment
+        }
+        if literal_environment.get("KC_DB_USERNAME") != "keycloak_runtime":
+            errors.append(
+                f"{relative}: Keycloak {description} must use keycloak_runtime"
+            )
+        properties = str(literal_environment.get("KC_DB_URL_PROPERTIES", ""))
+        for required_property in (
+            "sslmode=verify-full",
+            "sslrootcert=/var/run/postgres-tls/ca.crt",
+        ):
+            if required_property not in properties:
+                errors.append(
+                    f"{relative}: Keycloak {description} KC_DB_URL_PROPERTIES "
+                    f"must include {required_property}"
+                )
+        mounts = {
+            str(_mapping(mount).get("name")): _mapping(mount)
+            for mount in _list(matches[0].get("volumeMounts"))
+        }
+        postgres_ca_mount = mounts.get("postgres-ca", {})
+        if (
+            postgres_ca_mount.get("mountPath") != "/var/run/postgres-tls"
+            or postgres_ca_mount.get("readOnly") is not True
+        ):
+            errors.append(
+                f"{relative}: Keycloak {description} must mount postgres-ca read-only"
+            )
+    volumes = {
+        str(_mapping(volume).get("name")): _mapping(volume)
+        for volume in _list(pod_spec.get("volumes"))
+    }
+    postgres_ca_secret = _mapping(volumes.get("postgres-ca", {}).get("secret"))
+    if postgres_ca_secret.get("secretName") != "postgres-runtime-tls":
+        errors.append(
+            f"{relative}: Keycloak postgres-ca must use postgres-runtime-tls"
+        )
+    return errors
+
+
+def _check_prod_pgbouncer_external_postgres(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    documents = _documents(rendered)
+    deployments = _find(documents, "Deployment", "postgres-pgbouncer")
+    if len(deployments) != 1:
+        return [f"{relative}: expected one production PgBouncer Deployment"]
+    pod_spec = _mapping(_path(deployments[0], "spec", "template", "spec"))
+    init_containers = [
+        _mapping(container) for container in _list(pod_spec.get("initContainers"))
+    ]
+    renderers = [
+        container
+        for container in init_containers
+        if container.get("name") == "render-pgbouncer-config"
+    ]
+    errors: list[str] = []
+    if len(renderers) != 1:
+        return [f"{relative}: expected one PgBouncer config renderer"]
+    renderer = renderers[0]
+    expected = {
+        "POSTGRES_HOST": "POSTGRES_HOST",
+        "POSTGRES_PORT": "POSTGRES_PORT",
+        "POSTGRES_DATABASE": "POSTGRES_DATABASE",
+        "POSTGRES_SSL_MODE": "POSTGRES_SSL_MODE",
+        "POSTGRES_SSL_SERVER_NAME": "POSTGRES_SSL_SERVER_NAME",
+    }
+    environment = _list(renderer.get("env"))
+    for variable, key in expected.items():
+        entries = [
+            _mapping(entry)
+            for entry in environment
+            if _mapping(entry).get("name") == variable
+        ]
+        reference = (
+            _mapping(_path(entries[0], "valueFrom", "configMapKeyRef"))
+            if len(entries) == 1
+            else {}
+        )
+        if (
+            len(entries) != 1
+            or "value" in entries[0]
+            or reference.get("name") != "ssl-proxy-prod-postgres-endpoint"
+            or reference.get("key") != key
+        ):
+            errors.append(
+                f"{relative}: PgBouncer {variable} must come from "
+                f"ssl-proxy-prod-postgres-endpoint/{key}"
+            )
+    renderer_script = "\n".join(str(arg) for arg in _list(renderer.get("args")))
+    for required in (
+        "POSTGRES_SSL_MODE",
+        "verify-full",
+        "POSTGRES_SSL_SERVER_NAME",
+        "POSTGRES_HOST",
+    ):
+        if required not in renderer_script:
+            errors.append(
+                f"{relative}: PgBouncer config renderer must validate {required}"
+            )
+    if not re.search(r"busybox@sha256:[0-9a-f]{64}$", str(renderer.get("image", ""))):
+        errors.append(f"{relative}: PgBouncer config renderer must use a digest-pinned image")
+    volumes = {
+        str(_mapping(volume).get("name")): _mapping(volume)
+        for volume in _list(pod_spec.get("volumes"))
+    }
+    if "emptyDir" not in volumes.get("generated-config", {}):
+        errors.append(f"{relative}: PgBouncer generated-config must use an emptyDir")
+    expected_secrets = {
+        "users": "pgbouncer-runtime-users",
+        "upstream-tls": "postgres-runtime-tls",
+    }
+    for volume_name, secret_name in expected_secrets.items():
+        secret = _mapping(volumes.get(volume_name, {}).get("secret"))
+        if secret.get("secretName") != secret_name:
+            errors.append(
+                f"{relative}: PgBouncer {volume_name} must use {secret_name}"
+            )
+    if _find(documents, "ConfigMap", "postgres-pgbouncer-config"):
+        errors.append(
+            f"{relative}: PgBouncer must not route to a hard-coded ConfigMap name"
+        )
     return errors
 
 
@@ -1812,13 +1936,17 @@ def check_repository(root: Path, executable: str) -> list[str]:
 
     errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))
     environment_render_checks = {
-        "cyber-stack/matrix/prod/data-plane": (_check_prod_alloy_positions,),
+        "cyber-stack/matrix/prod/data-plane": (
+            _check_prod_alloy_positions,
+            _check_prod_pgbouncer_external_postgres,
+        ),
         "cyber-stack/matrix/prod/app-stack": (
             _check_prod_keycloak_external_postgres,
             _check_octopus_runtime,
         ),
         "cyber-stack/matrix/prod": (
             _check_prod_alloy_positions,
+            _check_prod_pgbouncer_external_postgres,
             _check_prod_keycloak_external_postgres,
             _check_octopus_runtime,
         ),

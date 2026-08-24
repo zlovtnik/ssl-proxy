@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"net/url"
 	"testing"
 	"time"
 
@@ -50,12 +51,22 @@ func TestLoadBuildsPasswordBasedPostgresConfigurationWithoutTLS(t *testing.T) {
 	t.Setenv("ATHSEARCH_POSTGRES_PORT", "5432")
 	t.Setenv("ATHSEARCH_POSTGRES_DATABASE", "sync")
 	t.Setenv("ATHSEARCH_POSTGRES_USER", "atheros_search_runtime")
-	t.Setenv("ATHSEARCH_POSTGRES_PASSWORD", "secret")
+	t.Setenv("ATHSEARCH_POSTGRES_PASSWORD", "p@ss:/ word")
 	t.Setenv("ATHSEARCH_POSTGRES_TLS_CA_FILE", "")
 	t.Setenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", "")
 
-	_, err := Load()
-	require.ErrorContains(t, err, "ATHSEARCH_POSTGRES_DSN is required")
+	cfg, err := Load()
+	require.NoError(t, err)
+	parsed, err := url.Parse(cfg.PostgresDSN)
+	require.NoError(t, err)
+	require.Equal(t, "postgres.example.test", parsed.Hostname())
+	require.Equal(t, "5432", parsed.Port())
+	require.Equal(t, "/sync", parsed.Path)
+	require.Equal(t, "atheros_search_runtime", parsed.User.Username())
+	password, present := parsed.User.Password()
+	require.True(t, present)
+	require.Equal(t, "p@ss:/ word", password)
+	require.Equal(t, "disable", parsed.Query().Get("sslmode"))
 }
 
 func TestLoadRejectsRemovedDatabaseURLsAndGenericFallbacks(t *testing.T) {
@@ -71,7 +82,7 @@ func TestLoadRejectsRemovedDatabaseURLsAndGenericFallbacks(t *testing.T) {
 	t.Setenv("ATHSEARCH_POSTGRES_DSN", "")
 	t.Setenv("DATABASE"+"_URL", "postgresql://search:secret@postgres.example.test:5432/sync")
 	_, err := Load()
-	require.ErrorContains(t, err, "ATHSEARCH_POSTGRES_DSN is required")
+	require.ErrorContains(t, err, "ATHSEARCH_POSTGRES_HOST is required")
 }
 
 func TestLoadAllowsDisabledTLSAndValidatesPartialTLSAndManifest(t *testing.T) {

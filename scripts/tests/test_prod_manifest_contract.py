@@ -52,6 +52,10 @@ spec:
               valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_HOST}}
             - name: KC_DB_URL_PORT
               valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_PORT}}
+            - {name: KC_DB_USERNAME, value: keycloak_runtime}
+            - {name: KC_DB_URL_PROPERTIES, value: "?currentSchema=keycloak&sslmode=verify-full&sslrootcert=/var/run/postgres-tls/ca.crt"}
+          volumeMounts:
+            - {name: postgres-ca, mountPath: /var/run/postgres-tls, readOnly: true}
       containers:
         - name: keycloak
           env:
@@ -59,6 +63,42 @@ spec:
               valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_HOST}}
             - name: KC_DB_URL_PORT
               valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_PORT}}
+            - {name: KC_DB_USERNAME, value: keycloak_runtime}
+            - {name: KC_DB_URL_PROPERTIES, value: "?currentSchema=keycloak&sslmode=verify-full&sslrootcert=/var/run/postgres-tls/ca.crt"}
+          volumeMounts:
+            - {name: postgres-ca, mountPath: /var/run/postgres-tls, readOnly: true}
+      volumes:
+        - name: postgres-ca
+          secret: {secretName: postgres-runtime-tls}
+"""
+    )
+
+
+def pgbouncer() -> list[dict[str, object]]:
+    return documents(
+        """apiVersion: apps/v1
+kind: Deployment
+metadata: {name: postgres-pgbouncer}
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: render-pgbouncer-config
+          image: busybox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          args:
+            - POSTGRES_SSL_MODE verify-full POSTGRES_SSL_SERVER_NAME POSTGRES_HOST
+          env:
+            - {name: POSTGRES_HOST, valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_HOST}}}
+            - {name: POSTGRES_PORT, valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_PORT}}}
+            - {name: POSTGRES_DATABASE, valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_DATABASE}}}
+            - {name: POSTGRES_SSL_MODE, valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_SSL_MODE}}}
+            - {name: POSTGRES_SSL_SERVER_NAME, valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_SSL_SERVER_NAME}}}
+      containers:
+        - name: pgbouncer
+      volumes:
+        - {name: generated-config, emptyDir: {}}
+        - {name: users, secret: {secretName: pgbouncer-runtime-users}}
+        - {name: upstream-tls, secret: {secretName: postgres-runtime-tls}}
 """
     )
 
@@ -120,6 +160,18 @@ class ProductionManifestContractTest(unittest.TestCase):
         entry["value"] = "ssl-proxy-postgres"
         errors = check_gitops._check_prod_keycloak_external_postgres(rendered, "prod")
         self.assertTrue(any("bootstrap-admin-service" in error for error in errors))
+
+    def test_pgbouncer_routes_to_the_external_postgres_contract(self) -> None:
+        rendered = pgbouncer()
+        self.assertEqual(
+            [],
+            check_gitops._check_prod_pgbouncer_external_postgres(rendered, "prod"),
+        )
+
+        renderer = rendered[0]["spec"]["template"]["spec"]["initContainers"][0]
+        renderer["env"][0]["valueFrom"]["configMapKeyRef"]["name"] = "wrong-endpoint"
+        errors = check_gitops._check_prod_pgbouncer_external_postgres(rendered, "prod")
+        self.assertTrue(any("POSTGRES_HOST" in error for error in errors))
 
     def test_keycloak_bootstrap_runs_after_home_preparation(self) -> None:
         rendered = keycloak()

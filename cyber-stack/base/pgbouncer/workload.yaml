@@ -1,26 +1,3 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: postgres-pgbouncer-config
-  namespace: ssl-proxy
-data:
-  pgbouncer.ini: |
-    [databases]
-    sync = host=ssl-proxy-prod-postgres-endpoint port=5432 dbname=sync
-    [pgbouncer]
-    listen_addr = 0.0.0.0
-    listen_port = 5432
-    auth_type = scram-sha-256
-    auth_file = /etc/pgbouncer/users/userlist.txt
-    pool_mode = transaction
-    max_client_conn = 400
-    default_pool_size = 40
-    reserve_pool_size = 10
-    server_tls_sslmode = verify-full
-    server_tls_ca_file = /etc/pgbouncer/upstream/ca.crt
-    client_tls_sslmode = disable
-    ignore_startup_parameters = extra_float_digits
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,8 +18,74 @@ spec:
     spec:
       automountServiceAccountToken: false
       securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: render-pgbouncer-config
+          image: busybox@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+          command: ["/bin/sh", "-ceu"]
+          args:
+            - |
+              case "${POSTGRES_HOST}" in
+                ""|*[!A-Za-z0-9._-]*) exit 2 ;;
+              esac
+              case "${POSTGRES_PORT}" in
+                ""|*[!0-9]*) exit 2 ;;
+              esac
+              [ "${POSTGRES_PORT}" -ge 1 ] && [ "${POSTGRES_PORT}" -le 65535 ] || exit 2
+              [ "${POSTGRES_DATABASE}" = "sync" ] || exit 2
+              [ "${POSTGRES_SSL_MODE}" = "verify-full" ] || exit 2
+              [ "${POSTGRES_SSL_SERVER_NAME}" = "${POSTGRES_HOST}" ] || exit 2
+              {
+                printf '%s\n' '[databases]'
+                printf 'sync = host=%s port=%s dbname=%s\n' \
+                  "${POSTGRES_HOST}" "${POSTGRES_PORT}" "${POSTGRES_DATABASE}"
+                printf '%s\n' \
+                  '[pgbouncer]' \
+                  'listen_addr = 0.0.0.0' \
+                  'listen_port = 5432' \
+                  'auth_type = scram-sha-256' \
+                  'auth_file = /etc/pgbouncer/users/userlist.txt' \
+                  'pool_mode = transaction' \
+                  'max_client_conn = 400' \
+                  'default_pool_size = 40' \
+                  'reserve_pool_size = 10' \
+                  'server_tls_sslmode = verify-full' \
+                  'server_tls_ca_file = /etc/pgbouncer/upstream/ca.crt' \
+                  'client_tls_sslmode = disable' \
+                  'ignore_startup_parameters = extra_float_digits'
+              } > /generated/pgbouncer.ini
+          env:
+            - name: POSTGRES_HOST
+              value: "postgres.example.invalid"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DATABASE
+              value: "sync"
+            - name: POSTGRES_SSL_MODE
+              value: "verify-full"
+            - name: POSTGRES_SSL_SERVER_NAME
+              value: "postgres.example.invalid"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+          volumeMounts:
+            - name: generated-config
+              mountPath: /generated
       containers:
         - name: pgbouncer
           image: edoburu/pgbouncer@sha256:3db3d7223e93af52b4116f642951a1a5fa44702a88c2a59cf7562cac19320c9e
@@ -72,7 +115,7 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
           volumeMounts:
-            - name: config
+            - name: generated-config
               mountPath: /etc/pgbouncer/pgbouncer.ini
               subPath: pgbouncer.ini
               readOnly: true
@@ -85,9 +128,9 @@ spec:
             - name: run
               mountPath: /var/run/pgbouncer
       volumes:
-        - name: config
-          configMap:
-            name: postgres-pgbouncer-config
+        - name: generated-config
+          emptyDir:
+            sizeLimit: 1Mi
         - name: users
           secret:
             secretName: pgbouncer-runtime-users

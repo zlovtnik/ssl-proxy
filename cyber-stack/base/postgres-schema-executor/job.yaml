@@ -61,6 +61,8 @@ spec:
               value: "keycloak_runtime"
             - name: PGSSLMODE
               value: "verify-full"
+            - name: POSTGRES_SSL_SERVER_NAME
+              value: "ssl-proxy-prod-postgres-endpoint"
             - name: PGSSLROOTCERT
               value: "/var/run/postgres-tls/ca.crt"
           volumeMounts:

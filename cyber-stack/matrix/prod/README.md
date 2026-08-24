@@ -24,7 +24,9 @@ patch these Kubernetes objects interactively.
 The schema executor and Keycloak use the direct endpoint. Octopus, Atheros
 Search, and schema-migrator use the in-cluster PgBouncer service. The schema
 executor must complete and record matching manifest checksums before the
-database-dependent workloads become ready.
+database-dependent workloads become ready. PgBouncer renders its upstream from
+all five endpoint ConfigMap keys and refuses to start unless the TLS mode is
+`verify-full` and the certificate server name equals the connection host.
 
 Octopus runs with both runtime lanes, archival, and all 26 Octopus-owned
 processors enabled. The bundled Redpanda StatefulSet is a single broker and
