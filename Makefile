@@ -39,7 +39,7 @@ BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: build build-all publish publish-all kube-context-check production-gate stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry octopus-source-integrity check-java-coordinator-image docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all kube-context-check recover-stack production-gate stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry octopus-source-integrity check-java-coordinator-image docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 
@@ -83,6 +83,14 @@ kube-context-check:
 	$(KUBECTL) --context "$$context" version --request-timeout=5s -o json >/dev/null; \
 	printf 'Kubernetes context: %s (%s)\nKubernetes API:     %s\n' "$$context" "$$source" "$$server"
 
+recover-stack: kube-context-check
+	python3 scripts/recover_stack.py \
+		--environment "$(ENV)" \
+		--kubectl "$(KUBECTL)" \
+		--kube-context "$(KUBE_CONTEXT)" \
+		--kustomize "$(KUSTOMIZE)" \
+		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)"
+
 production-gate:
 	@test -n "$(PRODUCTION_GATE_REVISION)" || { echo "PRODUCTION_GATE_REVISION is required" >&2; exit 2; }
 	python3 scripts/production_gate.py \
@@ -117,7 +125,7 @@ argocd-wait: argocd-server-health
 			application/$$application --timeout="$(ARGOCD_TIMEOUT)"; \
 	done
 
-stack-health: gitops-check argocd-status argocd-wait
+stack-health: gitops-check argocd-status recover-stack argocd-wait
 
 # Read-only image inventory for CI fan-out. Keep build-all for local loaded-image workflows.
 ci-publish-services:
