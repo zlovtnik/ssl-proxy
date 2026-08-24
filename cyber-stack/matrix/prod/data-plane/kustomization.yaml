@@ -23,11 +23,11 @@ images:
   name: grafana/loki
 - digest: sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
   name: otel/opentelemetry-collector-contrib
-- digest: sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
-  name: prom/prometheus
-- digest: sha256:895c4db2cc5e2ab6632da43bd95913f53f06f4640f6fb175a033698c22cd1057
+- digest: sha256:dd1441e50f4972f0223c71bd557ae587057beff232988eb05e8c9308aa2eb4ce
   name: postgres-runtime-schema
   newName: 192.168.1.242:5000/postgres-runtime-schema
+- digest: sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
+  name: prom/prometheus
 patches:
 - path: ../patches/external-schema-executor.yaml
 - path: ../patches/alloy-positions.yaml

@@ -23,7 +23,7 @@ images:
 - digest: sha256:064289fdc13a8407ae939ea653a8474bb3dae27459340dd779c9be514429036a
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
-- digest: sha256:895c4db2cc5e2ab6632da43bd95913f53f06f4640f6fb175a033698c22cd1057
+- digest: sha256:dd1441e50f4972f0223c71bd557ae587057beff232988eb05e8c9308aa2eb4ce
   name: postgres-runtime-schema
   newName: 192.168.1.242:5000/postgres-runtime-schema
 - digest: sha256:9eda68bc458ae4532d00e4c6ec7fa1014f0f192862c3e1c3e70160dd258f33ba
