@@ -72,7 +72,7 @@ must remain untracked.
 
 The platform-owned Vault sync workflow must read every logical path under
 `secret/ssl-proxy/prod` declared by the contract. Before writing anything, it
-validates that all 16 Secrets and the PostgreSQL endpoint ConfigMap have every
+validates that all 17 Secrets and the PostgreSQL endpoint ConfigMap have every
 declared key. It must not log values, and its Kubernetes writer identity is
 external to application workloads.
 

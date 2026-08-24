@@ -98,6 +98,12 @@ class RegistryTags:
 RegistryResolver = Callable[[ImageContract, bool], RegistryTags]
 
 
+@dataclass(frozen=True)
+class PodOwnership:
+    managed: bool
+    detail: str
+
+
 def _subprocess_runner(command: Sequence[str], repository_root: Path) -> CommandResult:
     result = subprocess.run(
         command,
@@ -508,6 +514,87 @@ def _pod_health(pod: Mapping[str, Any]) -> tuple[str, str]:
     return "UNHEALTHY", f"phase={phase} ready={ready}"
 
 
+def _controller_owner(document: Mapping[str, Any]) -> tuple[str, str] | None:
+    metadata = _mapping(document.get("metadata"))
+    for owner in _list(metadata.get("ownerReferences")):
+        if not isinstance(owner, Mapping) or owner.get("controller") is not True:
+            continue
+        kind = owner.get("kind")
+        name = owner.get("name")
+        if isinstance(kind, str) and isinstance(name, str):
+            return kind, name
+    return None
+
+
+def _deployment_revision(document: Mapping[str, Any]) -> str | None:
+    metadata = _mapping(document.get("metadata"))
+    annotations = _mapping(metadata.get("annotations"))
+    revision = annotations.get("deployment.kubernetes.io/revision")
+    return revision if isinstance(revision, str) and revision else None
+
+
+def _pod_ownership(
+    pod: Mapping[str, Any],
+    desired_workload_keys: set[tuple[str, str]],
+    live_workloads: Mapping[tuple[str, str], Mapping[str, Any]],
+    replica_sets: Mapping[str, Mapping[str, Any]],
+) -> PodOwnership:
+    owner = _controller_owner(pod)
+    if owner is None:
+        return PodOwnership(False, "informational unmanaged pod (no controller)")
+
+    kind, name = owner
+    if kind == "ReplicaSet":
+        replica_set = replica_sets.get(name)
+        if replica_set is None:
+            return PodOwnership(
+                False,
+                f"informational unmanaged pod (ReplicaSet/{name} is absent)",
+            )
+        deployment_owner = _controller_owner(replica_set)
+        if deployment_owner is None or deployment_owner[0] != "Deployment":
+            return PodOwnership(
+                False,
+                f"informational unmanaged pod (ReplicaSet/{name} has no Deployment owner)",
+            )
+        if deployment_owner not in desired_workload_keys:
+            return PodOwnership(
+                False,
+                f"informational unmanaged pod (Deployment/{deployment_owner[1]} is not desired)",
+            )
+
+        deployment = live_workloads.get(deployment_owner)
+        replica_set_revision = _deployment_revision(replica_set)
+        deployment_revision = (
+            _deployment_revision(deployment) if deployment is not None else None
+        )
+        if (
+            replica_set_revision is not None
+            and deployment_revision is not None
+            and replica_set_revision != deployment_revision
+        ):
+            return PodOwnership(
+                False,
+                f"informational stale ReplicaSet/{name} for "
+                f"Deployment/{deployment_owner[1]}",
+            )
+        return PodOwnership(
+            True,
+            f"managed by Deployment/{deployment_owner[1]} via ReplicaSet/{name}",
+        )
+
+    workload_key = (kind, name)
+    if (
+        kind in {"StatefulSet", "DaemonSet", "Job"}
+        and workload_key in desired_workload_keys
+    ):
+        return PodOwnership(True, f"managed by {kind}/{name}")
+    return PodOwnership(
+        False,
+        f"informational unmanaged pod ({kind}/{name} is not desired)",
+    )
+
+
 class RecoveryReporter:
     def __init__(
         self,
@@ -916,7 +1003,10 @@ class RecoveryReporter:
             "--namespace",
             namespace,
             "get",
-            "deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch",
+            (
+                "deployments.apps,statefulsets.apps,daemonsets.apps,"
+                "replicasets.apps,jobs.batch"
+            ),
             "-o",
             "json",
         )
@@ -924,10 +1014,20 @@ class RecoveryReporter:
         if workloads_document is None:
             self.lines.append(f"  UNKNOWN: {_short_error(workloads_result)}")
             return
-        live_workloads = {
-            (str(item.get("kind")), str(_mapping(item.get("metadata")).get("name"))): item
+        workload_items = [
+            item
             for item in _list(workloads_document.get("items"))
             if isinstance(item, Mapping)
+        ]
+        live_workloads = {
+            (str(item.get("kind")), str(_mapping(item.get("metadata")).get("name"))): item
+            for item in workload_items
+            if item.get("kind") != "ReplicaSet"
+        }
+        replica_sets = {
+            str(_mapping(item.get("metadata")).get("name")): item
+            for item in workload_items
+            if item.get("kind") == "ReplicaSet"
         }
         desired_workload_keys = {image.workload_key for image in desired_images}
         for key in sorted(live_workloads):
@@ -988,8 +1088,13 @@ class RecoveryReporter:
         ):
             pod_name = str(_mapping(pod.get("metadata")).get("name", "<unnamed>"))
             health, detail = _pod_health(pod)
-            self.lines.append(f"  Pod/{pod_name}: {health} ({detail})")
-            if health == "UNHEALTHY":
+            ownership = _pod_ownership(
+                pod, desired_workload_keys, live_workloads, replica_sets
+            )
+            self.lines.append(
+                f"  Pod/{pod_name}: {health} ({detail}; {ownership.detail})"
+            )
+            if ownership.managed and health == "UNHEALTHY":
                 self._block(f"pod is unhealthy: {namespace}/{pod_name}")
             spec = _mapping(pod.get("spec"))
             status = _mapping(pod.get("status"))
@@ -1012,7 +1117,7 @@ class RecoveryReporter:
                         f"    {container_type}/{name}: live={reference} imageID={runtime_id}"
                     )
                     contract = contracts_by_repository.get(_image_repository(reference))
-                    if contract is None:
+                    if contract is None or not ownership.managed:
                         continue
                     if reference != contract.reference:
                         self._block(
@@ -1147,4 +1252,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
