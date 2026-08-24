@@ -23,18 +23,18 @@ images:
 - digest: sha256:10b8ebc97288e7a3ffaf99ac03187846c87e45824201d9f010145a04e127a71b
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
+- digest: sha256:895c4db2cc5e2ab6632da43bd95913f53f06f4640f6fb175a033698c22cd1057
+  name: postgres-runtime-schema
+  newName: 192.168.1.242:5000/postgres-runtime-schema
 - digest: sha256:b3a21ef09de93a96f4707860c5612ac9fcb1a17390ba16fa38e5ae1dc2aae69e
   name: schema-migrator-backend
   newName: 192.168.1.242:5000/schema-migrator-backend
 - digest: sha256:1dc8ff2dd1868dfc2c98997ca5b538f0ddc39088ac18b6f24f96ed70f3b87443
   name: schema-migrator-ui
   newName: 192.168.1.242:5000/schema-migrator-ui
-- digest: sha256:013efb1408dc85a50b6021efa80520d596df564ed7dfa1a769961116fe49ef44
+- digest: sha256:a8b00eea911c67a4b4da509bd3516bcb0478c01eebeb4c9e24b08d9e2faa6797
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
-- digest: sha256:895c4db2cc5e2ab6632da43bd95913f53f06f4640f6fb175a033698c22cd1057
-  name: postgres-runtime-schema
-  newName: 192.168.1.242:5000/postgres-runtime-schema
 patches:
 - path: patches/external-schema-executor.yaml
 - path: patches/identity-hostname.yaml
