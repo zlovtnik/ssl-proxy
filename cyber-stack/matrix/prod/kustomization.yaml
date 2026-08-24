@@ -26,7 +26,7 @@ images:
 - digest: sha256:895c4db2cc5e2ab6632da43bd95913f53f06f4640f6fb175a033698c22cd1057
   name: postgres-runtime-schema
   newName: 192.168.1.242:5000/postgres-runtime-schema
-- digest: sha256:b3a21ef09de93a96f4707860c5612ac9fcb1a17390ba16fa38e5ae1dc2aae69e
+- digest: sha256:9eda68bc458ae4532d00e4c6ec7fa1014f0f192862c3e1c3e70160dd258f33ba
   name: schema-migrator-backend
   newName: 192.168.1.242:5000/schema-migrator-backend
 - digest: sha256:1dc8ff2dd1868dfc2c98997ca5b538f0ddc39088ac18b6f24f96ed70f3b87443
