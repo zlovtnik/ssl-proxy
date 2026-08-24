@@ -11,7 +11,7 @@ configMapGenerator:
   name: ssl-proxy-telemetry-prometheus-catalog
   namespace: ssl-proxy
 images:
-- digest: sha256:bba2c9804f486d884826e95fbb8172c4dae9339b82799dea992d21cffc606fd4
+- digest: sha256:f906fa5b5b15f41734621b4aa1a8c5acdf457023dc5891115bbbead5b1bd7864
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
 - digest: sha256:1136de277d1fdaa33f07fff09e6b15c348b1faa5959a7ef3c9707dcff4513b0f
