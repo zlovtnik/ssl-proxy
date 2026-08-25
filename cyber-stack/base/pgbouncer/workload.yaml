@@ -5,6 +5,10 @@ metadata:
   namespace: ssl-proxy
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: postgres-pgbouncer
+    app.kubernetes.io/component: pgbouncer
+    app.kubernetes.io/managed-by: kustomize
 spec:
   replicas: 2
   selector:
@@ -14,8 +18,10 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: postgres-pgbouncer
+        app.kubernetes.io/component: pgbouncer
         app.kubernetes.io/instance: ssl-proxy
     spec:
+      serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
       securityContext:
         fsGroup: 65532
@@ -25,6 +31,7 @@ spec:
       initContainers:
         - name: render-pgbouncer-config
           image: busybox@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+          imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-ceu"]
           args:
             - |
@@ -89,6 +96,7 @@ spec:
       containers:
         - name: pgbouncer
           image: edoburu/pgbouncer@sha256:3db3d7223e93af52b4116f642951a1a5fa44702a88c2a59cf7562cac19320c9e
+          imagePullPolicy: IfNotPresent
           ports:
             - name: postgres
               containerPort: 5432
@@ -148,6 +156,10 @@ kind: Service
 metadata:
   name: postgres-pgbouncer
   namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: postgres-pgbouncer
+    app.kubernetes.io/component: pgbouncer
+    app.kubernetes.io/managed-by: kustomize
 spec:
   selector:
     app.kubernetes.io/name: postgres-pgbouncer

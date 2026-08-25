@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: ssl-proxy
 resources:
   - deployment.yaml
+  - networkpolicy.yaml
 configMapGenerator:
   - name: ssl-proxy-atheros-search-ui-nginx
     files:

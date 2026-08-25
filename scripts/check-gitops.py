@@ -127,6 +127,26 @@ OBSERVABILITY_CATALOG_SERVICES = {
     "registry",
 }
 
+STANDARD_LABEL_KEYS = (
+    "app.kubernetes.io/name",
+    "app.kubernetes.io/component",
+    "app.kubernetes.io/managed-by",
+)
+
+STANDARD_LABELED_KINDS = {
+    "ConfigMap",
+    "DaemonSet",
+    "Deployment",
+    "Job",
+    "NetworkPolicy",
+    "PersistentVolumeClaim",
+    "Role",
+    "RoleBinding",
+    "Service",
+    "ServiceAccount",
+    "StatefulSet",
+}
+
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
@@ -869,6 +889,72 @@ def _check_environment_identity_hostnames(rendered: Mapping[str, Documents | str
     return errors
 
 
+def _check_standard_labels(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    errors: list[str] = []
+    for document in _documents(rendered):
+        kind = str(document.get("kind", ""))
+        if kind not in STANDARD_LABELED_KINDS:
+            continue
+        name = str(_metadata(document).get("name", "<unnamed>"))
+        if kind == "ConfigMap" and re.search(r"-[a-z0-9]{10}$", name):
+            # Generated ConfigMaps are content-addressed implementation details.
+            # Their owning workloads and handwritten ConfigMaps remain enforced.
+            continue
+        labels = _mapping(_metadata(document).get("labels"))
+        missing = [key for key in STANDARD_LABEL_KEYS if key not in labels]
+        if missing:
+            errors.append(
+                f"{relative}: {kind}/{name} is missing standard labels: "
+                + ", ".join(missing)
+            )
+    return errors
+
+
+def _check_ingress_policy_coverage(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    documents = _documents(rendered)
+    errors: list[str] = []
+    selectors: list[Mapping[str, Any]] = []
+    has_default_deny = False
+    for document in documents:
+        if document.get("kind") != "NetworkPolicy":
+            continue
+        spec = _mapping(document.get("spec"))
+        policy_types = {str(value) for value in _list(spec.get("policyTypes"))}
+        if "Ingress" not in policy_types:
+            continue
+        pod_selector = spec.get("podSelector")
+        selector = _mapping(_path(spec, "podSelector", "matchLabels"))
+        if selector:
+            selectors.append(selector)
+        elif (
+            isinstance(pod_selector, Mapping)
+            and not selector
+            and not _list(pod_selector.get("matchExpressions"))
+            and ("ingress" not in spec or spec.get("ingress") == [])
+        ):
+            has_default_deny = True
+
+    for document in documents:
+        if document.get("kind") not in {"DaemonSet", "Deployment", "Job", "StatefulSet"}:
+            continue
+        labels = _mapping(_path(document, "spec", "template", "metadata", "labels"))
+        if not any(
+            all(labels.get(key) == value for key, value in selector.items())
+            for selector in selectors
+        ):
+            errors.append(
+                f"{relative}: {document.get('kind')}/{_metadata(document).get('name')} "
+                "has no explicit ingress NetworkPolicy"
+            )
+    if relative == "cyber-stack/matrix/prod" and not has_default_deny:
+        errors.append(f"{relative}: namespace ingress default-deny policy is missing")
+    return errors
+
+
 def _check_traefik_redirect(rendered: Documents | str, relative: str) -> list[str]:
     if any("entrypoints.web.http.redirections.entrypoint.port" in value for value in _strings(_documents(rendered))):
         return [f"{relative}: Traefik entrypoint.port is not a supported redirection field"]
@@ -1227,6 +1313,32 @@ def _workload_pod_specs(documents: Iterable[Document]) -> Iterable[Mapping[str, 
             )
         elif kind in {"DaemonSet", "Deployment", "Job", "ReplicaSet", "StatefulSet"}:
             yield _mapping(_path(document, "spec", "template", "spec"))
+
+
+def _check_immutable_image_pulls(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    errors: list[str] = []
+    for pod_spec in _workload_pod_specs(_documents(rendered)):
+        containers = (
+            _list(pod_spec.get("initContainers"))
+            + _list(pod_spec.get("containers"))
+            + _list(pod_spec.get("ephemeralContainers"))
+        )
+        for container in containers:
+            definition = _mapping(container)
+            name = str(definition.get("name", "<unnamed>"))
+            image = str(definition.get("image", ""))
+            if re.search(r"@sha256:[0-9a-f]{64}$", image) is None:
+                errors.append(
+                    f"{relative}: container {name} image is not digest pinned: {image}"
+                )
+            if definition.get("imagePullPolicy") != "IfNotPresent":
+                errors.append(
+                    f"{relative}: digest-pinned container {name} must use "
+                    "imagePullPolicy IfNotPresent"
+                )
+    return errors
 
 
 def _workloads_source_secret_key(
@@ -1928,6 +2040,9 @@ def check_repository(root: Path, executable: str) -> list[str]:
         if relative.startswith("cyber-stack/matrix/"):
             errors.extend(_check_phase_one_workload_edge(documents, relative))
             errors.extend(_check_traefik_observability(documents, relative))
+            errors.extend(_check_standard_labels(documents, relative))
+            errors.extend(_check_immutable_image_pulls(documents, relative))
+            errors.extend(_check_ingress_policy_coverage(documents, relative))
         if relative in {
             "cyber-stack/matrix/prod",
             "cyber-stack/matrix/prod/data-plane",

@@ -1,0 +1,76 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-redpanda
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: redpanda
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: redpanda
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ssl-proxy
+              app.kubernetes.io/component: redpanda
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 33145
+        - protocol: TCP
+          port: 9644
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: proxy
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: java-coordinator
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: atheros-sensor
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: redpanda-init
+      ports:
+        - protocol: TCP
+          port: 9092
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: telemetry-prometheus
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: telemetry-blackbox-exporter
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: redpanda-init
+      ports:
+        - protocol: TCP
+          port: 9644
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-redpanda-init
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: redpanda-init
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: redpanda-init
+  policyTypes:
+    - Ingress
+  ingress: []

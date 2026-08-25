@@ -9,6 +9,7 @@ resources:
   - configmaps.yaml
   - bootstrap-job.yaml
   - validate-job.yaml
+  - networkpolicy.yaml
 configMapGenerator:
   - name: ssl-proxy-schema-migrator-ui-config
     behavior: create

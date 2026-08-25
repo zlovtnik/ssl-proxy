@@ -9,5 +9,6 @@ spec:
       containers:
         - name: java-coordinator
           env:
+            # Single-broker production requires RF=1; raise this with broker count.
             - name: SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR
               value: "1"

@@ -118,6 +118,7 @@ metadata:
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: telemetry-jaeger
+    app.kubernetes.io/managed-by: kustomize
 spec:
   selector:
     app.kubernetes.io/name: ssl-proxy
@@ -134,6 +135,10 @@ kind: NetworkPolicy
 metadata:
   name: ssl-proxy-telemetry-jaeger
   namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-jaeger
+    app.kubernetes.io/managed-by: kustomize
 spec:
   podSelector:
     matchLabels:

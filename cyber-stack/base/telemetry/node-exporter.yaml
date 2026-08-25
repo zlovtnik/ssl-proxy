@@ -26,8 +26,8 @@ spec:
         - operator: Exists
       containers:
         - name: node-exporter
-          image: prom/node-exporter:v1.8.2
-          imagePullPolicy: Always
+          image: prom/node-exporter:v1.8.2@sha256:4032c6d5bfd752342c3e631c2f1de93ba6b86c41db6b167b9a35372c139e7706
+          imagePullPolicy: IfNotPresent
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
@@ -127,6 +127,10 @@ kind: NetworkPolicy
 metadata:
   name: ssl-proxy-telemetry-node-exporter
   namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-node-exporter
+    app.kubernetes.io/managed-by: kustomize
 spec:
   podSelector:
     matchLabels:

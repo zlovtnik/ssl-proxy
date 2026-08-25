@@ -25,8 +25,8 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: otel-collector
-          image: otel/opentelemetry-collector-contrib:0.120.0
-          imagePullPolicy: Always
+          image: otel/opentelemetry-collector-contrib:0.120.0@sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
+          imagePullPolicy: IfNotPresent
           args:
             - "--config=/etc/otelcol/config.yaml"
           env:
@@ -117,6 +117,10 @@ kind: NetworkPolicy
 metadata:
   name: ssl-proxy-telemetry-otel-collector
   namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-otel-collector
+    app.kubernetes.io/managed-by: kustomize
 spec:
   podSelector:
     matchLabels:

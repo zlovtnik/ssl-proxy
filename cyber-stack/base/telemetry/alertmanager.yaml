@@ -6,6 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: telemetry-alertmanager
+    app.kubernetes.io/managed-by: kustomize
 spec:
   serviceName: ssl-proxy-telemetry-alertmanager
   replicas: 1
@@ -28,7 +29,8 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: alertmanager
-          image: prom/alertmanager:v0.32.1
+          image: prom/alertmanager:v0.32.1@sha256:51a825c2a40acc3e338fdd00d622e01ec090f72be2b3ea46be0839cd47a4d286
+          imagePullPolicy: IfNotPresent
           args:
             - "--config.file=/etc/alertmanager/alertmanager.yml"
             - "--storage.path=/alertmanager"
@@ -67,6 +69,10 @@ kind: PersistentVolumeClaim
 metadata:
   name: ssl-proxy-telemetry-alertmanager
   namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-alertmanager
+    app.kubernetes.io/managed-by: kustomize
 spec:
   accessModes: [ReadWriteOnce]
   resources:
@@ -77,6 +83,10 @@ kind: Service
 metadata:
   name: ssl-proxy-telemetry-alertmanager
   namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-alertmanager
+    app.kubernetes.io/managed-by: kustomize
 spec:
   selector:
     app.kubernetes.io/name: ssl-proxy
@@ -89,6 +99,10 @@ kind: NetworkPolicy
 metadata:
   name: ssl-proxy-telemetry-alertmanager
   namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-alertmanager
+    app.kubernetes.io/managed-by: kustomize
 spec:
   podSelector:
     matchLabels:

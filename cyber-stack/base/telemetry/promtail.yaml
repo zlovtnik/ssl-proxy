@@ -31,7 +31,7 @@ spec:
         - operator: Exists
       containers:
         - name: alloy
-          image: grafana/alloy:v1.9.2
+          image: grafana/alloy:v1.9.2@sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
           imagePullPolicy: IfNotPresent
           args:
             - "run"
@@ -126,6 +126,7 @@ metadata:
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: telemetry-alloy
+    app.kubernetes.io/managed-by: kustomize
 spec:
   clusterIP: None
   selector:
@@ -139,6 +140,10 @@ kind: NetworkPolicy
 metadata:
   name: ssl-proxy-telemetry-alloy
   namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-alloy
+    app.kubernetes.io/managed-by: kustomize
 spec:
   podSelector:
     matchLabels:

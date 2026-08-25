@@ -71,6 +71,67 @@ images:
 
 
 class RenderedWorkloadPolicyTest(unittest.TestCase):
+    def test_standard_labels_are_required_on_handwritten_resources(self) -> None:
+        rendered = documents(
+            """kind: Service
+metadata:
+  name: ssl-proxy-example
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+"""
+        )
+        errors = check_gitops._check_standard_labels(rendered, "test")
+        self.assertEqual(1, len(errors))
+        self.assertIn("app.kubernetes.io/component", errors[0])
+        self.assertIn("app.kubernetes.io/managed-by", errors[0])
+
+    def test_standard_labels_ignore_generated_config_maps(self) -> None:
+        rendered = documents(
+            "kind: ConfigMap\nmetadata:\n  name: ssl-proxy-config-123456789a\n"
+        )
+        self.assertEqual([], check_gitops._check_standard_labels(rendered, "test"))
+
+    def test_production_images_require_digests_and_cached_pull_policy(self) -> None:
+        bad = documents(
+            workload(
+                "example",
+                containers="[{name: app, image: example:v1, imagePullPolicy: Always}]",
+            )
+        )
+        self.assertEqual(2, len(check_gitops._check_immutable_image_pulls(bad, "test")))
+        good = documents(
+            workload(
+                "example",
+                containers="[{name: app, image: 'example:v1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', imagePullPolicy: IfNotPresent}]",
+            )
+        )
+        self.assertEqual([], check_gitops._check_immutable_image_pulls(good, "test"))
+
+    def test_ingress_policy_coverage_requires_matching_workload_selector(self) -> None:
+        deployment = """apiVersion: apps/v1
+kind: Deployment
+metadata: {name: example}
+spec:
+  template:
+    metadata:
+      labels: {app: test}
+    spec:
+      containers: []
+"""
+        rendered = documents(
+            deployment
+            + "---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\n"
+            "metadata: {name: example}\nspec:\n  podSelector:\n"
+            "    matchLabels: {app: test}\n  policyTypes: [Ingress]\n  ingress: []\n"
+        )
+        self.assertEqual(
+            [], check_gitops._check_ingress_policy_coverage(rendered, "test")
+        )
+        self.assertEqual(
+            1,
+            len(check_gitops._check_ingress_policy_coverage(documents(deployment), "test")),
+        )
+
     def test_otel_endpoint_rejects_any_structured_string(self) -> None:
         rendered = documents("kind: ConfigMap\ndata:\n  endpoint: http://ssl-proxy-otel-collector:4317\n")
         self.assertEqual(1, len(check_gitops._check_otel_endpoint(rendered, "test")))

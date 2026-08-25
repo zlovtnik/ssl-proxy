@@ -39,8 +39,12 @@ patches:
 - path: patches/external-schema-executor.yaml
 - path: patches/pgbouncer-external-postgres.yaml
 - path: patches/identity-hostname.yaml
-- path: patches/proxy-replicas.yaml
-- path: patches/resources.yaml
+- path: patches/schema-migrator-identity.yaml
+- path: patches/proxy.yaml
+- path: patches/java-coordinator.yaml
+- path: patches/atheros-search.yaml
+- path: patches/atheros-sensor.yaml
+- path: patches/schema-migrator-images.yaml
 - path: patches/jaeger-recovery.yaml
 - path: patches/alloy-positions.yaml
 - path: patches/octopus-runtime.yaml
@@ -52,3 +56,17 @@ patches:
   target:
     kind: Job
     name: ssl-proxy-postgres-schema-executor
+replacements:
+- source:
+    kind: ConfigMap
+    name: ssl-proxy-platform-config
+    fieldPath: data.IDENTITY_PUBLIC_ORIGIN
+  targets:
+  - select:
+      kind: Deployment
+      name: ssl-proxy-schema-migrator-keycloak
+    fieldPaths:
+    - spec.template.spec.containers.[name=keycloak].args.2
+    options:
+      delimiter: "="
+      index: 1

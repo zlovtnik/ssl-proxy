@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: prod-ssl-proxy
 resources:
 - ../../../base/redpanda/statefulset.yaml
+- ../../../base/redpanda/networkpolicy.yaml
 - ../../../base/minio/statefulset.yaml
 - ../../../base/redis-runtime/deployment.yaml
 - ../../../base/pgbouncer

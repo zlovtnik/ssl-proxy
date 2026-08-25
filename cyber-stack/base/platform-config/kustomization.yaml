@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - serviceaccount.yaml
   - configmap.yaml
+  - default-deny-networkpolicy.yaml

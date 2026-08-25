@@ -27,8 +27,8 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: pushgateway
-          image: prom/pushgateway:v1.8.0
-          imagePullPolicy: Always
+          image: prom/pushgateway:v1.8.0@sha256:c159e946abf44e0cf4ae53aa03d99326497a35acca526739c7f8b01a0183bb50
+          imagePullPolicy: IfNotPresent
           args:
             - "--web.listen-address=:9091"
             - "--persistence.file=/pushgateway/persistence"

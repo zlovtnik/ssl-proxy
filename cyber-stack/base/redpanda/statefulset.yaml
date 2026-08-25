@@ -33,8 +33,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: redpanda
-          image: redpandadata/redpanda:v24.2.7
-          imagePullPolicy: Always
+          image: redpandadata/redpanda:v24.2.7@sha256:82a69763bef8d8b55ea5a520fa1b38f993908ef68946819ca1aed43541824c48
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -156,8 +156,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: redpanda-init
-          image: redpandadata/redpanda:v24.2.7
-          imagePullPolicy: Always
+          image: redpandadata/redpanda:v24.2.7@sha256:82a69763bef8d8b55ea5a520fa1b38f993908ef68946819ca1aed43541824c48
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

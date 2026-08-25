@@ -9,15 +9,19 @@ resources:
   # Platform config
   - platform-config/serviceaccount.yaml
   - platform-config/configmap.yaml
+  - platform-config/default-deny-networkpolicy.yaml
   # Proxy
   - proxy/deployment.yaml
   - proxy/service.yaml
+  - proxy/networkpolicy.yaml
   # Java coordinator
   - java-coordinator/deployment.yaml
+  - java-coordinator/networkpolicy.yaml
   # Schema migrator
   - schema-migrator
   # Atheros sensor
   - atheros-sensor/daemonset.yaml
+  - atheros-sensor/networkpolicy.yaml
   # Atheros search
   - atheros-search
   # Redis
@@ -25,6 +29,7 @@ resources:
   # PostgreSQL
   # Redpanda
   - redpanda/statefulset.yaml
+  - redpanda/networkpolicy.yaml
   # MinIO
   - minio/statefulset.yaml
   # PostgreSQL schema executor
@@ -32,13 +37,17 @@ resources:
   - postgres-schema-executor
   # Telemetry
   - telemetry
-configurations:
-  - schema-migrator/kustomizeconfig.yaml
-vars:
-  - name: IDENTITY_HOSTNAME
-    objref:
-      apiVersion: v1
+replacements:
+  - source:
       kind: ConfigMap
       name: ssl-proxy-platform-config
-    fieldref:
-      fieldpath: data.IDENTITY_HOSTNAME
+      fieldPath: data.IDENTITY_PUBLIC_ORIGIN
+    targets:
+      - select:
+          kind: Deployment
+          name: ssl-proxy-schema-migrator-keycloak
+        fieldPaths:
+          - spec.template.spec.containers.[name=keycloak].args.2
+        options:
+          delimiter: "="
+          index: 1

@@ -144,16 +144,15 @@ replication/TLS validation cannot be pushed as `java-coordinator`.
 ## GitOps handoff
 
 Jenkins publishes immutable image digests but does not mutate Kubernetes or
-Git. Record a published digest in the dev slice with
-`make bump-digest-<service> ENV=prod DIGEST=sha256:<digest>`, validate it on the
-local Kubernetes context, and review that change normally. Production remains
-a separate reviewed copy of accepted dev digests and is reconciled only by the
-three production Argo CD Applications.
+Git. Record an accepted published digest with
+`make bump-digest-<service> ENV=prod DIGEST=sha256:<digest>` and review that
+production desired-state change normally. It is reconciled only by the three
+production Argo CD Applications.
 
 The final gate certifies reconciliation of the reviewed `main` revision that
 triggered Jenkins. It does not copy newly published digests into production or
 make any Git, Argo CD or Kubernetes mutation. Newly published images remain
-unpromoted until their digests are accepted through the normal dev-to-prod
+unpromoted until their digests are accepted through the normal production
 review.
 
 ## Production gate credential

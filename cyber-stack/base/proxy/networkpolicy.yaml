@@ -1,0 +1,41 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-proxy
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: UDP
+          port: 443
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ssl-proxy
+              app.kubernetes.io/component: proxy
+      ports:
+        - protocol: UDP
+          port: 51820
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: telemetry-prometheus
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: telemetry-blackbox-exporter
+      ports:
+        - protocol: TCP
+          port: 9098

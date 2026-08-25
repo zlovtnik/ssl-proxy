@@ -6,3 +6,5 @@ metadata:
 data:
   ENVIRONMENT: prod
   IDENTITY_HOSTNAME: identity.prod.ssl-proxy.internal
+  IDENTITY_PUBLIC_ORIGIN: https://identity.prod.ssl-proxy.internal
+  IDENTITY_KEYCLOAK_ISSUER: https://identity.prod.ssl-proxy.internal/realms/middleware

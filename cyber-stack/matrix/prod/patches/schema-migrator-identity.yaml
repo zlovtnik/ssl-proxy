@@ -3,12 +3,6 @@ kind: ConfigMap
 metadata:
   name: ssl-proxy-schema-migrator-keycloak-realm
   namespace: ssl-proxy
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
-  labels:
-    app.kubernetes.io/name: ssl-proxy
-    app.kubernetes.io/component: schema-migrator-keycloak
-    app.kubernetes.io/managed-by: kustomize
 data:
   realm.json: |
     {
@@ -43,8 +37,8 @@ data:
           "directAccessGrantsEnabled": false,
           "implicitFlowEnabled": false,
           "serviceAccountsEnabled": false,
-          "redirectUris": ["https://identity.example.internal/*"],
-          "webOrigins": ["https://identity.example.internal"],
+          "redirectUris": ["https://identity.prod.ssl-proxy.internal/*"],
+          "webOrigins": ["https://identity.prod.ssl-proxy.internal"],
           "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
           "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"],
           "attributes": {
@@ -59,18 +53,12 @@ kind: ConfigMap
 metadata:
   name: ssl-proxy-schema-migrator-traefik
   namespace: ssl-proxy
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
-  labels:
-    app.kubernetes.io/name: ssl-proxy
-    app.kubernetes.io/component: schema-migrator-traefik
-    app.kubernetes.io/managed-by: kustomize
 data:
   dynamic.yaml: |
     http:
       routers:
         keycloak:
-          rule: "Host(`identity.example.internal`) && (PathPrefix(`/realms`) || PathPrefix(`/resources`))"
+          rule: "Host(`identity.prod.ssl-proxy.internal`) && (PathPrefix(`/realms`) || PathPrefix(`/resources`))"
           entryPoints: [websecure]
           priority: 30
           service: keycloak
@@ -78,7 +66,7 @@ data:
             store:
               name: default
         backend:
-          rule: "Host(`identity.example.internal`) && PathPrefix(`/api`)"
+          rule: "Host(`identity.prod.ssl-proxy.internal`) && PathPrefix(`/api`)"
           entryPoints: [websecure]
           priority: 20
           service: backend
@@ -86,7 +74,7 @@ data:
             store:
               name: default
         ui:
-          rule: "Host(`identity.example.internal`) && PathPrefix(`/`)"
+          rule: "Host(`identity.prod.ssl-proxy.internal`) && PathPrefix(`/`)"
           entryPoints: [websecure]
           priority: 10
           service: ui

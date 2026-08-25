@@ -9,6 +9,8 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
   labels:
     app.kubernetes.io/name: postgres-schema-executor
+    app.kubernetes.io/component: postgres-schema-executor
+    app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/instance: ssl-proxy
     ssl-proxy.io/postgres-client: "true"
 spec:
@@ -19,12 +21,14 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: postgres-schema-executor
+        app.kubernetes.io/component: postgres-schema-executor
         app.kubernetes.io/instance: ssl-proxy
         ssl-proxy.io/postgres-client: "true"
       annotations:
         ssl-proxy.io/content-hash: "schema-image-stable-env-7"
     spec:
       restartPolicy: Never
+      serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
       securityContext:
         seccompProfile:

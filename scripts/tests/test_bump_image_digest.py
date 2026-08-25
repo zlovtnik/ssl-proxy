@@ -22,7 +22,7 @@ class BumpImageDigestTest(unittest.TestCase):
         (self.root / "scripts").mkdir()
         shutil.copy2(SCRIPT, self.root / "scripts" / SCRIPT.name)
         shutil.copy2(IMAGE_CONTRACT, self.root / "scripts" / IMAGE_CONTRACT.name)
-        for environment in ("dev", "prod"):
+        for environment in ("prod",):
             for slice_name in ("app-stack", "data-plane"):
                 overlay = self.root / "cyber-stack" / "matrix" / environment / slice_name
                 overlay.mkdir(parents=True)
@@ -98,12 +98,12 @@ class BumpImageDigestTest(unittest.TestCase):
         )
 
     def test_updates_only_the_owning_app_stack_overlay_and_renders_it(self) -> None:
-        result = self.run_helper("ssl-proxy", "dev", DIGEST)
+        result = self.run_helper("ssl-proxy", "prod", DIGEST)
 
         self.assertEqual(0, result.returncode, result.stderr)
-        changed = (self.root / "cyber-stack/matrix/dev/app-stack/kustomization.yaml").read_text()
-        aggregate = (self.root / "cyber-stack/matrix/dev/kustomization.yaml").read_text()
-        untouched = (self.root / "cyber-stack/matrix/dev/data-plane/kustomization.yaml").read_text()
+        changed = (self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml").read_text()
+        aggregate = (self.root / "cyber-stack/matrix/prod/kustomization.yaml").read_text()
+        untouched = (self.root / "cyber-stack/matrix/prod/data-plane/kustomization.yaml").read_text()
         self.assertIn(f"digest: {DIGEST}", changed)
         self.assertIn(f"digest: {DIGEST}", aggregate)
         self.assertIn("digest: sha256:" + "b" * 64, untouched)
@@ -153,10 +153,11 @@ class BumpImageDigestTest(unittest.TestCase):
 
     def test_rejects_invalid_arguments_without_editing(self) -> None:
         for arguments in (
-            ("wg-key-rotator", "dev", DIGEST),
-            ("unknown", "dev", DIGEST),
+            ("wg-key-rotator", "prod", DIGEST),
+            ("unknown", "prod", DIGEST),
             ("ssl-proxy", "stage", DIGEST),
-            ("ssl-proxy", "dev", "sha256:" + "A" * 64),
+            ("ssl-proxy", "dev", DIGEST),
+            ("ssl-proxy", "prod", "sha256:" + "A" * 64),
         ):
             with self.subTest(arguments=arguments):
                 result = self.run_helper(*arguments)
@@ -165,10 +166,10 @@ class BumpImageDigestTest(unittest.TestCase):
         self.assertFalse(self.log.exists())
 
     def test_rejects_missing_or_misrouted_image_mapping(self) -> None:
-        kustomization = self.root / "cyber-stack/matrix/dev/app-stack/kustomization.yaml"
+        kustomization = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
         kustomization.write_text(kustomization.read_text().replace("ssl-proxy", "other", 1))
 
-        result = self.run_helper("ssl-proxy", "dev", DIGEST)
+        result = self.run_helper("ssl-proxy", "prod", DIGEST)
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("exactly one image mapping", result.stderr)

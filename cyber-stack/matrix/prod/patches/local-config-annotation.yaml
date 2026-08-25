@@ -1,3 +1,5 @@
+# app-stack needs this ConfigMap as replacement input; local-config keeps the
+# rendered object owned solely by the bootstrap Application.
 - op: add
   path: /metadata/annotations/config.kubernetes.io~1local-config
   value: "true"

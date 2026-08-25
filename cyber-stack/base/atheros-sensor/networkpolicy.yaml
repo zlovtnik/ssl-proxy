@@ -1,0 +1,21 @@
+# The sensor uses hostNetwork for monitor-mode capture. K3s NetworkPolicy
+# enforcement for host-network pods is CNI-dependent; the host firewall remains
+# the authoritative ingress boundary. This policy still records the no-ingress
+# intent for CNIs that enforce selectors on host-network endpoints.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-atheros-sensor
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: atheros-sensor
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: atheros-sensor
+  policyTypes:
+    - Ingress
+  ingress: []

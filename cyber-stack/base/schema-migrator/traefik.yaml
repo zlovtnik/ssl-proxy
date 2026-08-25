@@ -39,7 +39,7 @@ spec:
       containers:
         - name: traefik
           image: traefik@sha256:996b026a32b1bb6c85c200e5cf25276c1caa84ddea6b1e3a33e78cdc5cbe8d0c
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           args:
             - --api.dashboard=false
             - --providers.file.filename=/etc/traefik/dynamic.yaml

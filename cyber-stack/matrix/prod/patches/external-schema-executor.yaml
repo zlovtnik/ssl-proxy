@@ -8,6 +8,7 @@ spec:
     spec:
       containers:
         - name: schema
+          imagePullPolicy: IfNotPresent
           env:
             - name: POSTGRES_HOST
               value: null

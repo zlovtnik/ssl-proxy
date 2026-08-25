@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 <service> <dev|prod> <sha256:64-lowercase-hex-digest>" >&2
+  echo "usage: $0 <service> prod <sha256:64-lowercase-hex-digest>" >&2
   exit 2
 }
 
@@ -16,9 +16,9 @@ environment="$2"
 digest="$3"
 
 case "$environment" in
-  dev|prod) ;;
+  prod) ;;
   *)
-    echo "environment must be dev or prod" >&2
+    echo "environment must be prod" >&2
     usage
     ;;
 esac

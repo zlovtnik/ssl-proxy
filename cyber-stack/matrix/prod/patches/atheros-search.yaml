@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-atheros-search
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: atheros-search
+          imagePullPolicy: IfNotPresent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-atheros-search-ui
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: ui
+          imagePullPolicy: IfNotPresent

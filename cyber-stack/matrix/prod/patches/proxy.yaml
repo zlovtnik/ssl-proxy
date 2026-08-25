@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-proxy
+  namespace: ssl-proxy
+spec:
+  replicas: 1
+  template:
+    spec:
+      initContainers:
+        - name: copy-wireguard-config
+          imagePullPolicy: IfNotPresent
+      containers:
+        - name: ssl-proxy
+          imagePullPolicy: IfNotPresent
+          resources:
+            limits:
+              cpu: "4"
+              memory: 4Gi
+            requests:
+              cpu: "1"
+              memory: 1Gi

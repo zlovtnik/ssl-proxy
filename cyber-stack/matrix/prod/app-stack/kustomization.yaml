@@ -5,9 +5,12 @@ resources:
 - ../../../base/platform-config/configmap.yaml
 - ../../../base/proxy/deployment.yaml
 - ../../../base/proxy/service.yaml
+- ../../../base/proxy/networkpolicy.yaml
 - ../../../base/java-coordinator/deployment.yaml
+- ../../../base/java-coordinator/networkpolicy.yaml
 - ../../../base/schema-migrator
 - ../../../base/atheros-sensor/daemonset.yaml
+- ../../../base/atheros-sensor/networkpolicy.yaml
 - ../../../base/atheros-search
 images:
 - digest: sha256:f906fa5b5b15f41734621b4aa1a8c5acdf457023dc5891115bbbead5b1bd7864
@@ -33,21 +36,29 @@ images:
   newName: 192.168.1.242:5000/ssl-proxy
 patches:
 - path: ../patches/identity-hostname.yaml
+- path: ../patches/schema-migrator-identity.yaml
 - path: ../patches/local-config-annotation.yaml
   target:
     kind: ConfigMap
     labelSelector: app.kubernetes.io/component=platform-config
-- path: ../patches/proxy-replicas.yaml
-- path: ../patches/resources.yaml
+- path: ../patches/proxy.yaml
+- path: ../patches/java-coordinator.yaml
+- path: ../patches/atheros-search.yaml
+- path: ../patches/atheros-sensor.yaml
+- path: ../patches/schema-migrator-images.yaml
 - path: ../patches/octopus-runtime.yaml
 - path: ../patches/keycloak-direct-postgres.yaml
-configurations:
-- ../../../base/schema-migrator/kustomizeconfig.yaml
-vars:
-- fieldref:
-    fieldPath: data.IDENTITY_HOSTNAME
-  name: IDENTITY_HOSTNAME
-  objref:
-    apiVersion: v1
+replacements:
+- source:
     kind: ConfigMap
     name: ssl-proxy-platform-config
+    fieldPath: data.IDENTITY_PUBLIC_ORIGIN
+  targets:
+  - select:
+      kind: Deployment
+      name: ssl-proxy-schema-migrator-keycloak
+    fieldPaths:
+    - spec.template.spec.containers.[name=keycloak].args.2
+    options:
+      delimiter: "="
+      index: 1

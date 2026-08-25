@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ssl-proxy-atheros-sensor
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: configure-monitor-interface
+          imagePullPolicy: IfNotPresent
+      containers:
+        - name: atheros-sensor
+          imagePullPolicy: IfNotPresent

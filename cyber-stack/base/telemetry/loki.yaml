@@ -30,8 +30,8 @@ spec:
         runAsUser: 10001
       containers:
         - name: loki
-          image: grafana/loki:3.4.2
-          imagePullPolicy: Always
+          image: grafana/loki:3.4.2@sha256:58a6c186ce78ba04d58bfe2a927eff296ba733a430df09645d56cdc158f3ba08
+          imagePullPolicy: IfNotPresent
           args:
             - "-config.file=/etc/loki/loki.yaml"
           ports:
@@ -66,7 +66,7 @@ spec:
               mountPath: /loki
         - name: auth-proxy
           image: nginxinc/nginx-unprivileged@sha256:62a904036bfc0e4a4f2b556e34cbf17bc136b47fde8cdb4628762725f48c5782
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           args:
             - nginx
             - -c

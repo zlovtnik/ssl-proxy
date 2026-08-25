@@ -129,10 +129,10 @@ in the [Atheros Search README](../services/atheros-search/README.md).
 ## Kubernetes delivery
 
 Kubernetes desired state is defined under [`cyber-stack/`](../cyber-stack/).
-Kustomize separates environment-neutral resources from dev and prod patches.
+Kustomize separates environment-neutral resources from production patches.
 Argo CD on `192.168.1.242` tracks `main` and reconciles only the three
-production Applications: `bootstrap`, `data-plane` and `app-stack`. The dev
-aggregate is applied only to an explicit local Kubernetes context.
+production Applications: `bootstrap`, `data-plane` and `app-stack`. There is
+no local Kubernetes overlay in this repository.
 
 ```mermaid
 flowchart LR
@@ -143,9 +143,8 @@ flowchart LR
     apps --> proxy[WireGuard proxy]
 ```
 
-Dev image digests are recorded with the repository's digest bump helper and
-validated on the local cluster. Production promotion copies tested dev digests
-in a separately reviewed pull request. Automated sync, pruning and self-healing
+Accepted image digests are recorded in the production slice and aggregate by
+the repository's digest bump helper in a reviewed pull request. Automated sync, pruning and self-healing
 keep the production cluster aligned with Git, but Namespace resources are
 excluded from automated pruning and require explicit operator confirmation.
 Rollback is a Git revert.
@@ -155,9 +154,8 @@ The complete management and workload-onboarding contract is in the
 ## Local development
 
 Docker Compose may be used as a local test harness for component integration.
-Local Kubernetes development uses the `cyber-stack/matrix/prod` Kustomization
-with an explicit local context. Local health does not replace production Argo
-CD application health.
+The production Kustomization is not a local-development target. Local health
+does not replace production Argo CD application health.
 
 ## Observability
 
