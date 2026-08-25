@@ -48,6 +48,7 @@ spec:
         - name: prepare-keycloak-home
         - name: bootstrap-admin-service
           env:
+            - {name: KC_DB, value: postgres}
             - name: KC_DB_URL_HOST
               valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_HOST}}
             - name: KC_DB_URL_PORT
@@ -59,6 +60,7 @@ spec:
       containers:
         - name: keycloak
           env:
+            - {name: KC_DB, value: postgres}
             - name: KC_DB_URL_HOST
               valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_HOST}}
             - name: KC_DB_URL_PORT
@@ -156,11 +158,15 @@ class ProductionManifestContractTest(unittest.TestCase):
             ]
             if container["name"] == "bootstrap-admin-service"
         )
-        entry = bootstrap["env"][0]
+        entry = bootstrap["env"][1]
         entry.pop("valueFrom")
         entry["value"] = "ssl-proxy-postgres"
         errors = check_gitops._check_prod_keycloak_external_postgres(rendered, "prod")
         self.assertTrue(any("bootstrap-admin-service" in error for error in errors))
+
+        bootstrap["env"][0]["value"] = "postgresql"
+        errors = check_gitops._check_prod_keycloak_external_postgres(rendered, "prod")
+        self.assertTrue(any("KC_DB must use the postgres vendor" in error for error in errors))
 
     def test_pgbouncer_routes_to_the_external_postgres_contract(self) -> None:
         rendered = pgbouncer()

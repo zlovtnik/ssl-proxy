@@ -592,6 +592,10 @@ def _check_prod_keycloak_external_postgres(
             str(_mapping(entry).get("name")): _mapping(entry).get("value")
             for entry in environment
         }
+        if literal_environment.get("KC_DB") != "postgres":
+            errors.append(
+                f"{relative}: Keycloak {description} KC_DB must use the postgres vendor"
+            )
         if literal_environment.get("KC_DB_USERNAME") != "keycloak_runtime":
             errors.append(
                 f"{relative}: Keycloak {description} must use keycloak_runtime"
