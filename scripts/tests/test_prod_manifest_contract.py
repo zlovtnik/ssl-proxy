@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "check-gitops.py"
+ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("prod_manifest_check_gitops", MODULE_PATH)
 assert SPEC and SPEC.loader
 check_gitops = importlib.util.module_from_spec(SPEC)
@@ -132,6 +133,15 @@ spec:
 
 
 class ProductionManifestContractTest(unittest.TestCase):
+    def test_keycloak_bootstrap_probe_uses_tools_present_in_keycloak_image(self) -> None:
+        rendered = documents(
+            (ROOT / "cyber-stack/base/schema-migrator/bootstrap-job.yaml").read_text()
+        )
+        script = rendered[0]["spec"]["template"]["spec"]["containers"][0]["args"][0]
+        self.assertIn("timeout 3 bash -c", script)
+        self.assertIn("/dev/tcp/ssl-proxy-schema-migrator-keycloak/8080", script)
+        self.assertNotIn("curl ", script)
+
     def test_alloy_positions_requires_empty_dir_without_host_path(self) -> None:
         rendered = alloy()
         self.assertEqual(

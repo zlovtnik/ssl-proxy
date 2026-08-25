@@ -42,8 +42,8 @@ spec:
 
               echo "Waiting for Keycloak to be ready..."
               for i in $(seq 1 120); do
-                if curl -sf --max-time 3 \
-                  "${KEYCLOAK_URL}/realms/middleware/.well-known/openid-configuration" \
+                if timeout 3 bash -c \
+                  '</dev/tcp/ssl-proxy-schema-migrator-keycloak/8080' \
                   >/dev/null 2>&1; then
                   echo "Keycloak is ready."
                   break
