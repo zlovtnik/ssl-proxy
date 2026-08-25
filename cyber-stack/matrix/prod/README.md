@@ -1,7 +1,9 @@
 # Production prerequisites
 
-Production uses one platform-operated PostgreSQL 16 cluster with the `sync`
-database. The repository does not deploy or bootstrap a database server.
+Production uses one platform-operated PostgreSQL 16/pgvector cluster with the
+`sync` database. Its exact value-free server and secret-control-plane bootstrap
+requirements are pinned in `../../platform-input-contract.yaml`. The repository
+does not deploy the database server, run Vault or write the resulting inputs.
 
 Before the prod Applications are registered, the platform control plane must
 materialize `ssl-proxy-prod-postgres-endpoint` in `prod-ssl-proxy` with these

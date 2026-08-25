@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "scripts"))
 
 from platform_input_contract import (  # noqa: E402
     CONTRACT_RELATIVE_PATH,
+    PLATFORM_BOOTSTRAP,
     PlatformInputContractError,
     compare_contract_to_rendered,
     find_committed_secret_values,
@@ -94,6 +95,19 @@ def render_production() -> list[dict[str, object]]:
 
 
 class PlatformInputContractTest(unittest.TestCase):
+    def test_bootstrap_contract_pins_postgres_pgvector_and_vault(self) -> None:
+        contract = load_platform_input_contract(REPOSITORY_ROOT)
+
+        self.assertEqual(PLATFORM_BOOTSTRAP, contract.document["spec"]["bootstrap"])
+        self.assertEqual(16, PLATFORM_BOOTSTRAP["postgres"]["majorVersion"])
+        self.assertEqual(
+            ["pgcrypto", "vector", "pg_stat_statements"],
+            PLATFORM_BOOTSTRAP["postgres"]["requiredExtensions"],
+        )
+        self.assertIn("@sha256:", PLATFORM_BOOTSTRAP["postgres"]["image"])
+        self.assertIn("@sha256:", PLATFORM_BOOTSTRAP["secretControlPlane"]["image"])
+        self.assertFalse(PLATFORM_BOOTSTRAP["secretControlPlane"]["developmentMode"])
+
     def test_contract_declares_every_required_object_key_and_vault_path(self) -> None:
         contract = load_platform_input_contract(REPOSITORY_ROOT)
         actual = {

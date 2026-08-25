@@ -14,6 +14,41 @@ CONTRACT_RELATIVE_PATH = Path("cyber-stack/platform-input-contract.yaml")
 CONTRACT_API_VERSION = "platform.ssl-proxy.io/v1alpha1"
 CONTRACT_KIND = "PlatformInputContract"
 INPUT_KINDS = ("ConfigMap", "Secret")
+PLATFORM_BOOTSTRAP = {
+    "ownership": "platform",
+    "postgres": {
+        "engine": "postgresql",
+        "majorVersion": 16,
+        "image": (
+            "pgvector/pgvector:0.8.6-pg16-bookworm@"
+            "sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b"
+        ),
+        "endpoint": {
+            "host": "192.168.1.242",
+            "port": 4000,
+            "database": "sync",
+            "tlsMode": "verify-full",
+            "tlsServerName": "192.168.1.242",
+        },
+        "passwordEncryption": "scram-sha-256",
+        "requiredExtensions": ["pgcrypto", "vector", "pg_stat_statements"],
+        "sharedPreloadLibraries": ["pg_stat_statements"],
+        "persistentDataRequired": True,
+    },
+    "secretControlPlane": {
+        "provider": "hashicorp-vault",
+        "image": (
+            "hashicorp/vault:1.21.4@"
+            "sha256:4e33b126a59c0c333b76fb4e894722462659a6bec7c48c9ee8cea56fccfd2569"
+        ),
+        "serverMode": "persistent",
+        "storage": "raft",
+        "tlsRequired": True,
+        "developmentMode": False,
+        "engine": "kv-v2",
+        "mount": "secret",
+    },
+}
 
 
 class PlatformInputContractError(ValueError):
@@ -86,6 +121,13 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
     if environment != "prod" or namespace != "prod-ssl-proxy":
         raise PlatformInputContractError(
             f"{CONTRACT_RELATIVE_PATH} must target prod/prod-ssl-proxy"
+        )
+
+    bootstrap = _mapping(spec.get("bootstrap"))
+    if bootstrap != PLATFORM_BOOTSTRAP:
+        raise PlatformInputContractError(
+            f"{CONTRACT_RELATIVE_PATH} must preserve the Wiretrap PostgreSQL 16/pgvector "
+            "and persistent Vault bootstrap contract"
         )
 
     source = _mapping(spec.get("source"))

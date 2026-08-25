@@ -76,6 +76,14 @@ validates that all 17 Secrets and the PostgreSQL endpoint ConfigMap have every
 declared key. It must not log values, and its Kubernetes writer identity is
 external to application workloads.
 
+The contract also pins the Wiretrap bootstrap substrate: PostgreSQL 16 from the
+pgvector image, SCRAM authentication, verified TLS on `192.168.1.242:4000`, the
+`pgcrypto`, `vector` and `pg_stat_statements` extensions, and a persistent
+TLS-enabled Vault server using integrated Raft storage. Vault development mode
+does not satisfy the contract. These are platform requirements only; the
+repository still does not contain their credentials, data volumes, unseal
+material or a live-cluster writer.
+
 The same preflight verifies that the identity certificate covers
 `identity.prod.ssl-proxy.internal`, the PostgreSQL CA and server name agree, each DSN
 uses the isolated account recorded in the contract, and the grant matrix in
