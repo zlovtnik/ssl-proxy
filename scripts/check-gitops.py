@@ -1661,6 +1661,43 @@ def _check_schema_executor_contract(rendered: Documents | str, relative: str, ex
     images = [str(container.get("image", "")) for container in _pod_containers(job)]
     if not any(re.search(r"postgres-runtime-schema@sha256:[0-9a-f]{64}$", image) for image in images):
         errors.append(f"{relative}: schema executor must use a digest-pinned image")
+    containers = [
+        container
+        for container in _pod_containers(job)
+        if container.get("name") == "schema"
+    ]
+    if len(containers) != 1:
+        errors.append(f"{relative}: expected one schema executor container")
+        return errors
+    expected_endpoint_environment = {
+        "POSTGRES_HOST": "POSTGRES_HOST",
+        "POSTGRES_PORT": "POSTGRES_PORT",
+        "POSTGRES_DATABASE": "POSTGRES_DATABASE",
+        "PGSSLMODE": "POSTGRES_SSL_MODE",
+        "POSTGRES_SSL_SERVER_NAME": "POSTGRES_SSL_SERVER_NAME",
+    }
+    environment = _list(containers[0].get("env"))
+    for variable, key in expected_endpoint_environment.items():
+        entries = [
+            _mapping(entry)
+            for entry in environment
+            if _mapping(entry).get("name") == variable
+        ]
+        reference = (
+            _mapping(_path(entries[0], "valueFrom", "configMapKeyRef"))
+            if len(entries) == 1
+            else {}
+        )
+        if (
+            len(entries) != 1
+            or "value" in entries[0]
+            or reference.get("name") != "ssl-proxy-prod-postgres-endpoint"
+            or reference.get("key") != key
+        ):
+            errors.append(
+                f"{relative}: schema executor {variable} must come from "
+                f"ssl-proxy-prod-postgres-endpoint/{key} without a literal value"
+            )
     return errors
 
 

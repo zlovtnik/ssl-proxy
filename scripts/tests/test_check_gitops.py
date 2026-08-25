@@ -686,13 +686,25 @@ spec:
       annotations: {{ssl-proxy.io/content-hash: {self.marker}}}
     spec:
       containers:
-        - image: registry/postgres-runtime-schema@sha256:{'b' * 64}
+        - name: schema
+          image: registry/postgres-runtime-schema@sha256:{'b' * 64}
+          env:
+            - {{name: POSTGRES_HOST, valueFrom: {{configMapKeyRef: {{name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_HOST}}}}}}
+            - {{name: POSTGRES_PORT, valueFrom: {{configMapKeyRef: {{name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_PORT}}}}}}
+            - {{name: POSTGRES_DATABASE, valueFrom: {{configMapKeyRef: {{name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_DATABASE}}}}}}
+            - {{name: PGSSLMODE, valueFrom: {{configMapKeyRef: {{name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_SSL_MODE}}}}}}
+            - {{name: POSTGRES_SSL_SERVER_NAME, valueFrom: {{configMapKeyRef: {{name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_SSL_SERVER_NAME}}}}}}
 """
         )
         self.assertEqual([], check_gitops._check_schema_executor_contract(rendered, "test", self.marker))
         rendered[0]["spec"]["template"]["metadata"]["annotations"]["ssl-proxy.io/content-hash"] = "stale"
         rendered[0]["spec"]["template"]["spec"]["containers"][0]["image"] = "registry/postgres-runtime-schema:latest"
         self.assertEqual(2, len(check_gitops._check_schema_executor_contract(rendered, "test", self.marker)))
+
+        server_name = rendered[0]["spec"]["template"]["spec"]["containers"][0]["env"][4]
+        server_name["value"] = "ssl-proxy-prod-postgres-endpoint"
+        errors = check_gitops._check_schema_executor_contract(rendered, "test", self.marker)
+        self.assertTrue(any("POSTGRES_SSL_SERVER_NAME" in error for error in errors))
 
 
 class ApplicationSetTest(unittest.TestCase):
