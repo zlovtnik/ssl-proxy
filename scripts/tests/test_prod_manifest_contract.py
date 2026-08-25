@@ -95,6 +95,7 @@ spec:
             - {name: POSTGRES_SSL_SERVER_NAME, valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_SSL_SERVER_NAME}}}
       containers:
         - name: pgbouncer
+          securityContext: {runAsNonRoot: true, runAsUser: 70, runAsGroup: 70}
       volumes:
         - {name: generated-config, emptyDir: {}}
         - {name: users, secret: {secretName: pgbouncer-runtime-users}}
@@ -172,6 +173,11 @@ class ProductionManifestContractTest(unittest.TestCase):
         renderer["env"][0]["valueFrom"]["configMapKeyRef"]["name"] = "wrong-endpoint"
         errors = check_gitops._check_prod_pgbouncer_external_postgres(rendered, "prod")
         self.assertTrue(any("POSTGRES_HOST" in error for error in errors))
+
+        pgbouncer_container = rendered[0]["spec"]["template"]["spec"]["containers"][0]
+        pgbouncer_container["securityContext"].pop("runAsUser")
+        errors = check_gitops._check_prod_pgbouncer_external_postgres(rendered, "prod")
+        self.assertTrue(any("numeric postgres UID/GID 70" in error for error in errors))
 
     def test_keycloak_bootstrap_runs_after_home_preparation(self) -> None:
         rendered = keycloak()

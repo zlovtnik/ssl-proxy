@@ -692,6 +692,23 @@ def _check_prod_pgbouncer_external_postgres(
             )
     if not re.search(r"busybox@sha256:[0-9a-f]{64}$", str(renderer.get("image", ""))):
         errors.append(f"{relative}: PgBouncer config renderer must use a digest-pinned image")
+    pgbouncer_containers = [
+        _mapping(container)
+        for container in _list(pod_spec.get("containers"))
+        if _mapping(container).get("name") == "pgbouncer"
+    ]
+    if len(pgbouncer_containers) != 1:
+        errors.append(f"{relative}: expected one PgBouncer container")
+    else:
+        security_context = _mapping(pgbouncer_containers[0].get("securityContext"))
+        if (
+            security_context.get("runAsNonRoot") is not True
+            or security_context.get("runAsUser") != 70
+            or security_context.get("runAsGroup") != 70
+        ):
+            errors.append(
+                f"{relative}: PgBouncer must use the pinned image's numeric postgres UID/GID 70"
+            )
     volumes = {
         str(_mapping(volume).get("name")): _mapping(volume)
         for volume in _list(pod_spec.get("volumes"))

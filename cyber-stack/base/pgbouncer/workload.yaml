@@ -122,6 +122,8 @@ spec:
               drop: ["ALL"]
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
           volumeMounts:
             - name: generated-config
               mountPath: /etc/pgbouncer/pgbouncer.ini
