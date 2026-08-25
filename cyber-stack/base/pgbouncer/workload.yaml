@@ -63,7 +63,7 @@ spec:
                   'server_tls_sslmode = verify-full' \
                   'server_tls_ca_file = /etc/pgbouncer/upstream/ca.crt' \
                   'client_tls_sslmode = disable' \
-                  'ignore_startup_parameters = extra_float_digits'
+                  'ignore_startup_parameters = extra_float_digits,search_path'
               } > /generated/pgbouncer.ini
           env:
             - name: POSTGRES_HOST

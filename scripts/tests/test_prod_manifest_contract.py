@@ -89,7 +89,7 @@ spec:
         - name: render-pgbouncer-config
           image: busybox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           args:
-            - POSTGRES_SSL_MODE verify-full POSTGRES_SSL_SERVER_NAME POSTGRES_HOST unix_socket_dir = /var/run/pgbouncer
+            - POSTGRES_SSL_MODE verify-full POSTGRES_SSL_SERVER_NAME POSTGRES_HOST unix_socket_dir = /var/run/pgbouncer ignore_startup_parameters = extra_float_digits,search_path
           env:
             - {name: POSTGRES_HOST, valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_HOST}}}
             - {name: POSTGRES_PORT, valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_PORT}}}

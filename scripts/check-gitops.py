@@ -690,6 +690,7 @@ def _check_prod_pgbouncer_external_postgres(
         "POSTGRES_SSL_SERVER_NAME",
         "POSTGRES_HOST",
         "unix_socket_dir = /var/run/pgbouncer",
+        "ignore_startup_parameters = extra_float_digits,search_path",
     ):
         if required not in renderer_script:
             errors.append(
