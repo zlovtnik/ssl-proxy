@@ -685,6 +685,7 @@ def _check_prod_pgbouncer_external_postgres(
         "verify-full",
         "POSTGRES_SSL_SERVER_NAME",
         "POSTGRES_HOST",
+        "unix_socket_dir = /var/run/pgbouncer",
     ):
         if required not in renderer_script:
             errors.append(
