@@ -71,6 +71,13 @@ require a restart.
 make prep-ath
 ```
 
+The target defaults to `wlan0`, regulatory domain `US`, and channel `6`.
+Override those values when needed:
+
+```bash
+ATH_SENSOR_DEVICE=wlxc01c3038d5e8 ATH_SENSOR_CHANNEL=11 make prep-ath
+```
+
 Then point the host-mode sensor at a host-reachable listener, for example:
 
 ```bash
