@@ -16,7 +16,9 @@ func TestRenewSelfUsesLoadedToken(t *testing.T) {
 			t.Fatal("renewal request did not use the configured token")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"auth":{"client_token":"read-only-periodic-token","renewable":true,"lease_duration":86400}}`))
+		if _, err := w.Write([]byte(`{"auth":{"client_token":"read-only-periodic-token","renewable":true,"lease_duration":86400}}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 

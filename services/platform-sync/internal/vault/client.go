@@ -30,7 +30,7 @@ func NewClient() (*Client, error) {
 	if token == "" {
 		tokenFile := os.Getenv("VAULT_TOKEN_FILE")
 		if tokenFile != "" {
-			data, err := os.ReadFile(tokenFile) // #nosec G304 -- VAULT_TOKEN_FILE is an explicit trusted service setting.
+			data, err := os.ReadFile(tokenFile) // #nosec G304,G703 -- trusted systemd credential path
 			if err != nil {
 				return nil, fmt.Errorf("read VAULT_TOKEN_FILE: %w", err)
 			}
@@ -78,7 +78,7 @@ func (c *Client) RenewSelf(ctx context.Context) error {
 		return fmt.Errorf("renew Vault token: %w", err)
 	}
 	if secret == nil || secret.Auth == nil || !secret.Auth.Renewable {
-		return fmt.Errorf("Vault token did not renew as a renewable token")
+		return fmt.Errorf("vault token did not renew as a renewable token")
 	}
 	return nil
 }

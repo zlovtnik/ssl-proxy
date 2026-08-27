@@ -128,17 +128,19 @@ func writeCredential(path string, data []byte) error {
 		return fmt.Errorf("create temporary credential for %s: %w", path, err)
 	}
 	tempName := temp.Name()
-	defer func() { _ = os.Remove(tempName) }()
+	defer func() {
+		_ = os.Remove(tempName) //nolint:errcheck // Best-effort cleanup after rename.
+	}()
 	if err := temp.Chmod(0o600); err != nil {
-		_ = temp.Close()
+		_ = temp.Close() //nolint:errcheck // Preserve the primary failure.
 		return fmt.Errorf("set credential permissions: %w", err)
 	}
 	if _, err := temp.Write(data); err != nil {
-		_ = temp.Close()
+		_ = temp.Close() //nolint:errcheck // Preserve the primary failure.
 		return fmt.Errorf("write temporary credential: %w", err)
 	}
 	if err := temp.Sync(); err != nil {
-		_ = temp.Close()
+		_ = temp.Close() //nolint:errcheck // Preserve the primary failure.
 		return fmt.Errorf("sync temporary credential: %w", err)
 	}
 	if err := temp.Close(); err != nil {

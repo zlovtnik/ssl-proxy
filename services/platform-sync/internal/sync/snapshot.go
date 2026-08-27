@@ -74,23 +74,26 @@ func writeFileAtomically(path string, data []byte, mode os.FileMode) error {
 		return fmt.Errorf("create temporary file for %s: %w", path, err)
 	}
 	tempName := temp.Name()
-	defer func() { _ = os.Remove(tempName) }()
+	defer func() {
+		// #nosec G703 -- path returned by os.CreateTemp in the configured directory.
+		_ = os.Remove(tempName) //nolint:errcheck // Best-effort cleanup after rename.
+	}()
 	if err := temp.Chmod(mode); err != nil {
-		_ = temp.Close()
+		_ = temp.Close() //nolint:errcheck // Preserve the primary failure.
 		return fmt.Errorf("set mode on temporary file for %s: %w", path, err)
 	}
 	if _, err := temp.Write(data); err != nil {
-		_ = temp.Close()
+		_ = temp.Close() //nolint:errcheck // Preserve the primary failure.
 		return fmt.Errorf("write temporary file for %s: %w", path, err)
 	}
 	if err := temp.Sync(); err != nil {
-		_ = temp.Close()
+		_ = temp.Close() //nolint:errcheck // Preserve the primary failure.
 		return fmt.Errorf("sync temporary file for %s: %w", path, err)
 	}
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("close temporary file for %s: %w", path, err)
 	}
-	if err := os.Rename(tempName, path); err != nil {
+	if err := os.Rename(tempName, path); err != nil { // #nosec G703 -- operator-configured local snapshot path
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil

@@ -190,12 +190,18 @@ func postgresStaticData() map[string]map[string][]byte {
 }
 
 func testCertificateForCA() []byte {
-	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err)
+	}
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(3), Subject: pkix.Name{CommonName: "PostgreSQL CA"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
 	}
-	der, _ := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		panic(err)
+	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }

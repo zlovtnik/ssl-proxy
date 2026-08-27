@@ -237,10 +237,10 @@ func getInt(m map[string]interface{}, key string) int {
 	case int64:
 		return int(value)
 	case uint64:
-		if uint64(int(value)) != value {
+		if value > uint64(^uint(0)>>1) {
 			return 0
 		}
-		return int(value)
+		return int(value) // #nosec G115 -- guarded against platform int overflow above
 	case float64:
 		return int(value)
 	case string:

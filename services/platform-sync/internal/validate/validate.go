@@ -17,7 +17,7 @@ func All(ctx context.Context, c *contract.Contract, data map[string]map[string][
 	}
 
 	if err := validateLoki(c, data); err != nil {
-		return fmt.Errorf("Loki validation: %w", err)
+		return fmt.Errorf("loki validation: %w", err)
 	}
 
 	if err := validatePgBouncer(c, data); err != nil {

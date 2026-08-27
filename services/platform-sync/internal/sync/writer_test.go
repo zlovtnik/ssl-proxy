@@ -63,7 +63,10 @@ func TestWriteAllDryRunPreflightsEveryObjectWithoutMutation(t *testing.T) {
 			t.Fatalf("dry-run made a real update: %#v", client.updates)
 		}
 	}
-	firstData, _, _ := unstructured.NestedStringMap(client.objects["secrets/one"].Object, "data")
+	firstData, found, err := unstructured.NestedStringMap(client.objects["secrets/one"].Object, "data")
+	if err != nil || !found {
+		t.Fatalf("read test Secret data: found=%t err=%v", found, err)
+	}
 	if firstData["old"] != "b2xk" {
 		t.Fatalf("dry-run mutated object: %#v", firstData)
 	}
@@ -76,7 +79,10 @@ func TestWriteAllRollsBackEarlierUpdatesAfterApplyFailure(t *testing.T) {
 	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, false); err == nil {
 		t.Fatal("injected apply failure was not returned")
 	}
-	firstData, _, _ := unstructured.NestedStringMap(client.objects["secrets/one"].Object, "data")
+	firstData, found, nestedErr := unstructured.NestedStringMap(client.objects["secrets/one"].Object, "data")
+	if nestedErr != nil || !found {
+		t.Fatalf("read restored Secret data: found=%t err=%v", found, nestedErr)
+	}
 	if firstData["old"] != "b2xk" || len(firstData) != 1 {
 		t.Fatalf("first object was not restored: %#v", firstData)
 	}
@@ -90,7 +96,10 @@ func TestDesiredObjectCopiesOnlyDeclaredKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	values, _, _ := unstructured.NestedStringMap(desired.Object, "data")
+	values, found, nestedErr := unstructured.NestedStringMap(desired.Object, "data")
+	if nestedErr != nil || !found {
+		t.Fatalf("read desired Secret data: found=%t err=%v", found, nestedErr)
+	}
 	if len(values) != 1 || values["declared"] != "a2VwdA==" {
 		t.Fatalf("unexpected desired data: %#v", values)
 	}
