@@ -81,7 +81,6 @@ func sourceKubernetesConfig() (*rest.Config, error) {
 func createSAToken(ctx context.Context, clientset kubernetes.Interface, namespace, serviceAccount string, lifetime time.Duration) (string, error) {
 	expirationSeconds := int64(lifetime.Seconds())
 	tokenRequest := &authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{
-		Audiences:         []string{"https://kubernetes.default.svc"},
 		ExpirationSeconds: &expirationSeconds,
 	}}
 	token, err := clientset.CoreV1().ServiceAccounts(namespace).CreateToken(ctx, serviceAccount, tokenRequest, metav1.CreateOptions{})

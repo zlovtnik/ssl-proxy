@@ -1,11 +1,37 @@
 package main
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	authenticationv1 "k8s.io/api/authentication/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/clientcmd"
 )
+
+func TestCreateSATokenUsesAPIServerDefaultAudience(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	clientset.PrependReactor("create", "serviceaccounts", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		request := action.(k8stesting.CreateAction).GetObject().(*authenticationv1.TokenRequest)
+		if len(request.Spec.Audiences) != 0 {
+			t.Fatalf("custom audience would make the token unusable by the Kubernetes API: %v", request.Spec.Audiences)
+		}
+		request.Status.Token = "api-server-token"
+		return true, request, nil
+	})
+
+	token, err := createSAToken(context.Background(), clientset, "prod-ssl-proxy", "ssl-proxy-platform-sync", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "api-server-token" {
+		t.Fatalf("unexpected token %q", token)
+	}
+}
 
 func TestGenerateKubeconfigPreservesTLSVerification(t *testing.T) {
 	data, err := generateKubeconfig(&rest.Config{
