@@ -85,7 +85,7 @@ repository still does not contain their credentials, data volumes, unseal
 material or a live-cluster writer.
 
 The same preflight verifies that the identity certificate covers
-`identity.prod.ssl-proxy.internal`, the PostgreSQL CA and server name agree, each DSN
+`gateway.rclabs.uk`, the PostgreSQL CA and server name agree, each DSN
 uses the isolated account recorded in the contract, and the grant matrix in
 the PostgreSQL cutover document is applied. It also verifies that `loki-htpasswd`
 corresponds to the declared Loki username and password. Only after every check

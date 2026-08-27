@@ -16,8 +16,8 @@ The platform team provides and operates:
 - workload Secrets and the production PostgreSQL endpoint ConfigMap required by the
   rendered manifests, sourced through the value-free
   [`platform-input-contract.yaml`](platform-input-contract.yaml);
-- DNS and an `ssl-proxy-identity-tls` certificate for
-  `identity.prod.ssl-proxy.internal`.
+- Cloudflare Tunnel credentials and an `ssl-proxy-identity-tls` certificate for
+  `gateway.rclabs.uk`.
 
 Platform inputs must be delivered by the platform's declarative control plane.
 Do not create or patch them by hand. This repository owns the production-only
@@ -58,13 +58,12 @@ stores its kubeconfig in Vault and provisions it in Jenkins as
 `ssl-proxy-prod-readonly-kubeconfig`; the credential is not a workload Secret.
 
 The same control-plane Kustomization owns K3s's
-`kube-system/HelmChartConfig/traefik`. During the default-deny Internet-edge
-phase, Traefik listens on IPv4 TCP 80/443 for LAN verification and has no
-routing provider, dashboard route, redirect or certificate resolver. The
-workload AppProject cannot create route kinds, and application Services remain
-`ClusterIP` or headless. The staged WAN policy forwards TCP 80 only; TCP 443
-and every administrative port remain closed. Router and host-firewall state
-are platform prerequisites documented in the
+`kube-system/HelmChartConfig/traefik`. Traefik is an IPv4 `ClusterIP`, exposes
+only HTTPS to two in-cluster `cloudflared` replicas, and watches approved CRDs
+only in `prod-ssl-proxy`. The public route admits the middleware OIDC paths,
+Schema Migrator `/api/` except health, and Atheros Search `/v1/`; all other
+paths have no router. Grafana and every administrative or data-plane endpoint
+remain internal. Router and host-firewall state are platform prerequisites documented in the
 [operations runbook](../docs/runbook.md); they are not managed through
 interactive Kubernetes changes.
 

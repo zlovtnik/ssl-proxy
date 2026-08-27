@@ -1100,7 +1100,7 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
             f"{relative}: public gateway routes must expose only OIDC, Schema API, and Atheros v1"
         )
 
-    forbidden_fragments = ("/grafana", "/admin", "/metrics", "/health", "/readyz")
+    forbidden_fragments = ("/grafana", "/admin", "/metrics", "/readyz")
     if any(fragment in match for match, _, _ in actual_routes for fragment in forbidden_fragments):
         errors.append(f"{relative}: public gateway exposes a forbidden operational path")
     if _find(documents, "Ingress", "ssl-proxy-telemetry-grafana"):

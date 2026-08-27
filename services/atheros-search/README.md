@@ -106,6 +106,10 @@ after their dependencies; both remain disabled by default.
 | `ATHSEARCH_METRICS_PORT` | `9090` | None |
 | `ATHSEARCH_LOG_LEVEL` | `info` | None |
 | `ATHSEARCH_API_TOKEN_SHA256` | empty | None |
+| `ATHSEARCH_JWT_ISSUER` | empty | None |
+| `ATHSEARCH_JWT_JWKS_URI` | empty | None |
+| `ATHSEARCH_JWT_AUDIENCE` | empty | None |
+| `ATHSEARCH_JWT_CLIENT_ID` | empty | None |
 | `ATHSEARCH_CORS_ALLOWED_ORIGINS` | `http://127.0.0.1:5173` | None |
 | `ATHSEARCH_WS_ENABLED` | `false` | None |
 
@@ -129,8 +133,11 @@ Key routes:
 
 The public protobuf contract is
 [`proto/atheros/search/v1/search.proto`](proto/atheros/search/v1/search.proto).
-HTTP bodies are capped at 1 MiB. Preserve CORS, token auth, deadlines and the
-NDJSON completion marker.
+HTTP bodies are capped at 1 MiB. Production uses RS256 JWT validation with
+JWKS refresh, exact issuer and audience checks, and Keycloak client roles.
+Viewer, operator and admin can read/search; only operator and admin can submit
+merge decisions. Static token-digest auth remains a mutually exclusive local
+development option. Preserve CORS, deadlines and the NDJSON completion marker.
 
 ## Observability and privacy
 

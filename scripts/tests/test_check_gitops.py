@@ -374,20 +374,24 @@ class DefaultDenyTraefikTest(unittest.TestCase):
             "api": {"dashboard": False, "insecure": False, "debug": False},
             "gateway": {"enabled": False},
             "gatewayClass": {"enabled": False},
-            "ingressClass": {"enabled": True, "isDefaultClass": False},
+            "ingressClass": {"enabled": False, "isDefaultClass": False},
             "ingressRoute": {
                 "dashboard": {"enabled": False},
                 "healthcheck": {"enabled": False},
             },
             "providers": {
-                provider: {"enabled": False}
-                for provider in (
-                    "kubernetesCRD",
-                    "kubernetesGateway",
-                    "kubernetesIngressNGINX",
-                    "file",
-                )
-            } | {"kubernetesIngress": {"enabled": True}},
+                "kubernetesCRD": {
+                    "enabled": True,
+                    "namespaces": ["prod-ssl-proxy"],
+                    "allowCrossNamespace": False,
+                    "allowExternalNameServices": False,
+                    "allowEmptyServices": False,
+                },
+                "kubernetesIngress": {"enabled": False},
+                "kubernetesGateway": {"enabled": False},
+                "kubernetesIngressNGINX": {"enabled": False},
+                "file": {"enabled": False},
+            },
             "experimental": {"kubernetesGateway": {"enabled": False}},
             "logs": {
                 "general": {"format": "json"},
@@ -400,7 +404,7 @@ class DefaultDenyTraefikTest(unittest.TestCase):
             "metrics": {"prometheus": {"service": {"enabled": True}}},
             "ports": {
                 "web": {
-                    "expose": {"default": True},
+                    "expose": {"default": False},
                     "exposedPort": 80,
                     "protocol": "TCP",
                     "allowACMEByPass": False,
@@ -409,9 +413,9 @@ class DefaultDenyTraefikTest(unittest.TestCase):
                     "proxyProtocol": {"trustedIPs": [], "insecure": False},
                     "transport": {
                         "respondingTimeouts": {
-                            "readTimeout": "15s",
-                            "writeTimeout": "30s",
-                            "idleTimeout": "30s",
+                            "readTimeout": "30s",
+                            "writeTimeout": "0s",
+                            "idleTimeout": "180s",
                         }
                     },
                 },
@@ -432,17 +436,16 @@ class DefaultDenyTraefikTest(unittest.TestCase):
                     "proxyProtocol": {"trustedIPs": [], "insecure": False},
                     "transport": {
                         "respondingTimeouts": {
-                            "readTimeout": "15s",
-                            "writeTimeout": "30s",
-                            "idleTimeout": "30s",
+                            "readTimeout": "30s",
+                            "writeTimeout": "0s",
+                            "idleTimeout": "180s",
                         }
                     },
                 },
             },
             "service": {
                 "spec": {
-                    "type": "LoadBalancer",
-                    "externalTrafficPolicy": "Local",
+                    "type": "ClusterIP",
                     "ipFamilyPolicy": "SingleStack",
                     "ipFamilies": ["IPv4"],
                 }
@@ -880,7 +883,7 @@ spec:
   destinations:
     - {namespace: prod-ssl-proxy, server: https://kubernetes.default.svc}
   namespaceResourceWhitelist:
-    - {group: networking.k8s.io, kind: IngressRoute}
+    - {group: gateway.networking.k8s.io, kind: HTTPRoute}
 """
         )
         errors: list[str] = []
