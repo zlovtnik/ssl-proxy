@@ -45,13 +45,17 @@ type TokenAuth struct {
 	jwt            *jwtVerifier
 }
 
+const refreshCooldown = 30 * time.Second
+
 type jwtVerifier struct {
-	config JWTConfig
-	client *http.Client
-	mu     sync.RWMutex
-	keys   map[string]*rsa.PublicKey
-	expiry time.Time
-	now    func() time.Time
+	config      JWTConfig
+	client      *http.Client
+	mu          sync.RWMutex
+	keys        map[string]*rsa.PublicKey
+	missingKeys map[string]time.Time
+	expiry      time.Time
+	lastRefresh time.Time
+	now         func() time.Time
 }
 
 type jwtHeader struct {
@@ -107,10 +111,11 @@ func NewJWTTokenAuth(config JWTConfig) (*TokenAuth, error) {
 		return nil, errors.New("JWT issuer, JWKS URI, audience and client ID are required")
 	}
 	return &TokenAuth{jwt: &jwtVerifier{
-		config: config,
-		client: &http.Client{Timeout: 5 * time.Second},
-		keys:   make(map[string]*rsa.PublicKey),
-		now:    time.Now,
+		config:      config,
+		client:      &http.Client{Timeout: 5 * time.Second},
+		keys:        make(map[string]*rsa.PublicKey),
+		missingKeys: make(map[string]time.Time),
+		now:         time.Now,
 	}}, nil
 }
 
@@ -256,17 +261,38 @@ func (v *jwtVerifier) key(ctx context.Context, keyID string, force bool) (*rsa.P
 	v.mu.RLock()
 	key := v.keys[keyID]
 	fresh := v.now().Before(v.expiry)
+	if key == nil {
+		if lastMissing, ok := v.missingKeys[keyID]; ok && v.now().Sub(lastMissing) < refreshCooldown {
+			v.mu.RUnlock()
+			return nil, errors.New("JWT key ID is unknown")
+		}
+	}
 	v.mu.RUnlock()
 	if key != nil && fresh && !force {
+		return key, nil
+	}
+	v.mu.RLock()
+	coolingDown := v.now().Sub(v.lastRefresh) < refreshCooldown
+	v.mu.RUnlock()
+	if coolingDown && !force {
+		v.mu.RLock()
+		defer v.mu.RUnlock()
+		key = v.keys[keyID]
+		if key == nil {
+			return nil, errors.New("JWT key ID is unknown")
+		}
 		return key, nil
 	}
 	if err := v.refresh(ctx); err != nil {
 		return nil, err
 	}
 	v.mu.RLock()
-	defer v.mu.RUnlock()
 	key = v.keys[keyID]
+	v.mu.RUnlock()
 	if key == nil {
+		v.mu.Lock()
+		v.missingKeys[keyID] = v.now()
+		v.mu.Unlock()
 		return nil, errors.New("JWT key ID is unknown")
 	}
 	return key, nil
@@ -306,6 +332,7 @@ func (v *jwtVerifier) refresh(ctx context.Context) error {
 	v.mu.Lock()
 	v.keys = keys
 	v.expiry = v.now().Add(5 * time.Minute)
+	v.lastRefresh = v.now()
 	v.mu.Unlock()
 	return nil
 }

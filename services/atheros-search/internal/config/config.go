@@ -200,8 +200,8 @@ func Load() (Config, error) {
 	for name, value := range map[string]string{"ATHSEARCH_JWT_ISSUER": cfg.JWTIssuer, "ATHSEARCH_JWT_JWKS_URI": cfg.JWTJWKSURI} {
 		if value != "" {
 			parsed, err := url.ParseRequestURI(value)
-			if err != nil || parsed.Scheme != "https" && parsed.Scheme != "http" || parsed.Host == "" {
-				return cfg, fmt.Errorf("%s must be an absolute HTTP(S) URL", name)
+			if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && isLoopbackHost(parsed.Host))) {
+				return cfg, fmt.Errorf("%s must be an absolute HTTPS URL (HTTP allowed for loopback only)", name)
 			}
 		}
 	}
@@ -265,6 +265,15 @@ func firstEnv(keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func isLoopbackHost(host string) bool {
+	hostname := strings.Trim(strings.ToLower(host), "[]")
+	if hostname == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
 }
 
 func envString(key, fallback string) string {

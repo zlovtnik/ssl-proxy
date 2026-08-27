@@ -1061,30 +1061,38 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
     if _path(spec, "tls", "store", "name") != "default":
         errors.append(f"{relative}: public gateway must use the default TLSStore")
 
-    expected_routes = {
-        "Host(`gateway.rclabs.uk`) && (PathPrefix(`/realms/middleware`) || PathPrefix(`/resources/`))": (
+    expected_routes = [
+        (
+            "Host(`gateway.rclabs.uk`) && (PathPrefix(`/realms/middleware`) || PathPrefix(`/resources/`))",
             "ssl-proxy-schema-migrator-keycloak",
             8080,
         ),
-        "Host(`gateway.rclabs.uk`) && PathPrefix(`/api/`) && !Path(`/api/health`)": (
+        (
+            "Host(`gateway.rclabs.uk`) && PathPrefix(`/api/`) && !Path(`/api/health`)",
             "ssl-proxy-schema-migrator-backend",
             8080,
         ),
-        "Host(`gateway.rclabs.uk`) && PathPrefix(`/v1/`)": (
+        (
+            "Host(`gateway.rclabs.uk`) && PathPrefix(`/v1/`)",
             "ssl-proxy-atheros-search",
             8080,
         ),
-    }
-    actual_routes: dict[str, tuple[str, Any]] = {}
+    ]
+    actual_routes: list[tuple[str, str, Any]] = []
+    seen_matches: set[str] = set()
     for raw_rule in _list(spec.get("routes")):
         rule = _mapping(raw_rule)
         match = str(rule.get("match", ""))
         services = [_mapping(value) for value in _list(rule.get("services"))]
         if len(services) == 1:
-            actual_routes[match] = (
+            if match in seen_matches:
+                errors.append(f"{relative}: duplicate route matcher {match!r}")
+            seen_matches.add(match)
+            actual_routes.append((
+                match,
                 str(services[0].get("name", "")),
                 services[0].get("port"),
-            )
+            ))
         if "HostRegexp" in match or "*" in match:
             errors.append(f"{relative}: public gateway must not use wildcard hosts")
     if actual_routes != expected_routes:
@@ -1093,7 +1101,7 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
         )
 
     forbidden_fragments = ("/grafana", "/admin", "/metrics", "/health", "/readyz")
-    if any(fragment in match for match in actual_routes for fragment in forbidden_fragments):
+    if any(fragment in match for match, _, _ in actual_routes for fragment in forbidden_fragments):
         errors.append(f"{relative}: public gateway exposes a forbidden operational path")
     if _find(documents, "Ingress", "ssl-proxy-telemetry-grafana"):
         errors.append(f"{relative}: Grafana Ingress must remain removed")
