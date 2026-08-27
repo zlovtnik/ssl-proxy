@@ -40,6 +40,7 @@ patches:
 - path: patches/pgbouncer-external-postgres.yaml
 - path: patches/identity-hostname.yaml
 - path: patches/schema-migrator-identity.yaml
+- path: patches/cloudflare-edge.yaml
 - path: patches/proxy.yaml
 - path: patches/java-coordinator.yaml
 - path: patches/atheros-search.yaml

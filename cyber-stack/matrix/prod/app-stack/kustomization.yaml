@@ -12,6 +12,8 @@ resources:
 - ../../../base/atheros-sensor/daemonset.yaml
 - ../../../base/atheros-sensor/networkpolicy.yaml
 - ../../../base/atheros-search
+- ../../../base/cloudflared
+- ../../../base/public-gateway
 images:
 - digest: sha256:908957abe5db0c5c05b9acc95dd73cf4117f696864c82fcb3b2f875ca6f53cfa
   name: atheros-search
@@ -37,6 +39,7 @@ images:
 patches:
 - path: ../patches/identity-hostname.yaml
 - path: ../patches/schema-migrator-identity.yaml
+- path: ../patches/cloudflare-edge.yaml
 - path: ../patches/local-config-annotation.yaml
   target:
     kind: ConfigMap

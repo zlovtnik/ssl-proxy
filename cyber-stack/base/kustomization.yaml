@@ -19,6 +19,9 @@ resources:
   - java-coordinator/networkpolicy.yaml
   # Schema migrator
   - schema-migrator
+  # Public Cloudflare edge
+  - cloudflared
+  - public-gateway
   # Atheros sensor
   - atheros-sensor/daemonset.yaml
   - atheros-sensor/networkpolicy.yaml

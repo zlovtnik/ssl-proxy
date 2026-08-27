@@ -47,7 +47,7 @@ spec:
   validation:
     identityCertificate:
       secretName: ssl-proxy-identity-tls
-      dnsName: identity.prod.ssl-proxy.internal
+      dnsName: gateway.rclabs.uk
     lokiHtpasswd:
       secretName: observability-credentials
       usernameKey: loki-username
@@ -66,6 +66,12 @@ spec:
         postgres-schema-migrator: schema_migrator_runtime
         postgres-schema-owner: schema_owner
   inputs:
+    - kind: Secret
+      name: cloudflared-tunnel-credentials
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/cloudflared-tunnel-credentials
+      keys:
+        - credentials.json
     - kind: Secret
       name: minio-credentials
       type: Opaque
@@ -128,6 +134,7 @@ spec:
       type: kubernetes.io/tls
       vaultPath: secret/ssl-proxy/prod/ssl-proxy-identity-tls
       keys:
+        - ca.crt
         - tls.crt
         - tls.key
     - kind: Secret

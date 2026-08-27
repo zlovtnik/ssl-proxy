@@ -356,7 +356,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 			Msg("inventory completed")
 		writeJSON(w, http.StatusOK, resp)
 	})
-	registerJSON(mux, "POST", "/v1/inventory/merge-candidates/{candidate_id}/decision", tokenAuth, func(w http.ResponseWriter, r *http.Request, params map[string]string) {
+	registerJSONRoles(mux, "POST", "/v1/inventory/merge-candidates/{candidate_id}/decision", tokenAuth, []string{auth.RoleOperator, auth.RoleAdmin}, func(w http.ResponseWriter, r *http.Request, params map[string]string) {
 		start := time.Now()
 		reqID := requestID()
 		candidateID := params["candidate_id"]
@@ -490,8 +490,9 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 			}
 
 			mux.HandlePath("GET", "/v1/etl/stream", func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
-				if tokenAuth != nil && tokenAuth.Enabled() && !tokenAuth.VerifyAuthorization(r.Header.Get("Authorization")) {
-					writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
+				decision := tokenAuth.AuthorizeAuthorization(r.Context(), r.Header.Get("Authorization"), auth.RoleViewer, auth.RoleOperator, auth.RoleAdmin)
+				if decision != auth.DecisionAuthorized {
+					writeAuthorizationError(w, decision)
 					return
 				}
 				start := time.Now()
@@ -604,13 +605,27 @@ func readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 }
 
 func registerJSON(mux *runtime.ServeMux, method, pattern string, tokenAuth *auth.TokenAuth, handler func(http.ResponseWriter, *http.Request, map[string]string)) {
+	registerJSONRoles(mux, method, pattern, tokenAuth, []string{auth.RoleViewer, auth.RoleOperator, auth.RoleAdmin}, handler)
+}
+
+func registerJSONRoles(mux *runtime.ServeMux, method, pattern string, tokenAuth *auth.TokenAuth, allowedRoles []string, handler func(http.ResponseWriter, *http.Request, map[string]string)) {
 	mux.HandlePath(method, pattern, func(w http.ResponseWriter, r *http.Request, params map[string]string) {
-		if tokenAuth != nil && tokenAuth.Enabled() && !tokenAuth.VerifyAuthorization(r.Header.Get("Authorization")) {
-			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
+		decision := tokenAuth.AuthorizeAuthorization(r.Context(), r.Header.Get("Authorization"), allowedRoles...)
+		if decision != auth.DecisionAuthorized {
+			writeAuthorizationError(w, decision)
 			return
 		}
 		handler(w, r, params)
 	})
+}
+
+func writeAuthorizationError(w http.ResponseWriter, decision auth.Decision) {
+	if decision == auth.DecisionForbidden {
+		writeError(w, http.StatusForbidden, "insufficient role")
+		return
+	}
+	w.Header().Set("WWW-Authenticate", `Bearer realm="atheros-search"`)
+	writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 }
 
 func writeProtoJSON(w http.ResponseWriter, status int, msg proto.Message) {

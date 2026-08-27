@@ -285,7 +285,20 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    - ports:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: schema-migrator-traefik
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: schema-migrator-bootstrap
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
         - protocol: TCP
           port: 8080
     - from:

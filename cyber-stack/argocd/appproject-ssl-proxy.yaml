@@ -35,9 +35,13 @@ spec:
     - group: batch
       kind: Job
     - group: networking.k8s.io
-      kind: Ingress
-    - group: networking.k8s.io
       kind: NetworkPolicy
+    - group: traefik.io
+      kind: IngressRoute
+    - group: traefik.io
+      kind: Middleware
+    - group: traefik.io
+      kind: TLSStore
     - group: rbac.authorization.k8s.io
       kind: Role
     - group: rbac.authorization.k8s.io

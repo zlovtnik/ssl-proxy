@@ -88,10 +88,15 @@ PHASE_ONE_ROUTE_KINDS = {
     "TCPRoute",
     "TLSRoute",
     "UDPRoute",
+    "TLSStore",
 }
 
 PHASE_ONE_ROUTE_ALLOWLIST = {
-    ("Ingress", "ssl-proxy-telemetry-grafana"),
+    ("IngressRoute", "ssl-proxy-public-gateway"),
+    ("Middleware", "ssl-proxy-public-body-limit"),
+    ("Middleware", "ssl-proxy-public-rate-limit"),
+    ("Middleware", "ssl-proxy-public-security-headers"),
+    ("TLSStore", "default"),
 }
 
 PHASE_ONE_HOST_NETWORK_ALLOWLIST = {
@@ -1043,6 +1048,93 @@ def _check_phase_one_workload_edge(
     return errors
 
 
+def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]:
+    documents = _documents(rendered)
+    errors: list[str] = []
+    routes = _find(documents, "IngressRoute", "ssl-proxy-public-gateway")
+    if len(routes) != 1:
+        return [f"{relative}: expected one IngressRoute/ssl-proxy-public-gateway"]
+
+    spec = _mapping(routes[0].get("spec"))
+    if _list(spec.get("entryPoints")) != ["websecure"]:
+        errors.append(f"{relative}: public gateway must use only websecure")
+    if _path(spec, "tls", "store", "name") != "default":
+        errors.append(f"{relative}: public gateway must use the default TLSStore")
+
+    expected_routes = {
+        "Host(`gateway.rclabs.uk`) && (PathPrefix(`/realms/middleware`) || PathPrefix(`/resources/`))": (
+            "ssl-proxy-schema-migrator-keycloak",
+            8080,
+        ),
+        "Host(`gateway.rclabs.uk`) && PathPrefix(`/api/`) && !Path(`/api/health`)": (
+            "ssl-proxy-schema-migrator-backend",
+            8080,
+        ),
+        "Host(`gateway.rclabs.uk`) && PathPrefix(`/v1/`)": (
+            "ssl-proxy-atheros-search",
+            8080,
+        ),
+    }
+    actual_routes: dict[str, tuple[str, Any]] = {}
+    for raw_rule in _list(spec.get("routes")):
+        rule = _mapping(raw_rule)
+        match = str(rule.get("match", ""))
+        services = [_mapping(value) for value in _list(rule.get("services"))]
+        if len(services) == 1:
+            actual_routes[match] = (
+                str(services[0].get("name", "")),
+                services[0].get("port"),
+            )
+        if "HostRegexp" in match or "*" in match:
+            errors.append(f"{relative}: public gateway must not use wildcard hosts")
+    if actual_routes != expected_routes:
+        errors.append(
+            f"{relative}: public gateway routes must expose only OIDC, Schema API, and Atheros v1"
+        )
+
+    forbidden_fragments = ("/grafana", "/admin", "/metrics", "/health", "/readyz")
+    if any(fragment in match for match in actual_routes for fragment in forbidden_fragments):
+        errors.append(f"{relative}: public gateway exposes a forbidden operational path")
+    if _find(documents, "Ingress", "ssl-proxy-telemetry-grafana"):
+        errors.append(f"{relative}: Grafana Ingress must remain removed")
+
+    tls_stores = _find(documents, "TLSStore", "default")
+    if (
+        len(tls_stores) != 1
+        or _path(tls_stores[0], "spec", "defaultCertificate", "secretName")
+        != "ssl-proxy-identity-tls"
+    ):
+        errors.append(f"{relative}: default TLSStore must use ssl-proxy-identity-tls")
+
+    tunnel_configs = _find(documents, "ConfigMap", "ssl-proxy-cloudflared")
+    tunnel_deployments = _find(documents, "Deployment", "ssl-proxy-cloudflared")
+    if len(tunnel_configs) != 1 or len(tunnel_deployments) != 1:
+        errors.append(f"{relative}: cloudflared ConfigMap and Deployment are required")
+        return errors
+    tunnel_config = str(_mapping(tunnel_configs[0].get("data")).get("config.yaml", ""))
+    required_tunnel_config = (
+        "tunnel: 2be9a1cd-845e-44d1-9eec-4dbc7a642b71",
+        "hostname: gateway.rclabs.uk",
+        "originServerName: gateway.rclabs.uk",
+        "caPool: /etc/cloudflared/origin-ca/ca.crt",
+        "service: http_status:404",
+    )
+    if (
+        not all(fragment in tunnel_config for fragment in required_tunnel_config)
+        or "noTLSVerify" in tunnel_config
+    ):
+        errors.append(f"{relative}: cloudflared must verify the exact production origin")
+    deployment = tunnel_deployments[0]
+    if _path(deployment, "spec", "replicas") != 2:
+        errors.append(f"{relative}: cloudflared must run two replicas")
+    if (
+        _path(deployment, "spec", "template", "spec", "automountServiceAccountToken")
+        is not False
+    ):
+        errors.append(f"{relative}: cloudflared must not mount a service-account token")
+    return errors
+
+
 def _traefik_values(
     rendered: Documents | str, relative: str, errors: list[str]
 ) -> Mapping[str, Any] | None:
@@ -1103,13 +1195,10 @@ def _check_default_deny_traefik(
                 f"{relative}: Traefik {'.'.join(path)} must be explicitly false"
             )
 
-    if _path(values, "ingressClass", "enabled") is not True:
-        errors.append(
-            f"{relative}: Traefik must retain a non-default IngressClass"
-        )
+    if _path(values, "ingressClass", "enabled") is not False:
+        errors.append(f"{relative}: Traefik IngressClass must be disabled")
 
     for provider in (
-        "kubernetesCRD",
         "kubernetesGateway",
         "kubernetesIngressNGINX",
         "file",
@@ -1118,6 +1207,21 @@ def _check_default_deny_traefik(
             errors.append(
                 f"{relative}: Traefik provider {provider} must be disabled"
             )
+    crd_provider = _mapping(_path(values, "providers", "kubernetesCRD"))
+    if crd_provider != {
+        "enabled": True,
+        "namespaces": ["prod-ssl-proxy"],
+        "allowCrossNamespace": False,
+        "allowExternalNameServices": False,
+        "allowEmptyServices": False,
+    }:
+        errors.append(
+            f"{relative}: Traefik CRD provider must be restricted to prod-ssl-proxy"
+        )
+    if _path(values, "providers", "kubernetesIngress", "enabled") is not False:
+        errors.append(
+            f"{relative}: Traefik Kubernetes Ingress provider must be disabled"
+        )
 
     access_log = _mapping(_path(values, "logs", "access"))
     if _path(values, "logs", "general", "format") != "json":
@@ -1148,10 +1252,10 @@ def _check_default_deny_traefik(
                     str(definition.get("protocol", "TCP")).upper(),
                 )
             )
-    expected_ports = {("web", 80, "TCP"), ("websecure", 443, "TCP")}
+    expected_ports = {("websecure", 443, "TCP")}
     if exposed_ports != expected_ports:
         errors.append(
-            f"{relative}: Traefik public ports must be exactly TCP 80/443"
+            f"{relative}: Traefik must expose only HTTPS TCP 443"
         )
 
     for entrypoint in ("web", "websecure"):
@@ -1173,13 +1277,13 @@ def _check_default_deny_traefik(
                 f"{relative}: Traefik {entrypoint} proxy protocol must be untrusted"
             )
         expected_timeouts = {
-            "readTimeout": "15s",
-            "writeTimeout": "30s",
-            "idleTimeout": "30s",
+            "readTimeout": "30s",
+            "writeTimeout": "0s",
+            "idleTimeout": "180s",
         }
         if _mapping(_path(port, "transport", "respondingTimeouts")) != expected_timeouts:
             errors.append(
-                f"{relative}: Traefik {entrypoint} responding timeouts must remain finite"
+                f"{relative}: Traefik {entrypoint} streaming timeouts are not preserved"
             )
 
     if _mapping(_path(values, "ports", "web", "http", "redirections", "entryPoint")):
@@ -1199,15 +1303,13 @@ def _check_default_deny_traefik(
 
     service_spec = _mapping(_path(values, "service", "spec"))
     expected_service = {
-        "type": "LoadBalancer",
-        "externalTrafficPolicy": "Local",
+        "type": "ClusterIP",
         "ipFamilyPolicy": "SingleStack",
         "ipFamilies": ["IPv4"],
     }
     if service_spec != expected_service:
         errors.append(
-            f"{relative}: Traefik Service must be IPv4 SingleStack with "
-            "externalTrafficPolicy Local"
+            f"{relative}: Traefik Service must be an IPv4 SingleStack ClusterIP"
         )
     for field in ("additionalArguments", "env", "envFrom"):
         if values.get(field) not in (None, [], {}):
@@ -2103,6 +2205,11 @@ def check_repository(root: Path, executable: str) -> list[str]:
             errors.extend(_check_standard_labels(documents, relative))
             errors.extend(_check_immutable_image_pulls(documents, relative))
             errors.extend(_check_ingress_policy_coverage(documents, relative))
+        if relative in {
+            "cyber-stack/matrix/prod",
+            "cyber-stack/matrix/prod/app-stack",
+        }:
+            errors.extend(_check_public_gateway(documents, relative))
         if relative in {
             "cyber-stack/matrix/prod",
             "cyber-stack/matrix/prod/data-plane",

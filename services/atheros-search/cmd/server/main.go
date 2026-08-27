@@ -86,7 +86,17 @@ func main() {
 		logger.Warn().Msg("schema readiness gate disabled")
 	}
 
-	tokenAuth, err := auth.NewTokenAuth(cfg.APIKeySHA256)
+	var tokenAuth *auth.TokenAuth
+	if cfg.JWTIssuer != "" {
+		tokenAuth, err = auth.NewJWTTokenAuth(auth.JWTConfig{
+			Issuer:   cfg.JWTIssuer,
+			JWKSURI:  cfg.JWTJWKSURI,
+			Audience: cfg.JWTAudience,
+			ClientID: cfg.JWTClientID,
+		})
+	} else {
+		tokenAuth, err = auth.NewTokenAuth(cfg.APIKeySHA256)
+	}
 	if err != nil {
 		logger.Fatal().Err(err).Msg("configure auth")
 	}

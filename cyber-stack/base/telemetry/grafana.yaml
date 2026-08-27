@@ -134,30 +134,6 @@ spec:
       protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: ssl-proxy-telemetry-grafana
-  namespace: ssl-proxy
-  labels:
-    app.kubernetes.io/name: ssl-proxy
-    app.kubernetes.io/component: telemetry-grafana
-    app.kubernetes.io/managed-by: kustomize
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web
-spec:
-  ingressClassName: traefik
-  rules:
-    - http:
-        paths:
-          - path: /grafana
-            pathType: Prefix
-            backend:
-              service:
-                name: ssl-proxy-telemetry-grafana
-                port:
-                  number: 3000
----
-apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: ssl-proxy-telemetry-grafana
@@ -174,11 +150,11 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        - namespaceSelector:
+        - podSelector:
             matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
+              app.kubernetes.io/component: telemetry-prometheus
+        - podSelector:
             matchLabels:
-              app.kubernetes.io/name: traefik
+              app.kubernetes.io/component: telemetry-blackbox-exporter
       ports:
         - {protocol: TCP, port: 3000}

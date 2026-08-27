@@ -43,6 +43,10 @@ type Config struct {
 	HybridAlpha                  float64
 	DenseOverfetchFactor         int
 	APIKeySHA256                 string
+	JWTIssuer                    string
+	JWTJWKSURI                   string
+	JWTAudience                  string
+	JWTClientID                  string
 	SchemaReadyRequired          bool
 	SchemaReadyTimeout           time.Duration
 	SchemaReadyPollInterval      time.Duration
@@ -108,6 +112,10 @@ func Load() (Config, error) {
 		HybridAlpha:                  envFloat("ATHSEARCH_HYBRID_ALPHA", 0.5),
 		DenseOverfetchFactor:         envInt("ATHSEARCH_DENSE_OVERFETCH_FACTOR", 8),
 		APIKeySHA256:                 strings.ToLower(strings.TrimSpace(os.Getenv("ATHSEARCH_API_TOKEN_SHA256"))),
+		JWTIssuer:                    strings.TrimSpace(os.Getenv("ATHSEARCH_JWT_ISSUER")),
+		JWTJWKSURI:                   strings.TrimSpace(os.Getenv("ATHSEARCH_JWT_JWKS_URI")),
+		JWTAudience:                  strings.TrimSpace(os.Getenv("ATHSEARCH_JWT_AUDIENCE")),
+		JWTClientID:                  strings.TrimSpace(os.Getenv("ATHSEARCH_JWT_CLIENT_ID")),
 		SchemaReadyRequired:          envBool("ATHSEARCH_SCHEMA_READY_REQUIRED", true),
 		SchemaReadyTimeout:           time.Duration(envInt("ATHSEARCH_SCHEMA_READY_TIMEOUT_MS", 60000)) * time.Millisecond,
 		SchemaReadyPollInterval:      time.Duration(envInt("ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
@@ -174,6 +182,27 @@ func Load() (Config, error) {
 	if cfg.APIKeySHA256 != "" {
 		if _, err := hex.DecodeString(cfg.APIKeySHA256); err != nil || len(cfg.APIKeySHA256) != sha256.Size*2 {
 			return cfg, errors.New("ATHSEARCH_API_TOKEN_SHA256 must be a 64-character hex SHA-256 digest")
+		}
+	}
+	jwtSettings := []string{cfg.JWTIssuer, cfg.JWTJWKSURI, cfg.JWTAudience, cfg.JWTClientID}
+	jwtConfigured := 0
+	for _, value := range jwtSettings {
+		if value != "" {
+			jwtConfigured++
+		}
+	}
+	if jwtConfigured != 0 && jwtConfigured != len(jwtSettings) {
+		return cfg, errors.New("ATHSEARCH_JWT_ISSUER, ATHSEARCH_JWT_JWKS_URI, ATHSEARCH_JWT_AUDIENCE and ATHSEARCH_JWT_CLIENT_ID must be configured together")
+	}
+	if cfg.APIKeySHA256 != "" && jwtConfigured != 0 {
+		return cfg, errors.New("ATHSEARCH_API_TOKEN_SHA256 cannot be combined with JWT authentication")
+	}
+	for name, value := range map[string]string{"ATHSEARCH_JWT_ISSUER": cfg.JWTIssuer, "ATHSEARCH_JWT_JWKS_URI": cfg.JWTJWKSURI} {
+		if value != "" {
+			parsed, err := url.ParseRequestURI(value)
+			if err != nil || parsed.Scheme != "https" && parsed.Scheme != "http" || parsed.Host == "" {
+				return cfg, fmt.Errorf("%s must be an absolute HTTP(S) URL", name)
+			}
 		}
 	}
 	if cfg.EmbeddingBackend != "" {

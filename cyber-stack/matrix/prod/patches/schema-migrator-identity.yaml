@@ -12,6 +12,17 @@ data:
       "registrationAllowed": false,
       "resetPasswordAllowed": true,
       "loginWithEmailAllowed": true,
+      "sslRequired": "external",
+      "requiredActions": [
+        {
+          "alias": "CONFIGURE_TOTP",
+          "name": "Configure OTP",
+          "providerId": "CONFIGURE_TOTP",
+          "enabled": true,
+          "defaultAction": true,
+          "priority": 10
+        }
+      ],
       "roles": {
         "realm": [
           { "name": "admin" },
@@ -19,7 +30,12 @@ data:
           { "name": "viewer" }
         ],
         "client": {
-          "bedrock-ui": [
+          "schema-migrator-ui": [
+            { "name": "admin" },
+            { "name": "operator" },
+            { "name": "viewer" }
+          ],
+          "atheros-search-ui": [
             { "name": "admin" },
             { "name": "operator" },
             { "name": "viewer" }
@@ -28,7 +44,7 @@ data:
       },
       "clients": [
         {
-          "clientId": "bedrock-ui",
+          "clientId": "schema-migrator-ui",
           "name": "Schema Migrator UI",
           "enabled": true,
           "publicClient": true,
@@ -37,12 +53,60 @@ data:
           "directAccessGrantsEnabled": false,
           "implicitFlowEnabled": false,
           "serviceAccountsEnabled": false,
-          "redirectUris": ["https://identity.prod.ssl-proxy.internal/*"],
-          "webOrigins": ["https://identity.prod.ssl-proxy.internal"],
+          "redirectUris": ["https://migrator.rclabs.uk/callback"],
+          "webOrigins": ["https://migrator.rclabs.uk"],
           "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
           "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"],
+          "protocolMappers": [
+            {
+              "name": "schema-migrator-ui-audience",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.client.audience": "schema-migrator-ui",
+                "id.token.claim": "false",
+                "access.token.claim": "true",
+                "introspection.token.claim": "true"
+              }
+            }
+          ],
           "attributes": {
-            "pkce.code.challenge.method": "S256"
+            "pkce.code.challenge.method": "S256",
+            "post.logout.redirect.uris": "https://migrator.rclabs.uk/login"
+          }
+        },
+        {
+          "clientId": "atheros-search-ui",
+          "name": "Atheros Search UI",
+          "enabled": true,
+          "publicClient": true,
+          "protocol": "openid-connect",
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "implicitFlowEnabled": false,
+          "serviceAccountsEnabled": false,
+          "redirectUris": ["https://search.rclabs.uk/callback"],
+          "webOrigins": ["https://search.rclabs.uk"],
+          "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
+          "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"],
+          "protocolMappers": [
+            {
+              "name": "atheros-search-ui-audience",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.client.audience": "atheros-search-ui",
+                "id.token.claim": "false",
+                "access.token.claim": "true",
+                "introspection.token.claim": "true"
+              }
+            }
+          ],
+          "attributes": {
+            "pkce.code.challenge.method": "S256",
+            "post.logout.redirect.uris": "https://search.rclabs.uk/"
           }
         }
       ]
@@ -58,7 +122,7 @@ data:
     http:
       routers:
         keycloak:
-          rule: "Host(`identity.prod.ssl-proxy.internal`) && (PathPrefix(`/realms`) || PathPrefix(`/resources`))"
+          rule: "Host(`gateway.rclabs.uk`) && (PathPrefix(`/realms/middleware`) || PathPrefix(`/resources/`))"
           entryPoints: [websecure]
           priority: 30
           service: keycloak
@@ -66,18 +130,10 @@ data:
             store:
               name: default
         backend:
-          rule: "Host(`identity.prod.ssl-proxy.internal`) && PathPrefix(`/api`)"
+          rule: "Host(`gateway.rclabs.uk`) && PathPrefix(`/api/`) && !Path(`/api/health`)"
           entryPoints: [websecure]
           priority: 20
           service: backend
-          tls:
-            store:
-              name: default
-        ui:
-          rule: "Host(`identity.prod.ssl-proxy.internal`) && PathPrefix(`/`)"
-          entryPoints: [websecure]
-          priority: 10
-          service: ui
           tls:
             store:
               name: default
@@ -90,10 +146,6 @@ data:
           loadBalancer:
             servers:
               - url: "http://ssl-proxy-schema-migrator-keycloak:8080"
-        ui:
-          loadBalancer:
-            servers:
-              - url: "http://ssl-proxy-schema-migrator-ui:80"
     tls:
       stores:
         default:

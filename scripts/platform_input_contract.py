@@ -157,7 +157,7 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
     expected_validation_policy = {
         "identityCertificate": {
             "secretName": "ssl-proxy-identity-tls",
-            "dnsName": "identity.prod.ssl-proxy.internal",
+            "dnsName": "gateway.rclabs.uk",
         },
         "lokiHtpasswd": {
             "secretName": "observability-credentials",

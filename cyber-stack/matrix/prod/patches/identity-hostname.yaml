@@ -5,6 +5,8 @@ metadata:
   namespace: ssl-proxy
 data:
   ENVIRONMENT: prod
-  IDENTITY_HOSTNAME: identity.prod.ssl-proxy.internal
-  IDENTITY_PUBLIC_ORIGIN: https://identity.prod.ssl-proxy.internal
-  IDENTITY_KEYCLOAK_ISSUER: https://identity.prod.ssl-proxy.internal/realms/middleware
+  IDENTITY_HOSTNAME: gateway.rclabs.uk
+  IDENTITY_PUBLIC_ORIGIN: https://gateway.rclabs.uk
+  IDENTITY_KEYCLOAK_ISSUER: https://gateway.rclabs.uk/realms/middleware
+  SCHEMA_MIGRATOR_CORS_ORIGIN: https://migrator.rclabs.uk
+  ATHEROS_SEARCH_CORS_ORIGIN: https://search.rclabs.uk

@@ -73,7 +73,23 @@ spec:
             - name: ATHSEARCH_LOG_LEVEL
               value: "info"
             - name: ATHSEARCH_CORS_ALLOWED_ORIGINS
-              value: ""
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: ATHEROS_SEARCH_CORS_ORIGIN
+            - name: ATHSEARCH_JWT_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: IDENTITY_KEYCLOAK_ISSUER
+            - name: ATHSEARCH_JWT_JWKS_URI
+              value: "http://ssl-proxy-schema-migrator-keycloak:8080/realms/middleware/protocol/openid-connect/certs"
+            - name: ATHSEARCH_JWT_AUDIENCE
+              value: "atheros-search-ui"
+            - name: ATHSEARCH_JWT_CLIENT_ID
+              value: "atheros-search-ui"
+            - name: ATHSEARCH_WS_ENABLED
+              value: "false"
             - name: ATHSEARCH_SCHEMA_READY_REQUIRED
               value: "true"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

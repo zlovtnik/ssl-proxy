@@ -23,7 +23,7 @@ spec:
     gatewayClass:
       enabled: false
     ingressClass:
-      enabled: true
+      enabled: false
       isDefaultClass: false
       name: traefik
     ingressRoute:
@@ -34,12 +34,14 @@ spec:
 
     providers:
       kubernetesCRD:
-        enabled: false
+        enabled: true
+        namespaces:
+          - prod-ssl-proxy
         allowCrossNamespace: false
         allowExternalNameServices: false
         allowEmptyServices: false
       kubernetesIngress:
-        enabled: true
+        enabled: false
         allowExternalNameServices: false
         allowEmptyServices: false
       kubernetesGateway:
@@ -87,7 +89,7 @@ spec:
     ports:
       web:
         expose:
-          default: true
+          default: false
         exposedPort: 80
         protocol: TCP
         allowACMEByPass: false
@@ -103,9 +105,9 @@ spec:
           insecure: false
         transport:
           respondingTimeouts:
-            readTimeout: 15s
-            writeTimeout: 30s
-            idleTimeout: 30s
+            readTimeout: 30s
+            writeTimeout: 0s
+            idleTimeout: 180s
       websecure:
         expose:
           default: true
@@ -128,9 +130,9 @@ spec:
           insecure: false
         transport:
           respondingTimeouts:
-            readTimeout: 15s
-            writeTimeout: 30s
-            idleTimeout: 30s
+            readTimeout: 30s
+            writeTimeout: 0s
+            idleTimeout: 180s
       metrics:
         expose:
           default: false
@@ -146,8 +148,7 @@ spec:
       enabled: true
       single: true
       spec:
-        type: LoadBalancer
-        externalTrafficPolicy: Local
+        type: ClusterIP
         ipFamilyPolicy: SingleStack
         ipFamilies:
           - IPv4

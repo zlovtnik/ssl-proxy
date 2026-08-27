@@ -66,7 +66,7 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-platform-config
-                  key: IDENTITY_PUBLIC_ORIGIN
+                  key: SCHEMA_MIGRATOR_CORS_ORIGIN
             - name: BEDROCK_ENCRYPT_KEY
               valueFrom:
                 secretKeyRef:
@@ -94,9 +94,9 @@ spec:
             - name: BEDROCK_KEYCLOAK_JWKS_URI
               value: "http://ssl-proxy-schema-migrator-keycloak:8080/realms/middleware/protocol/openid-connect/certs"
             - name: BEDROCK_KEYCLOAK_CLIENT_ID
-              value: "bedrock-ui"
+              value: "schema-migrator-ui"
             - name: BEDROCK_KEYCLOAK_AUDIENCE
-              value: "bedrock-ui"
+              value: "schema-migrator-ui"
             - name: BEDROCK_PATCH_STAGE_DIR
               value: /tmp/schema-migrator-patches
             - name: BEDROCK_REPO_CACHE_DIR

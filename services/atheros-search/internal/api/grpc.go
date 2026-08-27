@@ -72,5 +72,5 @@ func authorized(ctx context.Context, tokenAuth *auth.TokenAuth) bool {
 	if len(values) == 0 {
 		return false
 	}
-	return tokenAuth.VerifyAuthorization(strings.Join(values, " "))
+	return tokenAuth.AuthorizeAuthorization(ctx, strings.Join(values, " "), auth.RoleViewer, auth.RoleOperator, auth.RoleAdmin) == auth.DecisionAuthorized
 }

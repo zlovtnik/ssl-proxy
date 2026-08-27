@@ -27,6 +27,30 @@ func setRequiredPostgresEnv(t *testing.T) {
 	t.Setenv("ATHSEARCH_POSTGRES_TLS_CA_FILE", "/tls/ca.crt")
 	t.Setenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", "postgres.example.test")
 	t.Setenv("ATHSEARCH_SCHEMA_MANIFEST_SHA256", hex.EncodeToString(make([]byte, sha256.Size)))
+	for _, key := range []string{"ATHSEARCH_API_TOKEN_SHA256", "ATHSEARCH_JWT_ISSUER", "ATHSEARCH_JWT_JWKS_URI", "ATHSEARCH_JWT_AUDIENCE", "ATHSEARCH_JWT_CLIENT_ID"} {
+		t.Setenv(key, "")
+	}
+}
+
+func TestLoadValidatesJWTConfiguration(t *testing.T) {
+	setRequiredPostgresEnv(t)
+	t.Setenv("ATHSEARCH_JWT_ISSUER", "https://gateway.example.test/realms/middleware")
+	_, err := Load()
+	require.ErrorContains(t, err, "must be configured together")
+
+	setRequiredPostgresEnv(t)
+	t.Setenv("ATHSEARCH_JWT_ISSUER", "https://gateway.example.test/realms/middleware")
+	t.Setenv("ATHSEARCH_JWT_JWKS_URI", "https://keycloak.example.test/realms/middleware/protocol/openid-connect/certs")
+	t.Setenv("ATHSEARCH_JWT_AUDIENCE", "atheros-search-ui")
+	t.Setenv("ATHSEARCH_JWT_CLIENT_ID", "atheros-search-ui")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "atheros-search-ui", cfg.JWTAudience)
+
+	sum := sha256.Sum256([]byte("token"))
+	t.Setenv("ATHSEARCH_API_TOKEN_SHA256", hex.EncodeToString(sum[:]))
+	_, err = Load()
+	require.ErrorContains(t, err, "cannot be combined")
 }
 
 func TestLoadRequiresPostgresConnectionURL(t *testing.T) {
