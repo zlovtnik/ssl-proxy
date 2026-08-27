@@ -7,19 +7,22 @@ import (
 
 	"github.com/zlovtnik/ssl-proxy/services/platform-sync/internal/contract"
 	"github.com/zlovtnik/ssl-proxy/services/platform-sync/internal/log"
-	"github.com/zlovtnik/ssl-proxy/services/platform-sync/internal/vault"
 )
 
-func ReadAllVault(ctx context.Context, logger *log.Logger, vaultClient *vault.Client, c *contract.Contract) (map[string]map[string][]byte, error) {
+type SecretReader interface {
+	ReadSecret(context.Context, string) (map[string][]byte, error)
+}
+
+func ReadAllVault(ctx context.Context, logger *log.Logger, vaultClient SecretReader, c *contract.Contract) (map[string]map[string][]byte, error) {
 	secretData := make(map[string]map[string][]byte)
 
 	for _, input := range c.Inputs {
 		name := input.Name
 		vaultPath := input.VaultPath
-
-		parts := strings.SplitN(vaultPath, "/", 2)
-		relativePath := parts[len(parts)-1]
-		relativePath = strings.TrimPrefix(relativePath, "secret/ssl-proxy/prod/")
+		// The Vault client is already scoped to the configured KV-v2 mount, so
+		// pass the logical path beneath that mount. Contract paths are absolute
+		// logical paths such as secret/ssl-proxy/prod/runtime.
+		relativePath := strings.TrimPrefix(vaultPath, "secret/")
 
 		logger.Info("reading vault secret", "name", name, "path", relativePath)
 		data, err := vaultClient.ReadSecret(ctx, relativePath)
@@ -27,13 +30,16 @@ func ReadAllVault(ctx context.Context, logger *log.Logger, vaultClient *vault.Cl
 			return nil, fmt.Errorf("read %s: %w", name, err)
 		}
 
+		declared := make(map[string][]byte, len(input.Keys))
 		for _, key := range input.Keys {
-			if _, ok := data[key]; !ok {
+			value, ok := data[key]
+			if !ok {
 				return nil, fmt.Errorf("secret %s missing key %s", name, key)
 			}
+			declared[key] = append([]byte(nil), value...)
 		}
 
-		secretData[name] = data
+		secretData[name] = declared
 	}
 
 	return secretData, nil

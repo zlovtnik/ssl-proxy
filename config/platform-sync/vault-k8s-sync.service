@@ -2,16 +2,22 @@
 Description=Platform sync Vault to Kubernetes
 After=network-online.target credential-generator.service
 Wants=network-online.target
+Requires=credential-generator.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/platform-sync/platform-sync.conf
 Environment=KUBECONFIG=/run/platform-sync/kubeconfig
-Environment=VAULT_TOKEN_FILE=/run/platform-sync/vault-token
+LoadCredential=vault-token:/etc/platform-sync/vault-token
+LoadCredential=vault-ca:/etc/platform-sync/vault-ca.crt
+Environment=VAULT_TOKEN_FILE=%d/vault-token
+Environment=VAULT_CACERT=%d/vault-ca
 ExecStartPre=/usr/bin/test -f /run/platform-sync/kubeconfig
-ExecStartPre=/usr/bin/test -f /run/platform-sync/vault-token
-ExecStart=/bin/bash -c 'export VAULT_TOKEN=$(cat /run/platform-sync/vault-token) && exec /opt/platform-sync/bin/platform-sync'
-RemainAfterExit=yes
+ExecStart=/opt/platform-sync/bin/platform-sync
+RuntimeDirectory=platform-sync
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
 
 User=platform-sync
 Group=platform-sync

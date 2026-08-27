@@ -1,220 +1,201 @@
 package validate
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/zlovtnik/ssl-proxy/services/platform-sync/internal/contract"
+	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/curve25519"
 )
 
-func TestValidateTLS(t *testing.T) {
-	tests := []struct {
-		name    string
-		data    map[string]map[string][]byte
-		wantErr bool
-	}{
-		{
-			name: "missing TLS secret",
-			data: map[string]map[string][]byte{},
-			wantErr: true,
-		},
-		{
-			name: "missing ca.crt",
-			data: map[string]map[string][]byte{
-				"ssl-proxy-identity-tls": {},
-			},
-			wantErr: true,
-		},
-		{
-			name: "missing tls.crt",
-			data: map[string]map[string][]byte{
-				"ssl-proxy-identity-tls": {
-					"ca.crt": []byte("test"),
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "missing tls.key",
-			data: map[string]map[string][]byte{
-				"ssl-proxy-identity-tls": {
-					"ca.crt":  []byte("test"),
-					"tls.crt": []byte("test"),
-				},
-			},
-			wantErr: true,
-		},
+func TestValidateTLSVerifiesPrivateKey(t *testing.T) {
+	certificate := testCertificate(t, "gateway.rclabs.uk")
+	c := &contract.Contract{Validation: contract.Validation{IdentityCertificate: contract.IdentityCertificateValidation{
+		SecretName: "identity", DNSName: "gateway.rclabs.uk",
+	}}}
+	valid := map[string]map[string][]byte{"identity": {
+		"ca.crt": certificate.ca, "tls.crt": certificate.certificate, "tls.key": certificate.privateKey,
+	}}
+	if err := validateTLS(c, valid); err != nil {
+		t.Fatalf("valid certificate rejected: %v", err)
 	}
-
-	c := &contract.Contract{
-		Validation: contract.Validation{
-			IdentityCertificate: struct {
-				SecretName string `yaml:"secretName"`
-				DNSName    string `yaml:"dnsName"`
-			}{
-				SecretName: "ssl-proxy-identity-tls",
-				DNSName:    "gateway.rclabs.uk",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateTLS(c, tt.data)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateTLS() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	other := testCertificate(t, "gateway.rclabs.uk")
+	valid["identity"]["tls.key"] = other.privateKey
+	if err := validateTLS(c, valid); err == nil {
+		t.Fatal("certificate with a different private key was accepted")
 	}
 }
 
-func TestValidatePostgres(t *testing.T) {
-	tests := []struct {
-		name    string
-		data    map[string]map[string][]byte
-		wantErr bool
-	}{
-		{
-			name: "missing endpoint ConfigMap",
-			data: map[string]map[string][]byte{},
-			wantErr: true,
-		},
-		{
-			name: "missing POSTGRES_HOST",
-			data: map[string]map[string][]byte{
-				"ssl-proxy-prod-postgres-endpoint": {},
-			},
-			wantErr: true,
-		},
+func TestValidateLokiComparesDeclaredHash(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("correct"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	c := &contract.Contract{
-		Validation: contract.Validation{
-			Postgres: struct {
-				EndpointConfigMapName string            `yaml:"endpointConfigMapName"`
-				Database              string            `yaml:"database"`
-				Transport             string            `yaml:"transport"`
-				TLSSecretName         string            `yaml:"tlsSecretName"`
-				GrantMatrixDocument   string            `yaml:"grantMatrixDocument"`
-				Accounts              map[string]string `yaml:"accounts"`
-			}{
-				EndpointConfigMapName: "ssl-proxy-prod-postgres-endpoint",
-				Database:              "sync",
-				Transport:             "tls-verify-full",
-				TLSSecretName:         "postgres-runtime-tls",
-				Accounts:              map[string]string{},
-			},
-		},
+	c := &contract.Contract{Validation: contract.Validation{LokiHtpasswd: contract.LokiHtpasswdValidation{
+		SecretName: "observability", UsernameKey: "username", PasswordKey: "password", HtpasswdKey: "htpasswd",
+	}}}
+	data := map[string]map[string][]byte{"observability": {
+		"username": []byte("loki"), "password": []byte("correct"), "htpasswd": []byte("loki:" + string(hash)),
+	}}
+	if err := validateLoki(c, data); err != nil {
+		t.Fatalf("valid htpasswd rejected: %v", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validatePostgres(c, tt.data)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validatePostgres() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	data["observability"]["password"] = []byte("wrong")
+	if err := validateLoki(c, data); err == nil {
+		t.Fatal("mismatched htpasswd password was accepted")
 	}
 }
 
-func TestValidatePgBouncer(t *testing.T) {
-	tests := []struct {
-		name    string
-		data    map[string]map[string][]byte
-		wantErr bool
-	}{
-		{
-			name: "missing PgBouncer secret",
-			data: map[string]map[string][]byte{},
-			wantErr: true,
-		},
-		{
-			name: "missing userlist.txt",
-			data: map[string]map[string][]byte{
-				"pgbouncer-runtime-users": {},
-			},
-			wantErr: true,
-		},
-		{
-			name: "valid userlist",
-			data: map[string]map[string][]byte{
-				"pgbouncer-runtime-users": {
-					"userlist.txt": []byte(`"user1" "password1"
-"user2" "password2"`),
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "invalid userlist format",
-			data: map[string]map[string][]byte{
-				"pgbouncer-runtime-users": {
-					"userlist.txt": []byte("invalid"),
-				},
-			},
-			wantErr: true,
-		},
+func TestValidatePostgresRejectsStaticContractMismatchesBeforeConnecting(t *testing.T) {
+	c := postgresContract()
+	data := postgresStaticData()
+	data["endpoint"]["POSTGRES_DATABASE"] = []byte("wrong")
+	if err := validatePostgres(context.Background(), c, data); err == nil {
+		t.Fatal("wrong database was accepted")
 	}
-
-	c := &contract.Contract{}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validatePgBouncer(c, tt.data)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validatePgBouncer() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	data = postgresStaticData()
+	data["endpoint"]["POSTGRES_SSL_MODE"] = []byte("require")
+	if err := validatePostgres(context.Background(), c, data); err == nil {
+		t.Fatal("non-verify-full transport was accepted")
+	}
+	data = postgresStaticData()
+	data["postgres-tls"]["ca.crt"] = []byte("not a certificate")
+	if err := validatePostgres(context.Background(), c, data); err == nil {
+		t.Fatal("invalid PostgreSQL CA was accepted")
 	}
 }
 
-func TestValidateWireGuard(t *testing.T) {
-	tests := []struct {
-		name    string
-		data    map[string]map[string][]byte
-		wantErr bool
-	}{
-		{
-			name: "missing WireGuard config",
-			data: map[string]map[string][]byte{},
-			wantErr: true,
-		},
-		{
-			name: "missing server.conf",
-			data: map[string]map[string][]byte{
-				"wireguard-config": {},
-			},
-			wantErr: true,
-		},
-		{
-			name: "valid WireGuard config",
-			data: map[string]map[string][]byte{
-				"wireguard-config": {
-					"server.conf":           []byte("[Interface]\nPrivateKey = test\n"),
-					"Corefile":              []byte("test"),
-					"privatekey-server":     []byte("testkey"),
-					"publickey-server":      []byte("testkey"),
-					"peer1.conf":            []byte("test"),
-					"peer1-obfuscated.conf": []byte("test"),
-					"publickey-peer1":       []byte("testkey"),
-					"presharedkey-peer1":    []byte("testkey"),
-					"peer2.conf":            []byte("test"),
-					"peer2-obfuscated.conf": []byte("test"),
-					"publickey-peer2":       []byte("testkey"),
-					"presharedkey-peer2":    []byte("testkey"),
-				},
-			},
-			wantErr: false,
-		},
+func TestValidatePgBouncerRequiresRuntimeAccounts(t *testing.T) {
+	c := postgresContract()
+	data := map[string]map[string][]byte{"pgbouncer-runtime-users": {
+		"userlist.txt": []byte(`"atheros_search_runtime" "secret"
+"octopus_runtime" "secret"`),
+	}}
+	if err := validatePgBouncer(c, data); err == nil {
+		t.Fatal("userlist missing schema_migrator_runtime was accepted")
 	}
-
-	c := &contract.Contract{}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateWireGuard(c, tt.data)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateWireGuard() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	data["pgbouncer-runtime-users"]["userlist.txt"] = []byte(`"atheros_search_runtime" "secret"
+"octopus_runtime" "secret"
+"schema_migrator_runtime" "secret"`)
+	if err := validatePgBouncer(c, data); err != nil {
+		t.Fatalf("complete userlist rejected: %v", err)
 	}
+}
+
+func TestValidateWireGuardRequiresRealMatchingKeys(t *testing.T) {
+	private := make([]byte, curve25519.ScalarSize)
+	if _, err := rand.Read(private); err != nil {
+		t.Fatal(err)
+	}
+	public, err := curve25519.X25519(private, curve25519.Basepoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := func(raw []byte) []byte { return []byte(base64.StdEncoding.EncodeToString(raw)) }
+	data := map[string]map[string][]byte{"wireguard-config": {
+		"server.conf": []byte("[Interface]\nPrivateKey = value\n"), "Corefile": []byte(".:53 {}"),
+		"privatekey-server": key(private), "publickey-server": key(public),
+		"peer1.conf": []byte("[Interface]\n[Peer]\n"), "peer1-obfuscated.conf": []byte("configured"),
+		"publickey-peer1": key(public), "presharedkey-peer1": key(private),
+		"peer2.conf": []byte("[Interface]\n[Peer]\n"), "peer2-obfuscated.conf": []byte("configured"),
+		"publickey-peer2": key(public), "presharedkey-peer2": key(private),
+	}}
+	if err := validateWireGuard(&contract.Contract{}, data); err != nil {
+		t.Fatalf("valid WireGuard data rejected: %v", err)
+	}
+	data["wireguard-config"]["publickey-server"] = []byte("arbitrary")
+	if err := validateWireGuard(&contract.Contract{}, data); err == nil {
+		t.Fatal("arbitrary WireGuard key was accepted")
+	}
+}
+
+type certificateFixture struct {
+	ca          []byte
+	certificate []byte
+	privateKey  []byte
+}
+
+func testCertificate(t *testing.T, dnsName string) certificateFixture {
+	t.Helper()
+	now := time.Now()
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature, BasicConstraintsValid: true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: dnsName}, DNSNames: []string{dnsName},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caTemplate, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return certificateFixture{
+		ca:          pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
+		certificate: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}),
+		privateKey:  pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(leafKey)}),
+	}
+}
+
+func postgresContract() *contract.Contract {
+	return &contract.Contract{Validation: contract.Validation{Postgres: contract.PostgresValidation{
+		EndpointConfigMapName: "endpoint", Database: "sync", Transport: "tls-verify-full",
+		TLSSecretName: "postgres-tls", GrantMatrixDocument: "sql/postgres",
+		Host: "192.168.1.242", Port: 4000, TLSServerName: "192.168.1.242",
+		Accounts: map[string]string{
+			"postgres-atheros-search": "atheros_search_runtime", "postgres-keycloak": "keycloak_runtime",
+			"postgres-octopus": "octopus_runtime", "postgres-schema-migrator": "schema_migrator_runtime",
+			"postgres-schema-owner": "schema_owner",
+		},
+	}}}
+}
+
+func postgresStaticData() map[string]map[string][]byte {
+	ca := testCertificateForCA()
+	data := map[string]map[string][]byte{
+		"endpoint": {
+			"POSTGRES_HOST": []byte("192.168.1.242"), "POSTGRES_PORT": []byte("4000"),
+			"POSTGRES_DATABASE": []byte("sync"), "POSTGRES_SSL_MODE": []byte("verify-full"),
+			"POSTGRES_SSL_SERVER_NAME": []byte("192.168.1.242"),
+		},
+		"postgres-tls": {"ca.crt": ca},
+	}
+	for secret := range canonicalAccounts {
+		data[secret] = map[string][]byte{"password": []byte("secret")}
+	}
+	return data
+}
+
+func testCertificateForCA() []byte {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(3), Subject: pkix.Name{CommonName: "PostgreSQL CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	der, _ := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }

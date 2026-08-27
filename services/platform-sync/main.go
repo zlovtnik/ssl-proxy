@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,83 +20,139 @@ import (
 	"github.com/zlovtnik/ssl-proxy/services/platform-sync/internal/vault"
 )
 
-func main() {
-	dryRun := flag.Bool("dry-run", false, "validate and dry-run without writing")
-	contractPath := flag.String("contract", "cyber-stack/platform-input-contract.yaml", "path to platform-input-contract.yaml")
-	lockTTL := flag.Int("lock-ttl", 600, "lock TTL in seconds")
-	flag.Parse()
-
-	logger := log.New()
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	metricsServer := metrics.NewServer()
-	go metricsServer.ListenAndServe()
-
-	healthServer := health.NewServer()
-	go healthServer.ListenAndServe()
-
-	exitCode := run(ctx, logger, *dryRun, *contractPath, *lockTTL, metricsServer, healthServer)
-	cancel()
-	time.Sleep(100 * time.Millisecond)
-	os.Exit(exitCode)
+type options struct {
+	dryRun       bool
+	contractPath string
+	lockTTL      int
+	namespace    string
 }
 
-func run(ctx context.Context, logger *log.Logger, dryRun bool, contractPath string, lockTTL int, metricsServer *metrics.Server, healthServer *health.Server) int {
-	start := time.Now()
-	metrics.SetRunStart(start)
+func main() {
+	os.Exit(realMain())
+}
 
-	c, err := contract.Load(contractPath)
+func realMain() int {
+	logger := log.New()
+	options, err := parseOptions(os.Args[1:], os.Getenv)
 	if err != nil {
-		logger.Error("failed to load contract", "error", err)
-		metrics.RecordRun("contract_error")
-		healthServer.SetStatus("error", "contract load failed")
-		return 1
+		logger.Error("invalid configuration", "error", err)
+		return 2
 	}
-	logger.Info("contract loaded", "inputs", len(c.Inputs))
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	recorder := metrics.NewRecorder()
+	healthRecorder := health.NewRecorder()
+	return run(ctx, logger, options, recorder, healthRecorder)
+}
+
+func parseOptions(args []string, getenv func(string) string) (options, error) {
+	configured := options{
+		contractPath: envOr(getenv, "CONTRACT_PATH", "cyber-stack/platform-input-contract.yaml"),
+		namespace:    envOr(getenv, "SYNC_NAMESPACE", "prod-ssl-proxy"),
+		lockTTL:      600,
+	}
+	if value := strings.TrimSpace(getenv("SYNC_DRY_RUN")); value != "" {
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return options{}, fmt.Errorf("SYNC_DRY_RUN: %w", err)
+		}
+		configured.dryRun = parsed
+	}
+	if value := strings.TrimSpace(getenv("SYNC_LOCK_TTL_SECONDS")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return options{}, fmt.Errorf("SYNC_LOCK_TTL_SECONDS: %w", err)
+		}
+		configured.lockTTL = parsed
+	}
+
+	flags := flag.NewFlagSet("platform-sync", flag.ContinueOnError)
+	flags.BoolVar(&configured.dryRun, "dry-run", configured.dryRun, "validate and perform Kubernetes server-side dry-runs without applying")
+	flags.StringVar(&configured.contractPath, "contract", configured.contractPath, "path to platform-input-contract.yaml")
+	flags.IntVar(&configured.lockTTL, "lock-ttl", configured.lockTTL, "lock TTL in seconds")
+	flags.StringVar(&configured.namespace, "namespace", configured.namespace, "target Kubernetes namespace")
+	if err := flags.Parse(args); err != nil {
+		return options{}, err
+	}
+	if configured.contractPath == "" || configured.namespace == "" {
+		return options{}, fmt.Errorf("contract path and namespace must be non-empty")
+	}
+	if configured.lockTTL <= 0 {
+		return options{}, fmt.Errorf("lock TTL must be positive")
+	}
+	return configured, nil
+}
+
+func envOr(getenv func(string) string, name, fallback string) string {
+	if value := strings.TrimSpace(getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func run(ctx context.Context, logger *log.Logger, configured options, recorder *metrics.Recorder, healthRecorder *health.Recorder) int {
+	start := time.Now()
+	recorder.SetRunStart(start)
+
+	c, err := contract.Load(configured.contractPath)
+	if err != nil {
+		return fail(logger, recorder, healthRecorder, "contract_error", "contract load failed", err)
+	}
+	if c.Namespace != configured.namespace {
+		return fail(logger, recorder, healthRecorder, "contract_error", "namespace mismatch", fmt.Errorf("contract namespace %s does not match configured namespace %s", c.Namespace, configured.namespace))
+	}
+	logger.Info("contract loaded", "inputs", len(c.Inputs), "namespace", c.Namespace)
 
 	vaultClient, err := vault.NewClient()
 	if err != nil {
-		logger.Error("failed to create vault client", "error", err)
-		metrics.RecordRun("vault_error")
-		healthServer.SetStatus("error", "vault client failed")
-		return 1
+		return fail(logger, recorder, healthRecorder, "vault_error", "Vault client failed", err)
 	}
-
+	if err := vaultClient.RenewSelf(ctx); err != nil {
+		return fail(logger, recorder, healthRecorder, "vault_error", "Vault token renewal failed", err)
+	}
 	secretData, err := sync.ReadAllVault(ctx, logger, vaultClient, c)
 	if err != nil {
-		logger.Error("failed to read vault secrets", "error", err)
-		metrics.RecordRun("vault_read_error")
-		healthServer.SetStatus("error", "vault read failed")
-		return 1
+		return fail(logger, recorder, healthRecorder, "vault_read_error", "Vault read failed", err)
 	}
-	logger.Info("all vault secrets read successfully", "count", len(secretData))
+	logger.Info("all declared Vault inputs read", "count", len(secretData))
 
-	if err := validate.All(c, secretData); err != nil {
-		logger.Error("validation failed", "error", err)
-		metrics.RecordRun("validation_error")
-		healthServer.SetStatus("error", "validation failed")
-		return 1
+	if err := validate.All(ctx, c, secretData); err != nil {
+		return fail(logger, recorder, healthRecorder, "validation_error", "validation failed", err)
 	}
 	logger.Info("all validations passed")
 
-	if dryRun {
-		logger.Info("dry run complete")
-		metrics.RecordRun("dry_run")
-		healthServer.SetStatus("ok", "dry run complete")
+	if err := sync.WriteAll(ctx, logger, c, secretData, configured.lockTTL, configured.dryRun); err != nil {
+		return fail(logger, recorder, healthRecorder, "sync_error", "Kubernetes sync failed", err)
+	}
+	if configured.dryRun {
+		logger.Info("dry run complete", "duration", time.Since(start))
+		recordRun(logger, recorder, "dry_run", 0)
+		recordHealth(logger, healthRecorder, "ok", "validation and Kubernetes server-side dry-run complete")
 		return 0
 	}
 
-	if err := sync.WriteAll(ctx, logger, c, secretData, lockTTL); err != nil {
-		logger.Error("sync failed", "error", err)
-		metrics.RecordRun("sync_error")
-		healthServer.SetStatus("error", "sync failed")
-		return 1
-	}
-
-	logger.Info("sync complete", "duration", time.Since(start))
-	metrics.RecordRun("success")
-	metrics.RecordInputsWritten(len(c.Inputs))
-	healthServer.SetStatus("ok", fmt.Sprintf("sync complete at %s", time.Now().Format(time.RFC3339)))
+	duration := time.Since(start)
+	logger.Info("sync complete", "duration", duration)
+	recordRun(logger, recorder, "success", len(c.Inputs))
+	recordHealth(logger, healthRecorder, "ok", fmt.Sprintf("sync complete at %s", time.Now().UTC().Format(time.RFC3339)))
 	return 0
+}
+
+func fail(logger *log.Logger, recorder *metrics.Recorder, healthRecorder *health.Recorder, result, message string, err error) int {
+	logger.Error(message, "error", err)
+	recordRun(logger, recorder, result, 0)
+	recordHealth(logger, healthRecorder, "error", message)
+	return 1
+}
+
+func recordRun(logger *log.Logger, recorder *metrics.Recorder, result string, inputs int) {
+	if err := recorder.RecordRun(result, inputs); err != nil {
+		logger.Error("failed to persist metrics", "error", err)
+	}
+}
+
+func recordHealth(logger *log.Logger, recorder *health.Recorder, status, message string) {
+	if err := recorder.SetStatus(status, message); err != nil {
+		logger.Error("failed to persist health status", "error", err)
+	}
 }

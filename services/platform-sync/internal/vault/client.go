@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	vault "github.com/hashicorp/vault/api"
 )
@@ -27,7 +28,17 @@ func NewClient() (*Client, error) {
 
 	token := os.Getenv("VAULT_TOKEN")
 	if token == "" {
-		return nil, fmt.Errorf("VAULT_TOKEN is required")
+		tokenFile := os.Getenv("VAULT_TOKEN_FILE")
+		if tokenFile != "" {
+			data, err := os.ReadFile(tokenFile) // #nosec G304 -- VAULT_TOKEN_FILE is an explicit trusted service setting.
+			if err != nil {
+				return nil, fmt.Errorf("read VAULT_TOKEN_FILE: %w", err)
+			}
+			token = strings.TrimSpace(string(data))
+		}
+	}
+	if token == "" {
+		return nil, fmt.Errorf("VAULT_TOKEN or VAULT_TOKEN_FILE is required")
 	}
 	client.SetToken(token)
 
@@ -57,4 +68,17 @@ func (c *Client) ReadSecret(ctx context.Context, path string) (map[string][]byte
 		}
 	}
 	return result, nil
+}
+
+// RenewSelf extends the periodic read-only service token before each sync.
+// The token is provisioned out-of-band and loaded through a systemd credential.
+func (c *Client) RenewSelf(ctx context.Context) error {
+	secret, err := c.api.Auth().Token().RenewSelfWithContext(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("renew Vault token: %w", err)
+	}
+	if secret == nil || secret.Auth == nil || !secret.Auth.Renewable {
+		return fmt.Errorf("Vault token did not renew as a renewable token")
+	}
+	return nil
 }

@@ -1,60 +1,53 @@
 #!/usr/bin/env bash
-# Bootstrap Vault for platform-sync: create policy and K8s auth role
-# Run this once by a human with Vault admin capability
-# Idempotent: safe to re-run
+# Provision the renewable read-only Vault token consumed by platform-sync.
+# Run once with a Vault administrator token. The service token is written to
+# PLATFORM_SYNC_TOKEN_FILE and is never printed.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
 POLICY_NAME="platform-sync-ro"
-ROLE_NAME="platform-sync"
-SA_NAME="ssl-proxy-platform-sync"
-SA_NAMESPACE="prod-ssl-proxy"
 POLICY_FILE="$REPO_ROOT/vault/policies/platform-sync-ro.hcl"
+TOKEN_FILE="${PLATFORM_SYNC_TOKEN_FILE:-}"
+TOKEN_PERIOD="${PLATFORM_SYNC_TOKEN_PERIOD:-24h}"
 
-echo "=== Vault Platform Sync Bootstrap ==="
-
-# Check Vault connectivity
-if ! vault status -format=json >/dev/null 2>&1; then
-    echo "ERROR: Cannot connect to Vault. Check VAULT_ADDR and VAULT_TOKEN." >&2
+if [ -z "$TOKEN_FILE" ]; then
+    echo "ERROR: Set PLATFORM_SYNC_TOKEN_FILE to a path outside the repository." >&2
     exit 1
 fi
 
-echo "Vault connected: $(vault status -format=json | python3 -c 'import sys,json; print(json.load(sys.stdin)["initialized"])')"
-
-# Write policy
-echo "Writing policy: $POLICY_NAME"
-vault policy write "$POLICY_NAME" "$POLICY_FILE"
-
-# Enable K8s auth if not already enabled
-if ! vault auth list -format=json | python3 -c 'import sys,json; exit(0 if "kubernetes/" in json.load(sys.stdin) else 1)' 2>/dev/null; then
-    echo "Enabling Kubernetes auth method"
-    vault auth enable kubernetes
+if [ -e "$TOKEN_FILE" ]; then
+    echo "ERROR: Refusing to replace existing token file: $TOKEN_FILE" >&2
+    exit 1
 fi
 
-# Configure K8s auth
-echo "Configuring Kubernetes auth"
-vault write auth/kubernetes/config \
-    kubernetes_host="https://kubernetes.default.svc" \
-    disable_local_ca_jwt=true
+if ! vault status -format=json >/dev/null 2>&1; then
+    echo "ERROR: Cannot connect to Vault. Check VAULT_ADDR, VAULT_CACERT and VAULT_TOKEN." >&2
+    exit 1
+fi
 
-# Create role
-echo "Creating role: $ROLE_NAME"
-vault write "auth/kubernetes/role/$ROLE_NAME" \
-    bound_service_account_names="$SA_NAME" \
-    bound_service_account_namespaces="$SA_NAMESPACE" \
-    policies="$POLICY_NAME" \
-    ttl="1h" \
-    max_ttl="1h"
+echo "Writing Vault policy: $POLICY_NAME"
+vault policy write "$POLICY_NAME" "$POLICY_FILE" >/dev/null
 
-echo "=== Bootstrap complete ==="
-echo "Policy: $POLICY_NAME"
-echo "Role: $ROLE_NAME"
-echo "ServiceAccount: $SA_NAMESPACE/$SA_NAME"
-echo ""
-echo "Next steps:"
-echo "1. Install platform-sync on the Ubuntu server"
-echo "2. Start the credential generator timer"
-echo "3. Verify the sync completes successfully"
+token_dir="$(dirname "$TOKEN_FILE")"
+mkdir -p "$token_dir"
+chmod 700 "$token_dir"
+umask 077
+temporary_token="$(mktemp "$token_dir/.platform-sync-token.XXXXXX")"
+trap 'rm -f "$temporary_token"' EXIT
+
+vault token create \
+    -policy="$POLICY_NAME" \
+    -period="$TOKEN_PERIOD" \
+    -orphan \
+    -no-default-policy \
+    -renewable=true \
+    -display-name=ssl-proxy-platform-sync \
+    -format=json \
+    | jq -er '.auth.client_token' > "$temporary_token"
+
+chmod 600 "$temporary_token"
+mv "$temporary_token" "$TOKEN_FILE"
+trap - EXIT
+echo "Created renewable read-only token at $TOKEN_FILE"

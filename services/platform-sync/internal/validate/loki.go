@@ -2,96 +2,48 @@ package validate
 
 import (
 	"fmt"
-
-	"golang.org/x/crypto/bcrypt"
+	"strings"
 
 	"github.com/zlovtnik/ssl-proxy/services/platform-sync/internal/contract"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func validateLoki(c *contract.Contract, data map[string]map[string][]byte) error {
-	lh := c.Validation.LokiHtpasswd
-	obsCreds, ok := data[lh.SecretName]
+	validation := c.Validation.LokiHtpasswd
+	credentials, ok := data[validation.SecretName]
 	if !ok {
-		return fmt.Errorf("Loki credentials secret %s not found", lh.SecretName)
+		return fmt.Errorf("Loki credentials secret %s not found", validation.SecretName)
 	}
-
-	username, ok := obsCreds[lh.UsernameKey]
+	username, ok := credentials[validation.UsernameKey]
+	if !ok || strings.TrimSpace(string(username)) == "" {
+		return fmt.Errorf("Loki secret missing non-empty %s", validation.UsernameKey)
+	}
+	password, ok := credentials[validation.PasswordKey]
+	if !ok || len(password) == 0 {
+		return fmt.Errorf("Loki secret missing non-empty %s", validation.PasswordKey)
+	}
+	htpasswd, ok := credentials[validation.HtpasswdKey]
 	if !ok {
-		return fmt.Errorf("Loki secret missing %s", lh.UsernameKey)
+		return fmt.Errorf("Loki secret missing %s", validation.HtpasswdKey)
 	}
 
-	password, ok := obsCreds[lh.PasswordKey]
-	if !ok {
-		return fmt.Errorf("Loki secret missing %s", lh.PasswordKey)
-	}
-
-	htpasswd, ok := obsCreds[lh.HtpasswdKey]
-	if !ok {
-		return fmt.Errorf("Loki secret missing %s", lh.HtpasswdKey)
-	}
-
-	htpasswdStr := string(htpasswd)
-	usernameStr := string(username)
-
-	if len(htpasswdStr) == 0 {
-		return fmt.Errorf("Loki htpasswd is empty")
-	}
-
-	if htpasswdStr[0] == '$' {
-		if err := bcrypt.CompareHashAndPassword(htpasswd, password); err != nil {
-			return fmt.Errorf("Loki htpasswd does not match password: %w", err)
+	wantedUser := string(username)
+	for lineNumber, line := range strings.Split(strings.TrimSpace(string(htpasswd)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
 		}
-	} else {
-		for _, line := range splitLines(htpasswdStr) {
-			if len(line) == 0 {
-				continue
-			}
-			parts := splitN(line, ":", 2)
-			if len(parts) == 2 && parts[0] == usernameStr {
-				return nil
-			}
+		user, hash, found := strings.Cut(line, ":")
+		if !found || user == "" || hash == "" {
+			return fmt.Errorf("Loki htpasswd line %d has invalid format", lineNumber+1)
 		}
-		return fmt.Errorf("Loki htpasswd does not contain username %s", usernameStr)
-	}
-
-	return nil
-}
-
-func splitLines(s string) []string {
-	var lines []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			lines = append(lines, s[start:i])
-			start = i + 1
+		if user != wantedUser {
+			continue
 		}
-	}
-	if start < len(s) {
-		lines = append(lines, s[start:])
-	}
-	return lines
-}
-
-func splitN(s, sep string, n int) []string {
-	var result []string
-	start := 0
-	for i := 0; i < n-1; i++ {
-		idx := indexOf(s[start:], sep)
-		if idx == -1 {
-			break
+		if err := bcrypt.CompareHashAndPassword([]byte(hash), password); err != nil {
+			return fmt.Errorf("Loki htpasswd hash does not match declared password: %w", err)
 		}
-		result = append(result, s[start:start+idx])
-		start += idx + len(sep)
+		return nil
 	}
-	result = append(result, s[start:])
-	return result
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
+	return fmt.Errorf("Loki htpasswd does not contain declared username")
 }

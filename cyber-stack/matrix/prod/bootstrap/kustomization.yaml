@@ -9,5 +9,6 @@ resources:
   - ../../../base/platform-sync/serviceaccount.yaml
   - ../../../base/platform-sync/role.yaml
   - ../../../base/platform-sync/rolebinding.yaml
+  - ../../../base/platform-sync/targets.yaml
 patches:
   - path: ../patches/identity-hostname.yaml

@@ -5,7 +5,7 @@ This file governs `services/platform-sync` relative to the repository root.
 
 ## Project Shape
 - Go module: `github.com/zlovtnik/ssl-proxy/services/platform-sync`.
-- `cmd/cred-gen/` creates short-lived Kubernetes SA tokens and Vault tokens.
+- `cmd/cred-gen/` creates a short-lived Kubernetes ServiceAccount token.
 - `internal/contract/` loads and validates the platform input contract.
 - `internal/vault/` reads secrets from Vault KV-v2.
 - `internal/validate/` validates TLS chains, PostgreSQL, Loki, PgBouncer, and WireGuard.
@@ -21,6 +21,7 @@ This file governs `services/platform-sync` relative to the repository root.
 - Use optimistic concurrency (resourceVersion) for distributed locking.
 - Keep the sync program as a platform-only identity; it must not share credentials with application workloads.
 - The credential generator is host-only; never commit kubeconfig or Vault tokens to Git.
+- Load the renewable read-only Vault token and Vault CA through systemd credentials; do not derive Vault access from the Kubernetes writer token.
 
 ## Commands
 - Run tests: `go test ./...`

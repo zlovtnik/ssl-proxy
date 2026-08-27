@@ -1,9 +1,8 @@
 [Unit]
 Description=Platform sync Vault to Kubernetes timer
-Requires=vault-k8s-sync.service
 
 [Timer]
-OnBootSec=5min
+OnBootSec=2min
 OnUnitActiveSec=10min
 Persistent=true
 

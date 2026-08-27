@@ -3,6 +3,8 @@ package contract
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -13,44 +15,53 @@ const (
 )
 
 type Input struct {
-	Kind       string   `yaml:"kind"`
-	Name       string   `yaml:"name"`
-	Type       string   `yaml:"type,omitempty"`
-	VaultPath  string   `yaml:"vaultPath"`
-	Keys       []string `yaml:"keys"`
+	Kind      string   `yaml:"kind"`
+	Name      string   `yaml:"name"`
+	Type      string   `yaml:"type,omitempty"`
+	VaultPath string   `yaml:"vaultPath"`
+	Keys      []string `yaml:"keys"`
+}
+
+type IdentityCertificateValidation struct {
+	SecretName string `yaml:"secretName"`
+	DNSName    string `yaml:"dnsName"`
+}
+
+type LokiHtpasswdValidation struct {
+	SecretName  string `yaml:"secretName"`
+	UsernameKey string `yaml:"usernameKey"`
+	PasswordKey string `yaml:"passwordKey"`
+	HtpasswdKey string `yaml:"htpasswdKey"`
+}
+
+type PostgresValidation struct {
+	EndpointConfigMapName string            `yaml:"endpointConfigMapName"`
+	Database              string            `yaml:"database"`
+	Transport             string            `yaml:"transport"`
+	TLSSecretName         string            `yaml:"tlsSecretName"`
+	GrantMatrixDocument   string            `yaml:"grantMatrixDocument"`
+	Accounts              map[string]string `yaml:"accounts"`
+	Host                  string            `yaml:"-"`
+	Port                  int               `yaml:"-"`
+	TLSServerName         string            `yaml:"-"`
 }
 
 type Validation struct {
-	IdentityCertificate struct {
-		SecretName string `yaml:"secretName"`
-		DNSName    string `yaml:"dnsName"`
-	} `yaml:"identityCertificate"`
-	LokiHtpasswd struct {
-		SecretName string `yaml:"secretName"`
-		UsernameKey string `yaml:"usernameKey"`
-		PasswordKey string `yaml:"passwordKey"`
-		HtpasswdKey string `yaml:"htpasswdKey"`
-	} `yaml:"lokiHtpasswd"`
-	Postgres struct {
-		EndpointConfigMapName string            `yaml:"endpointConfigMapName"`
-		Database              string            `yaml:"database"`
-		Transport             string            `yaml:"transport"`
-		TLSSecretName         string            `yaml:"tlsSecretName"`
-		GrantMatrixDocument   string            `yaml:"grantMatrixDocument"`
-		Accounts              map[string]string `yaml:"accounts"`
-	} `yaml:"postgres"`
+	IdentityCertificate IdentityCertificateValidation `yaml:"identityCertificate"`
+	LokiHtpasswd        LokiHtpasswdValidation        `yaml:"lokiHtpasswd"`
+	Postgres            PostgresValidation            `yaml:"postgres"`
 }
 
 type Contract struct {
-	Environment string  `yaml:"environment"`
-	Namespace   string  `yaml:"namespace"`
-	Inputs      []Input `yaml:"inputs"`
-	Validation  Validation `yaml:"validation"`
+	Environment string                 `yaml:"environment"`
+	Namespace   string                 `yaml:"namespace"`
+	Inputs      []Input                `yaml:"inputs"`
+	Validation  Validation             `yaml:"validation"`
 	Raw         map[string]interface{} `yaml:"-"`
 }
 
 func Load(path string) (*Contract, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- the operator-selected contract path is the intended input.
 	if err != nil {
 		return nil, fmt.Errorf("read contract: %w", err)
 	}
@@ -58,6 +69,12 @@ func Load(path string) (*Contract, error) {
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse contract: %w", err)
+	}
+	if getString(raw, "apiVersion") != APIVersion {
+		return nil, fmt.Errorf("contract apiVersion must be %s", APIVersion)
+	}
+	if getString(raw, "kind") != Kind {
+		return nil, fmt.Errorf("contract kind must be %s", Kind)
 	}
 
 	spec, ok := raw["spec"].(map[string]interface{})
@@ -121,14 +138,78 @@ func Load(path string) (*Contract, error) {
 			}
 		}
 	}
+	if bootstrap, ok := spec["bootstrap"].(map[string]interface{}); ok {
+		if postgres, ok := bootstrap["postgres"].(map[string]interface{}); ok {
+			if endpoint, ok := postgres["endpoint"].(map[string]interface{}); ok {
+				v.Postgres.Host = getString(endpoint, "host")
+				v.Postgres.Port = getInt(endpoint, "port")
+				v.Postgres.TLSServerName = getString(endpoint, "tlsServerName")
+			}
+		}
+	}
 
-	return &Contract{
+	c := &Contract{
 		Environment: getString(spec, "environment"),
 		Namespace:   getString(spec, "namespace"),
 		Inputs:      inputs,
 		Validation:  v,
 		Raw:         raw,
-	}, nil
+	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// Validate rejects ambiguous contracts before any external reads or writes occur.
+func (c *Contract) Validate() error {
+	if strings.TrimSpace(c.Environment) == "" {
+		return fmt.Errorf("contract environment is required")
+	}
+	if strings.TrimSpace(c.Namespace) == "" {
+		return fmt.Errorf("contract namespace is required")
+	}
+	if len(c.Inputs) == 0 {
+		return fmt.Errorf("contract must declare at least one input")
+	}
+
+	identities := make(map[string]struct{}, len(c.Inputs))
+	for i, input := range c.Inputs {
+		if input.Kind != "Secret" && input.Kind != "ConfigMap" {
+			return fmt.Errorf("input %d has unsupported kind %q", i, input.Kind)
+		}
+		if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.VaultPath) == "" {
+			return fmt.Errorf("input %d requires name and vaultPath", i)
+		}
+		identity := input.Kind + "/" + input.Name
+		if _, exists := identities[identity]; exists {
+			return fmt.Errorf("duplicate input %s", identity)
+		}
+		identities[identity] = struct{}{}
+		if len(input.Keys) == 0 {
+			return fmt.Errorf("input %s must declare at least one key", identity)
+		}
+		keys := make(map[string]struct{}, len(input.Keys))
+		for _, key := range input.Keys {
+			if strings.TrimSpace(key) == "" {
+				return fmt.Errorf("input %s contains an empty key", identity)
+			}
+			if _, exists := keys[key]; exists {
+				return fmt.Errorf("input %s contains duplicate key %s", identity, key)
+			}
+			keys[key] = struct{}{}
+		}
+	}
+
+	pg := c.Validation.Postgres
+	if pg.EndpointConfigMapName == "" || pg.Database == "" || pg.Transport == "" ||
+		pg.TLSSecretName == "" || pg.GrantMatrixDocument == "" || len(pg.Accounts) == 0 {
+		return fmt.Errorf("contract PostgreSQL validation is incomplete")
+	}
+	if pg.Host == "" || pg.Port < 1 || pg.Port > 65535 || pg.TLSServerName == "" {
+		return fmt.Errorf("contract PostgreSQL bootstrap endpoint is incomplete")
+	}
+	return nil
 }
 
 func (c *Contract) ByIdentity() map[string]Input {
@@ -147,4 +228,28 @@ func getString(m map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+func getInt(m map[string]interface{}, key string) int {
+	switch value := m[key].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case uint64:
+		if uint64(int(value)) != value {
+			return 0
+		}
+		return int(value)
+	case float64:
+		return int(value)
+	case string:
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return 0
+		}
+		return parsed
+	default:
+		return 0
+	}
 }

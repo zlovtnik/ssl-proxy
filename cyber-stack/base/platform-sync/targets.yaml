@@ -1,0 +1,147 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflared-tunnel-credentials
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: observability-credentials
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: proxy-admin-key
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: proxy-runtime-secrets
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-runtime
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: schema-migrator-backend
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: schema-migrator-bootstrap
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: schema-migrator-keycloak
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssl-proxy-identity-tls
+  namespace: prod-ssl-proxy
+type: kubernetes.io/tls
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-atheros-search
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-keycloak
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-octopus
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-schema-migrator
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-schema-owner
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-runtime-tls
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pgbouncer-runtime-users
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wireguard-config
+  namespace: prod-ssl-proxy
+type: Opaque
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-prod-postgres-endpoint
+  namespace: prod-ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: platform-sync-target
+    app.kubernetes.io/managed-by: kustomize
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-sync-lock
+  namespace: prod-ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: platform-sync-lock
+    app.kubernetes.io/managed-by: kustomize
+data:
+  heldBy: ""

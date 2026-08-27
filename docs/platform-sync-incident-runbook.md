@@ -15,36 +15,33 @@ been exposed:
    vault token revoke <token-id>
    ```
 
-2. **Force-expire the local credentials:**
+2. **Remove the compromised Vault source token and stop the timer:**
    ```bash
-   rm -f /run/platform-sync/kubeconfig /run/platform-sync/vault-token
-   systemctl restart credential-generator
+   sudo systemctl stop vault-k8s-sync.timer
+   sudo rm -f /etc/platform-sync/vault-token
    ```
 
 3. **If the SA itself is suspect**, create a new SA and rebind through Git:
    - Update the RBAC manifests in `cyber-stack/base/platform-sync/`
    - Commit and push the changes
    - Argo CD will reconcile the new SA/Role/RoleBinding
-   - Update the Vault role with the new SA name:
-     ```bash
-     vault write auth/kubernetes/role/platform-sync \
-       bound_service_account_names=ssl-proxy-platform-sync \
-       bound_service_account_namespaces=prod-ssl-proxy \
-       policies=platform-sync-ro \
-       ttl=1h \
-       max_ttl=1h
-     ```
+   - Reinstall the service after Argo CD has reconciled the new identity
 
-4. **Restart the sync timer:**
+4. **Create and install a replacement read-only token, then restart the timer:**
    ```bash
-   systemctl restart vault-k8s-sync
+   export PLATFORM_SYNC_TOKEN_FILE="$HOME/.config/platform-sync/vault-token-new"
+   ./scripts/bootstrap-vault-platform-sync.sh
+   sudo install -o root -g root -m 600 \
+     "$PLATFORM_SYNC_TOKEN_FILE" /etc/platform-sync/vault-token
+   sudo systemctl start vault-k8s-sync.timer
+   sudo systemctl start vault-k8s-sync.service
    ```
 
 ### Verification
 
-1. Check the health endpoint:
+1. Check the last-run health artifact:
    ```bash
-   curl http://localhost:9106/healthz
+   jq . /run/platform-sync/health.json
    ```
 
 2. Verify all 18 Secrets exist:
@@ -59,40 +56,35 @@ been exposed:
 
 ## Credential Generator Failure
 
-If the credential generator fails to create tokens:
+If the credential generator fails to create the short-lived Kubernetes token:
 
 ### Diagnosis
 
-1. Check Vault connectivity:
-   ```bash
-   vault status
-   ```
-
-2. Check Kubernetes API:
+1. Check Kubernetes API:
    ```bash
    kubectl cluster-info
    ```
 
-3. Check SA exists:
+2. Check SA exists:
    ```bash
    kubectl get sa ssl-proxy-platform-sync -n prod-ssl-proxy
    ```
 
-4. Check credential generator logs:
+3. Check credential generator logs:
    ```bash
    journalctl -u credential-generator -f
    ```
 
 ### Recovery
 
-1. Fix the underlying issue (Vault/K8s connectivity, SA permissions)
+1. Fix the underlying Kubernetes connectivity or ServiceAccount issue
 
 2. Restart the credential generator:
    ```bash
    systemctl restart credential-generator
    ```
 
-3. Verify tokens were created:
+3. Verify the kubeconfig was created without printing it:
    ```bash
    ls -la /run/platform-sync/
    ```
@@ -113,16 +105,16 @@ If the sync fails to write secrets:
    journalctl -u vault-k8s-sync -f
    ```
 
-2. Check the health endpoint:
+2. Check the last-run health artifact:
    ```bash
-   curl http://localhost:9106/healthz
+   jq . /run/platform-sync/health.json
    ```
 
 3. Run a dry run:
    ```bash
-   VAULT_TOKEN=$(cat /run/platform-sync/vault-token) \
-   KUBECONFIG=/run/platform-sync/kubeconfig \
-   /opt/platform-sync/bin/platform-sync --dry-run
+   sudo systemctl set-environment SYNC_DRY_RUN=true
+   sudo systemctl start vault-k8s-sync.service
+   sudo systemctl unset-environment SYNC_DRY_RUN
    ```
 
 ### Recovery
@@ -153,5 +145,5 @@ To rollback to a previous known-good state:
 3. Verify the rollback:
    ```bash
    kubectl get secrets -n prod-ssl-proxy
-   curl http://localhost:9106/healthz
+   jq . /run/platform-sync/health.json
    ```

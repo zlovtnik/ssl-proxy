@@ -31,7 +31,7 @@ class PlatformSyncRbacTest(unittest.TestCase):
         self.assertEqual("ServiceAccount", sa["kind"])
         self.assertEqual("ssl-proxy-platform-sync", sa["metadata"]["name"])
         self.assertEqual("prod-ssl-proxy", sa["metadata"]["namespace"])
-        self.assertTrue(sa.get("automountServiceAccountToken", False))
+        self.assertFalse(sa.get("automountServiceAccountToken", True))
 
     def test_role_exists(self) -> None:
         """Verify Role exists with least-privilege permissions."""
@@ -46,12 +46,15 @@ class PlatformSyncRbacTest(unittest.TestCase):
         self.assertEqual(2, len(rules))
 
         secrets_rule = next(r for r in rules if "secrets" in r["resources"])
-        self.assertEqual(["get", "list", "watch", "create", "update", "patch"], secrets_rule["verbs"])
-        self.assertNotIn("delete", secrets_rule["verbs"])
+        self.assertEqual(["get", "update"], secrets_rule["verbs"])
+        self.assertEqual(18, len(secrets_rule["resourceNames"]))
 
         configmaps_rule = next(r for r in rules if "configmaps" in r["resources"])
-        self.assertEqual(["get", "list", "watch", "create", "update", "patch"], configmaps_rule["verbs"])
-        self.assertNotIn("delete", configmaps_rule["verbs"])
+        self.assertEqual(["get", "update"], configmaps_rule["verbs"])
+        self.assertEqual(
+            ["platform-sync-lock", "ssl-proxy-prod-postgres-endpoint"],
+            sorted(configmaps_rule["resourceNames"]),
+        )
 
     def test_rolebinding_exists(self) -> None:
         """Verify RoleBinding exists and references correct SA and Role."""
@@ -81,6 +84,39 @@ class PlatformSyncRbacTest(unittest.TestCase):
         self.assertIn("../../../base/platform-sync/serviceaccount.yaml", resources)
         self.assertIn("../../../base/platform-sync/role.yaml", resources)
         self.assertIn("../../../base/platform-sync/rolebinding.yaml", resources)
+        self.assertIn("../../../base/platform-sync/targets.yaml", resources)
+
+    def test_every_writable_target_is_preprovisioned(self) -> None:
+        role = load_yaml(RBAC_DIR / "role.yaml")[0]
+        target_docs = load_yaml(RBAC_DIR / "targets.yaml")
+        targets = {
+            (doc["kind"].lower() + "s", doc["metadata"]["name"])
+            for doc in target_docs
+        }
+        allowed = {
+            (resource, name)
+            for rule in role["rules"]
+            for resource in rule["resources"]
+            for name in rule["resourceNames"]
+        }
+        self.assertEqual(allowed, targets)
+
+    def test_oneshot_units_can_run_on_every_timer_activation(self) -> None:
+        config_dir = REPOSITORY_ROOT / "config" / "platform-sync"
+        for unit_name in ("credential-generator.service", "vault-k8s-sync.service"):
+            unit = (config_dir / unit_name).read_text(encoding="utf-8")
+            self.assertNotIn("RemainAfterExit", unit)
+            self.assertIn("RuntimeDirectory=platform-sync", unit)
+            self.assertIn("RuntimeDirectoryPreserve=yes", unit)
+
+    def test_single_timer_refreshes_kubernetes_credentials(self) -> None:
+        config_dir = REPOSITORY_ROOT / "config" / "platform-sync"
+        timers = sorted(path.name for path in config_dir.glob("*.timer"))
+        self.assertEqual(["vault-k8s-sync.timer"], timers)
+        sync_unit = (config_dir / "vault-k8s-sync.service").read_text(encoding="utf-8")
+        self.assertIn("Requires=credential-generator.service", sync_unit)
+        self.assertIn("LoadCredential=vault-token:/etc/platform-sync/vault-token", sync_unit)
+        self.assertIn("LoadCredential=vault-ca:/etc/platform-sync/vault-ca.crt", sync_unit)
 
     def test_no_cluster_roles(self) -> None:
         """Verify RBAC is namespace-scoped only (no ClusterRoles)."""

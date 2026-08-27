@@ -5,137 +5,154 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
-	vault "github.com/hashicorp/vault/api"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+)
+
+const (
+	defaultK3sKubeconfig = "/etc/rancher/k3s/k3s.yaml"
+	defaultRuntimeDir    = "/run/platform-sync"
 )
 
 func main() {
+	os.Exit(realMain())
+}
+
+func realMain() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-
 	if err := run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "credential generator failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func run(ctx context.Context) error {
-	config, err := rest.InClusterConfig()
+	config, err := sourceKubernetesConfig()
 	if err != nil {
-		kubeconfig := os.Getenv("KUBECONFIG")
-		if kubeconfig == "" {
-			kubeconfig = "/etc/kubernetes/admin.conf"
-		}
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
-		if err != nil {
-			return fmt.Errorf("kubernetes config: %w", err)
-		}
+		return err
 	}
-
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return fmt.Errorf("kubernetes client: %w", err)
 	}
 
-	namespace := os.Getenv("SYNC_NAMESPACE")
-	if namespace == "" {
-		namespace = "prod-ssl-proxy"
-	}
-
-	saName := "ssl-proxy-platform-sync"
-
-	token, err := createSAToken(ctx, clientset, namespace, saName, 1*time.Hour)
+	namespace := envOrDefault("SYNC_NAMESPACE", "prod-ssl-proxy")
+	serviceAccount := envOrDefault("SYNC_SERVICE_ACCOUNT", "ssl-proxy-platform-sync")
+	token, err := createSAToken(ctx, clientset, namespace, serviceAccount, time.Hour)
 	if err != nil {
-		return fmt.Errorf("create SA token: %w", err)
+		return fmt.Errorf("create service account token: %w", err)
 	}
-
-	kubeconfigData := generateKubeconfig(config.Host, token)
-	if err := os.WriteFile("/run/platform-sync/kubeconfig", []byte(kubeconfigData), 0600); err != nil {
-		return fmt.Errorf("write kubeconfig: %w", err)
-	}
-	fmt.Println("kubeconfig written to /run/platform-sync/kubeconfig")
-
-	vaultAddr := os.Getenv("VAULT_ADDR")
-	if vaultAddr == "" {
-		vaultAddr = "https://127.0.0.1:8200"
-	}
-
-	vaultToken, err := getVaultToken(ctx, vaultAddr, token, namespace, saName)
+	kubeconfigData, err := generateKubeconfig(config, token)
 	if err != nil {
-		return fmt.Errorf("get vault token: %w", err)
+		return err
 	}
 
-	if err := os.WriteFile("/run/platform-sync/vault-token", []byte(vaultToken), 0600); err != nil {
-		return fmt.Errorf("write vault token: %w", err)
+	runtimeDir := envOrDefault("SYNC_RUNTIME_DIR", defaultRuntimeDir)
+	if err := writeCredential(filepath.Join(runtimeDir, "kubeconfig"), kubeconfigData); err != nil {
+		return err
 	}
-	fmt.Println("vault token written to /run/platform-sync/vault-token")
-
+	fmt.Println("short-lived Kubernetes credential refreshed")
 	return nil
 }
 
-func createSAToken(ctx context.Context, clientset kubernetes.Interface, namespace, saName string, lifetime time.Duration) (string, error) {
-	expirationSeconds := int64(lifetime.Seconds())
-	tokenRequest := &authenticationv1.TokenRequest{
-		Spec: authenticationv1.TokenRequestSpec{
-			Audiences:         []string{"https://kubernetes.default.svc"},
-			ExpirationSeconds: &expirationSeconds,
-		},
+func sourceKubernetesConfig() (*rest.Config, error) {
+	if config, err := rest.InClusterConfig(); err == nil {
+		return config, nil
 	}
+	kubeconfig := envOrDefault("KUBECONFIG", defaultK3sKubeconfig)
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("kubernetes config %s: %w", kubeconfig, err)
+	}
+	return config, nil
+}
 
-	token, err := clientset.CoreV1().ServiceAccounts(namespace).CreateToken(ctx, saName, tokenRequest, metav1.CreateOptions{})
+func createSAToken(ctx context.Context, clientset kubernetes.Interface, namespace, serviceAccount string, lifetime time.Duration) (string, error) {
+	expirationSeconds := int64(lifetime.Seconds())
+	tokenRequest := &authenticationv1.TokenRequest{Spec: authenticationv1.TokenRequestSpec{
+		Audiences:         []string{"https://kubernetes.default.svc"},
+		ExpirationSeconds: &expirationSeconds,
+	}}
+	token, err := clientset.CoreV1().ServiceAccounts(namespace).CreateToken(ctx, serviceAccount, tokenRequest, metav1.CreateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("create token: %w", err)
 	}
-
+	if strings.TrimSpace(token.Status.Token) == "" {
+		return "", fmt.Errorf("kubernetes TokenRequest returned an empty token")
+	}
 	return token.Status.Token, nil
 }
 
-func generateKubeconfig(server, token string) string {
-	return fmt.Sprintf(`apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    server: %s
-    insecure-skip-tls-verify: true
-  name: default
-contexts:
-- context:
-    cluster: default
-    user: platform-sync
-  name: platform-sync
-current-context: platform-sync
-users:
-- user:
-    token: %s
-  name: platform-sync
-`, server, token)
+func generateKubeconfig(config *rest.Config, token string) ([]byte, error) {
+	if config.Insecure {
+		return nil, fmt.Errorf("refusing to generate a kubeconfig with TLS verification disabled")
+	}
+	caData := append([]byte(nil), config.CAData...)
+	if len(caData) == 0 && config.CAFile != "" {
+		var err error
+		caData, err = os.ReadFile(config.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read Kubernetes CA: %w", err)
+		}
+	}
+	generated := clientcmdapi.NewConfig()
+	generated.Clusters["default"] = &clientcmdapi.Cluster{
+		Server:                   config.Host,
+		CertificateAuthorityData: caData,
+		TLSServerName:            config.ServerName,
+	}
+	generated.AuthInfos["platform-sync"] = &clientcmdapi.AuthInfo{Token: token}
+	generated.Contexts["platform-sync"] = &clientcmdapi.Context{Cluster: "default", AuthInfo: "platform-sync"}
+	generated.CurrentContext = "platform-sync"
+	data, err := clientcmd.Write(*generated)
+	if err != nil {
+		return nil, fmt.Errorf("serialize kubeconfig: %w", err)
+	}
+	return data, nil
 }
 
-func getVaultToken(ctx context.Context, vaultAddr, k8sToken, namespace, saName string) (string, error) {
-	config := vault.DefaultConfig()
-	config.Address = vaultAddr
-
-	client, err := vault.NewClient(config)
+func writeCredential(path string, data []byte) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".credential-*")
 	if err != nil {
-		return "", fmt.Errorf("vault client: %w", err)
+		return fmt.Errorf("create temporary credential for %s: %w", path, err)
 	}
-
-	data := map[string]interface{}{
-		"role":       "platform-sync",
-		"kubernetes_token": k8sToken,
+	tempName := temp.Name()
+	defer func() { _ = os.Remove(tempName) }()
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("set credential permissions: %w", err)
 	}
-
-	secret, err := client.Logical().WriteWithContext(ctx, "auth/kubernetes/login", data)
-	if err != nil {
-		return "", fmt.Errorf("vault login: %w", err)
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("write temporary credential: %w", err)
 	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("sync temporary credential: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close temporary credential: %w", err)
+	}
+	if err := os.Rename(tempName, path); err != nil {
+		return fmt.Errorf("replace credential %s: %w", path, err)
+	}
+	return nil
+}
 
-	return secret.Auth.ClientToken, nil
+func envOrDefault(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
 }

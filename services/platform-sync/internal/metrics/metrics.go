@@ -1,67 +1,119 @@
 package metrics
 
 import (
+	"encoding/json"
 	"fmt"
-	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
-type Server struct {
-	mux    *http.ServeMux
-	server *http.Server
-	mu     sync.RWMutex
-	counts map[string]int
+const defaultMetricsPath = "/run/platform-sync/metrics.prom"
+
+type state struct {
+	Counts       map[string]uint64 `json:"counts"`
+	LastDuration float64           `json:"lastDurationSeconds"`
+	LastInputs   int               `json:"lastInputsWritten"`
+	LastRun      time.Time         `json:"lastRun"`
 }
 
-func NewServer() *Server {
-	s := &Server{
-		mux:    http.NewServeMux(),
-		counts: make(map[string]int),
+type Recorder struct {
+	mu        sync.Mutex
+	start     time.Time
+	path      string
+	statePath string
+	state     state
+}
+
+func NewRecorder() *Recorder {
+	path := strings.TrimSpace(os.Getenv("SYNC_METRICS_PATH"))
+	if path == "" {
+		path = defaultMetricsPath
 	}
-	s.server = &http.Server{
-		Addr:    "127.0.0.1:9105",
-		Handler: s.mux,
+	recorder := &Recorder{
+		path:      path,
+		statePath: path + ".json",
+		state:     state{Counts: make(map[string]uint64)},
 	}
-	s.mux.HandleFunc("/metrics", s.handleMetrics)
-	s.mux.HandleFunc("/health", s.handleHealth)
-	return s
-}
-
-func (s *Server) ListenAndServe() error {
-	return s.server.ListenAndServe()
-}
-
-func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprintf(w, "# HELP sync_runs_total Total number of sync runs\n")
-	fmt.Fprintf(w, "# TYPE sync_runs_total counter\n")
-	for result, count := range s.counts {
-		fmt.Fprintf(w, "sync_runs_total{result=\"%s\"} %d\n", result, count)
+	data, err := os.ReadFile(recorder.statePath)
+	if err == nil {
+		_ = json.Unmarshal(data, &recorder.state)
+		if recorder.state.Counts == nil {
+			recorder.state.Counts = make(map[string]uint64)
+		}
 	}
+	return recorder
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok"}`))
+func (r *Recorder) SetRunStart(start time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.start = start
 }
 
-var (
-	runStart     time.Time
-	runStartOnce sync.Once
-)
-
-func SetRunStart(t time.Time) {
-	runStartOnce.Do(func() {
-		runStart = t
-	})
+func (r *Recorder) RecordRun(result string, inputsWritten int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.state.Counts[result]++
+	r.state.LastInputs = inputsWritten
+	r.state.LastRun = time.Now().UTC()
+	if !r.start.IsZero() {
+		r.state.LastDuration = time.Since(r.start).Seconds()
+	}
+	return r.persist()
 }
 
-func RecordRun(result string) {
+func (r *Recorder) persist() error {
+	stateData, err := json.Marshal(r.state)
+	if err != nil {
+		return err
+	}
+	if err := writeAtomic(r.statePath, stateData); err != nil {
+		return err
+	}
+	results := make([]string, 0, len(r.state.Counts))
+	for result := range r.state.Counts {
+		results = append(results, result)
+	}
+	sort.Strings(results)
+	var output strings.Builder
+	output.WriteString("# HELP platform_sync_runs_total Completed platform sync runs by result.\n")
+	output.WriteString("# TYPE platform_sync_runs_total counter\n")
+	for _, result := range results {
+		fmt.Fprintf(&output, "platform_sync_runs_total{result=%q} %d\n", result, r.state.Counts[result])
+	}
+	output.WriteString("# HELP platform_sync_last_run_duration_seconds Duration of the most recent run.\n")
+	output.WriteString("# TYPE platform_sync_last_run_duration_seconds gauge\n")
+	fmt.Fprintf(&output, "platform_sync_last_run_duration_seconds %.6f\n", r.state.LastDuration)
+	output.WriteString("# HELP platform_sync_last_inputs_written Inputs written by the most recent run.\n")
+	output.WriteString("# TYPE platform_sync_last_inputs_written gauge\n")
+	fmt.Fprintf(&output, "platform_sync_last_inputs_written %d\n", r.state.LastInputs)
+	output.WriteString("# HELP platform_sync_last_run_timestamp_seconds Unix timestamp of the most recent completed run.\n")
+	output.WriteString("# TYPE platform_sync_last_run_timestamp_seconds gauge\n")
+	fmt.Fprintf(&output, "platform_sync_last_run_timestamp_seconds %d\n", r.state.LastRun.Unix())
+	return writeAtomic(r.path, []byte(output.String()))
 }
 
-func RecordInputsWritten(count int) {
+func writeAtomic(path string, data []byte) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".metrics-*")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer func() { _ = os.Remove(tempName) }()
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempName, path)
 }

@@ -2,69 +2,57 @@ package health
 
 import (
 	"encoding/json"
-	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
-type Server struct {
-	mux    *http.ServeMux
-	server *http.Server
-	mu     sync.RWMutex
-	status string
-	message string
+const defaultHealthPath = "/run/platform-sync/health.json"
+
+type Recorder struct {
+	mu   sync.Mutex
+	path string
 }
 
-type HealthStatus struct {
+type Status struct {
 	Status    string    `json:"status"`
 	Message   string    `json:"message"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
-func NewServer() *Server {
-	s := &Server{
-		mux:    http.NewServeMux(),
-		status: "starting",
-		message: "initializing",
+func NewRecorder() *Recorder {
+	path := strings.TrimSpace(os.Getenv("SYNC_HEALTH_PATH"))
+	if path == "" {
+		path = defaultHealthPath
 	}
-	s.server = &http.Server{
-		Addr:    "127.0.0.1:9106",
-		Handler: s.mux,
-	}
-	s.mux.HandleFunc("/healthz", s.handleHealthz)
-	return s
+	return &Recorder{path: path}
 }
 
-func (s *Server) ListenAndServe() error {
-	return s.server.ListenAndServe()
-}
-
-func (s *Server) SetStatus(status, message string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.status = status
-	s.message = message
-
-	statusData := HealthStatus{
-		Status:    status,
-		Message:   message,
-		Timestamp: time.Now().UTC(),
+func (r *Recorder) SetStatus(status, message string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	data, err := json.Marshal(Status{Status: status, Message: message, Timestamp: time.Now().UTC()})
+	if err != nil {
+		return err
 	}
-	data, err := json.Marshal(statusData)
-	if err == nil {
-		os.WriteFile("/run/platform-sync/health.json", data, 0600)
+	temp, err := os.CreateTemp(filepath.Dir(r.path), ".health-*")
+	if err != nil {
+		return err
 	}
-}
-
-func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(HealthStatus{
-		Status:    s.status,
-		Message:   s.message,
-		Timestamp: time.Now().UTC(),
-	})
+	tempName := temp.Name()
+	defer func() { _ = os.Remove(tempName) }()
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempName, r.path)
 }
