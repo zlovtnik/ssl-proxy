@@ -27,6 +27,9 @@ overrides a rule for its subtree.
   processing via a worker pool and exposes ETL health monitoring.
 - `services/octopus/` is the Scala 3 Cats Effect/FS2 coordinator and owner of
   durable ingestion, leases, outbox, and maintained PostgreSQL projections, built via sbt.
+- `services/platform-sync/` is the Go host-side Vault-to-Kubernetes secret
+  synchronization service. It reads all platform inputs from Vault, validates
+  them, and writes Secrets and ConfigMaps to the production namespace.
 - `services/` has local `AGENTS.md` files for shared service rules and
   service-specific conventions.
 - `apps/wg-key-rotator/` is an Elixir WireGuard key rotation tool.

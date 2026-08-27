@@ -1,0 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ssl-proxy-platform-sync
+  namespace: prod-ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: platform-sync
+    app.kubernetes.io/managed-by: kustomize
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ssl-proxy-platform-sync
+subjects:
+  - kind: ServiceAccount
+    name: ssl-proxy-platform-sync
+    namespace: prod-ssl-proxy

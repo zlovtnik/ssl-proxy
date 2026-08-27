@@ -9,3 +9,4 @@ services/atheros-search/migrations/README.md
 services/atheros-search/scripts/README.md
 services/atheros-sensor/README.md
 services/octopus/README.md
+services/platform-sync/README.md

@@ -172,6 +172,10 @@ dependency-boundaries:
 atheros-search-test:
 	cd services/atheros-search && go test ./...
 
+platform-sync-lint:
+	cd services/platform-sync && go vet ./...
+	cd services/platform-sync && go test ./...
+
 require-registry:
 	@test -n "$(REGISTRY)" || { echo "REGISTRY is required" >&2; exit 2; }
 

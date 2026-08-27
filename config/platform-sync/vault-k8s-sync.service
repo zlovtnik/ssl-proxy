@@ -1,0 +1,24 @@
+[Unit]
+Description=Platform sync Vault to Kubernetes
+After=network-online.target credential-generator.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/platform-sync/platform-sync.conf
+Environment=KUBECONFIG=/run/platform-sync/kubeconfig
+Environment=VAULT_TOKEN_FILE=/run/platform-sync/vault-token
+ExecStartPre=/usr/bin/test -f /run/platform-sync/kubeconfig
+ExecStartPre=/usr/bin/test -f /run/platform-sync/vault-token
+ExecStart=/bin/bash -c 'export VAULT_TOKEN=$(cat /run/platform-sync/vault-token) && exec /opt/platform-sync/bin/platform-sync'
+RemainAfterExit=yes
+
+User=platform-sync
+Group=platform-sync
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/platform-sync
+CapabilityBoundingSet=

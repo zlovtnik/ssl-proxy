@@ -6,5 +6,8 @@ resources:
   - ../../../base/platform-config/serviceaccount.yaml
   - ../../../base/platform-config/configmap.yaml
   - ../../../base/platform-config/default-deny-networkpolicy.yaml
+  - ../../../base/platform-sync/serviceaccount.yaml
+  - ../../../base/platform-sync/role.yaml
+  - ../../../base/platform-sync/rolebinding.yaml
 patches:
   - path: ../patches/identity-hostname.yaml
