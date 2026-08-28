@@ -9,6 +9,9 @@ spec:
       containers:
         - name: atheros-search
           imagePullPolicy: IfNotPresent
+          env:
+            - name: ATHSEARCH_JWT_JWKS_URI
+              value: "https://gateway.rclabs.uk/realms/middleware/protocol/openid-connect/certs"
 ---
 apiVersion: apps/v1
 kind: Deployment
