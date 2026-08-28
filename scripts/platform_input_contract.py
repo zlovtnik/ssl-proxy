@@ -170,6 +170,8 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
             "database": "sync",
             "transport": "tls-verify-full",
             "tlsSecretName": "postgres-runtime-tls",
+            "pgbouncerListenerTLSSecretName": "pgbouncer-listener-tls",
+            "pgbouncerListenerTLSServerName": "postgres-pgbouncer",
             "grantMatrixDocument": "sql/postgres",
             "accounts": {
                 "postgres-atheros-search": "atheros_search_runtime",
@@ -225,6 +227,19 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
     if len(tls_inputs) != 1 or tls_inputs[0].secret_type != "kubernetes.io/tls":
         raise PlatformInputContractError(
             f"{CONTRACT_RELATIVE_PATH} Secret/ssl-proxy-identity-tls must use kubernetes.io/tls"
+        )
+    pgbouncer_tls_inputs = [
+        entry
+        for entry in inputs
+        if entry.kind == "Secret" and entry.name == "pgbouncer-listener-tls"
+    ]
+    if (
+        len(pgbouncer_tls_inputs) != 1
+        or pgbouncer_tls_inputs[0].secret_type != "kubernetes.io/tls"
+        or set(pgbouncer_tls_inputs[0].keys) != {"ca.crt", "tls.crt", "tls.key"}
+    ):
+        raise PlatformInputContractError(
+            f"{CONTRACT_RELATIVE_PATH} Secret/pgbouncer-listener-tls must use kubernetes.io/tls with a CA, certificate, and key"
         )
 
     return PlatformInputContract(

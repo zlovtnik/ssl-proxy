@@ -76,10 +76,11 @@ func TestValidatePostgresRejectsStaticContractMismatchesBeforeConnecting(t *test
 
 func TestValidatePgBouncerRequiresRuntimeAccounts(t *testing.T) {
 	c := postgresContract()
-	data := map[string]map[string][]byte{"pgbouncer-runtime-users": {
+	data := pgbouncerTLSData(t, "postgres-pgbouncer")
+	data["pgbouncer-runtime-users"] = map[string][]byte{
 		"userlist.txt": []byte(`"atheros_search_runtime" "secret"
 "octopus_runtime" "secret"`),
-	}}
+	}
 	if err := validatePgBouncer(c, data); err == nil {
 		t.Fatal("userlist missing schema_migrator_runtime was accepted")
 	}
@@ -89,6 +90,43 @@ func TestValidatePgBouncerRequiresRuntimeAccounts(t *testing.T) {
 	if err := validatePgBouncer(c, data); err != nil {
 		t.Fatalf("complete userlist rejected: %v", err)
 	}
+}
+
+func TestValidatePgBouncerListenerTLS(t *testing.T) {
+	c := postgresContract()
+	t.Run("accepts a valid listener certificate", func(t *testing.T) {
+		if err := validatePgBouncer(c, pgbouncerTLSData(t, "postgres-pgbouncer")); err != nil {
+			t.Fatalf("valid listener TLS was rejected: %v", err)
+		}
+	})
+	t.Run("rejects missing keys", func(t *testing.T) {
+		data := pgbouncerTLSData(t, "postgres-pgbouncer")
+		delete(data["pgbouncer-listener-tls"], "tls.key")
+		if err := validatePgBouncer(c, data); err == nil {
+			t.Fatal("listener TLS without a private key was accepted")
+		}
+	})
+	t.Run("rejects a mismatched key", func(t *testing.T) {
+		data := pgbouncerTLSData(t, "postgres-pgbouncer")
+		data["pgbouncer-listener-tls"]["tls.key"] = testCertificate(t, "postgres-pgbouncer").privateKey
+		if err := validatePgBouncer(c, data); err == nil {
+			t.Fatal("listener TLS with a mismatched key was accepted")
+		}
+	})
+	t.Run("rejects an untrusted chain", func(t *testing.T) {
+		trusted := pgbouncerTLSData(t, "postgres-pgbouncer")
+		untrusted := testCertificate(t, "postgres-pgbouncer")
+		trusted["pgbouncer-listener-tls"]["tls.crt"] = untrusted.certificate
+		trusted["pgbouncer-listener-tls"]["tls.key"] = untrusted.privateKey
+		if err := validatePgBouncer(c, trusted); err == nil {
+			t.Fatal("listener TLS with an untrusted chain was accepted")
+		}
+	})
+	t.Run("rejects the wrong DNS SAN", func(t *testing.T) {
+		if err := validatePgBouncer(c, pgbouncerTLSData(t, "other.service")); err == nil {
+			t.Fatal("listener TLS with the wrong DNS SAN was accepted")
+		}
+	})
 }
 
 func TestValidateWireGuardRequiresRealMatchingKeys(t *testing.T) {
@@ -164,6 +202,7 @@ func postgresContract() *contract.Contract {
 	return &contract.Contract{Validation: contract.Validation{Postgres: contract.PostgresValidation{
 		EndpointConfigMapName: "endpoint", Database: "sync", Transport: "tls-verify-full",
 		TLSSecretName: "postgres-tls", GrantMatrixDocument: "sql/postgres",
+		PgBouncerListenerTLSSecretName: "pgbouncer-listener-tls", PgBouncerListenerTLSServerName: "postgres-pgbouncer",
 		Host: "192.168.1.242", Port: 4000, TLSServerName: "192.168.1.242",
 		Accounts: map[string]string{
 			"postgres-atheros-search": "atheros_search_runtime", "postgres-keycloak": "keycloak_runtime",
@@ -171,6 +210,21 @@ func postgresContract() *contract.Contract {
 			"postgres-schema-owner": "schema_owner",
 		},
 	}}}
+}
+
+func pgbouncerTLSData(t *testing.T, dnsName string) map[string]map[string][]byte {
+	t.Helper()
+	listener := testCertificate(t, dnsName)
+	return map[string]map[string][]byte{
+		"pgbouncer-listener-tls": {
+			"ca.crt": listener.ca, "tls.crt": listener.certificate, "tls.key": listener.privateKey,
+		},
+		"pgbouncer-runtime-users": {
+			"userlist.txt": []byte(`"atheros_search_runtime" "secret"
+"octopus_runtime" "secret"
+"schema_migrator_runtime" "secret"`),
+		},
+	}
 }
 
 func postgresStaticData() map[string]map[string][]byte {

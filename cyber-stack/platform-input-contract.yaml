@@ -58,6 +58,8 @@ spec:
       database: sync
       transport: tls-verify-full
       tlsSecretName: postgres-runtime-tls
+      pgbouncerListenerTLSSecretName: pgbouncer-listener-tls
+      pgbouncerListenerTLSServerName: postgres-pgbouncer
       grantMatrixDocument: sql/postgres
       accounts:
         postgres-atheros-search: atheros_search_runtime
@@ -179,6 +181,14 @@ spec:
       vaultPath: secret/ssl-proxy/prod/pgbouncer-runtime-users
       keys:
         - userlist.txt
+    - kind: Secret
+      name: pgbouncer-listener-tls
+      type: kubernetes.io/tls
+      vaultPath: secret/ssl-proxy/prod/pgbouncer-listener-tls
+      keys:
+        - ca.crt
+        - tls.crt
+        - tls.key
     - kind: Secret
       name: wireguard-config
       type: Opaque

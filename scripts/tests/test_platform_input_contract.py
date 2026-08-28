@@ -52,6 +52,7 @@ EXPECTED_INPUTS = {
     ("Secret", "postgres-schema-migrator"): {"password"},
     ("Secret", "postgres-schema-owner"): {"password"},
     ("Secret", "postgres-runtime-tls"): {"ca.crt"},
+    ("Secret", "pgbouncer-listener-tls"): {"ca.crt", "tls.crt", "tls.key"},
     ("Secret", "pgbouncer-runtime-users"): {"userlist.txt"},
     ("Secret", "wireguard-config"): {
         "server.conf",
@@ -116,7 +117,7 @@ class PlatformInputContractTest(unittest.TestCase):
         }
 
         self.assertEqual(EXPECTED_INPUTS, actual)
-        self.assertEqual(18, sum(entry.kind == "Secret" for entry in contract.inputs))
+        self.assertEqual(19, sum(entry.kind == "Secret" for entry in contract.inputs))
         self.assertEqual(1, sum(entry.kind == "ConfigMap" for entry in contract.inputs))
         for entry in contract.inputs:
             self.assertEqual(

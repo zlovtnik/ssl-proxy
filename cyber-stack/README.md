@@ -90,14 +90,18 @@ development overlay before documenting or automating local Kubernetes use.
 - Keep credential values out of Git. Reference the smallest platform-owned
   Secret and key required by each workload.
 - PostgreSQL credentials and TLS material are platform-owned prerequisites.
-  Production uses verified TLS to the direct endpoint and PgBouncer for
-  application runtime traffic; no root credential is consumed by the stack.
+  Production uses verified TLS both from PgBouncer to the direct endpoint and
+  from application runtimes to PgBouncer; no root credential is consumed by
+  the stack.
 - Use the standard labels `app.kubernetes.io/name`,
   `app.kubernetes.io/component` and `app.kubernetes.io/managed-by`.
 - The namespace default-deny baseline and component policies restrict ingress.
   Egress remains unrestricted until external endpoints and K3s CNI behavior
   have a complete allowlist. The host firewall remains authoritative for the
   host-network wireless sensor.
+  NetworkPolicies are security controls only while an enforcing CNI is healthy;
+  release evidence must show Calico, Cilium, or kube-router ready on every node
+  and include an approved enforcement probe.
 - Pin third-party images to an immutable version. First-party images in the
   canonical environment overlays must use SHA-256 digests.
 - Use Argo CD sync waves and hooks for ordering. Do not encode rollout order in

@@ -56,6 +56,10 @@ spec:
                 secretKeyRef:
                   name: postgres-atheros-search
                   key: password
+            - name: ATHSEARCH_POSTGRES_TLS_CA_FILE
+              value: "/var/run/pgbouncer-tls/ca.crt"
+            - name: ATHSEARCH_POSTGRES_TLS_SERVER_NAME
+              value: "postgres-pgbouncer"
             - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
               value: "d4d4eb2240270ee52c8411eb7363a3c2c058d846818cab1e6a25e2ba500075b1"
             - name: ATHSEARCH_EMBEDDING_MODEL
@@ -111,6 +115,9 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: pgbouncer-ca
+              mountPath: /var/run/pgbouncer-tls
+              readOnly: true
           startupProbe:
             httpGet:
               path: /healthz
@@ -150,6 +157,12 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: pgbouncer-ca
+          secret:
+            secretName: pgbouncer-listener-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: v1
 kind: Service

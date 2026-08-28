@@ -18,17 +18,28 @@ non-secret keys:
 The values must select PostgreSQL database `sync` and verified TLS. They remain
 external prerequisites and are not committed here.
 
-The same platform workflow provides the TLS bundle, PgBouncer user list, and
+The same platform workflow provides the upstream PostgreSQL CA, the distinct
+`pgbouncer-listener-tls` certificate bundle (`ca.crt`, `tls.crt`, `tls.key`),
+PgBouncer user list, and
 separate owner, Octopus, Atheros Search, schema-migrator, and Keycloak
 credentials documented in the platform input contract. No operator should
 patch these Kubernetes objects interactively.
 
 The schema executor and Keycloak use the direct endpoint. Octopus, Atheros
-Search, and schema-migrator use the in-cluster PgBouncer service. The schema
+Search, and schema-migrator use the in-cluster PgBouncer service with
+`sslmode=verify-full` and only the listener CA mounted. PgBouncer requires TLS
+from clients and verifies its upstream PostgreSQL certificate with
+`verify-full`; only PgBouncer mounts the listener certificate and private key.
+The schema
 executor must complete and record matching manifest checksums before the
 database-dependent workloads become ready. PgBouncer renders its upstream from
 all five endpoint ConfigMap keys and refuses to start unless the TLS mode is
 `verify-full` and the certificate server name equals the connection host.
+
+NetworkPolicies remain a release gate only when the installed CNI enforces them.
+Before rollout completion, capture read-only evidence that Calico, Cilium, or
+kube-router is ready on every node and run an approved enforcement probe. Do not
+install or modify the CNI from this repository.
 
 Octopus runs with both runtime lanes, archival, and all 26 Octopus-owned
 processors enabled. The bundled Redpanda StatefulSet is a single broker and

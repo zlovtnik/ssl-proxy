@@ -33,6 +33,7 @@ func New() *Logger {
 		"postgres-schema-migrator":         true,
 		"postgres-schema-owner":            true,
 		"postgres-runtime-tls":             true,
+		"pgbouncer-listener-tls":           true,
 		"pgbouncer-runtime-users":          true,
 		"wireguard-config":                 true,
 		"ssl-proxy-prod-postgres-endpoint": true,

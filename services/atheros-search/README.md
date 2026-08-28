@@ -43,10 +43,10 @@ In particular, `DATABASE_URL` and `SYNC_DATABASE_URL` are not fallbacks for
 | `ATHSEARCH_POSTGRES_DATABASE` | `sync` | Required canonical database |
 | `ATHSEARCH_POSTGRES_USER` | `atheros_search_runtime` | Dedicated non-root account |
 | `ATHSEARCH_POSTGRES_PASSWORD` | None | Required password when the compatibility DSN is absent |
-| `ATHSEARCH_POSTGRES_TLS_CA_FILE` | None | Optional PEM CA that enables verified TLS |
+| `ATHSEARCH_POSTGRES_TLS_CA_FILE` | None | PEM CA for verified TLS; when set the DSN must use `sslmode=verify-full` |
 | `ATHSEARCH_POSTGRES_TLS_CERT_FILE` | None | Optional PEM client certificate; must be supplied with the key |
 | `ATHSEARCH_POSTGRES_TLS_KEY_FILE` | None | Optional PEM client private key; must be supplied with the certificate |
-| `ATHSEARCH_POSTGRES_TLS_SERVER_NAME` | None | Required certificate identity only when a CA is configured |
+| `ATHSEARCH_POSTGRES_TLS_SERVER_NAME` | None | Required certificate identity when a CA is configured |
 | `ATHSEARCH_SCHEMA_MANIFEST_SHA256` | None | Exact 64-character canonical manifest checksum |
 
 Startup verifies the selected database, UTC/strict SQL session, Postgres version,

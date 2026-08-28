@@ -23,7 +23,7 @@ func setRequiredPostgresEnv(t *testing.T) {
 	} {
 		t.Setenv(key, "")
 	}
-	t.Setenv("ATHSEARCH_POSTGRES_DSN", "postgresql://search:secret@postgres.example.test:5432/sync?sslmode=require&search_path=atheros_search")
+	t.Setenv("ATHSEARCH_POSTGRES_DSN", "postgresql://search:secret@postgres.example.test:5432/sync?sslmode=verify-full&search_path=atheros_search")
 	t.Setenv("ATHSEARCH_POSTGRES_TLS_CA_FILE", "/tls/ca.crt")
 	t.Setenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", "postgres.example.test")
 	t.Setenv("ATHSEARCH_SCHEMA_MANIFEST_SHA256", hex.EncodeToString(make([]byte, sha256.Size)))
@@ -91,6 +91,14 @@ func TestLoadBuildsPasswordBasedPostgresConfigurationWithoutTLS(t *testing.T) {
 	require.True(t, present)
 	require.Equal(t, "p@ss:/ word", password)
 	require.Equal(t, "disable", parsed.Query().Get("sslmode"))
+
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_CA_FILE", "/tls/ca.crt")
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", "postgres.example.test")
+	cfg, err = Load()
+	require.NoError(t, err)
+	parsed, err = url.Parse(cfg.PostgresDSN)
+	require.NoError(t, err)
+	require.Equal(t, "verify-full", parsed.Query().Get("sslmode"))
 }
 
 func TestLoadRejectsRemovedDatabaseURLsAndGenericFallbacks(t *testing.T) {
@@ -116,6 +124,11 @@ func TestLoadAllowsDisabledTLSAndValidatesPartialTLSAndManifest(t *testing.T) {
 	t.Setenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", "")
 	_, err := Load()
 	require.NoError(t, err)
+
+	setRequiredPostgresEnv(t)
+	t.Setenv("ATHSEARCH_POSTGRES_DSN", "postgresql://search:secret@postgres.example.test:5432/sync?sslmode=require")
+	_, err = Load()
+	require.ErrorContains(t, err, "sslmode=verify-full")
 
 	setRequiredPostgresEnv(t)
 	t.Setenv("ATHSEARCH_POSTGRES_TLS_CERT_FILE", "/tls/client.crt")

@@ -61,6 +61,8 @@ spec:
       database: sync
       transport: tls-verify-full
       tlsSecretName: postgres-tls
+      pgbouncerListenerTLSSecretName: pgbouncer-listener-tls
+      pgbouncerListenerTLSServerName: postgres-pgbouncer
       grantMatrixDocument: sql/postgres
       accounts:
         postgres-octopus: octopus_runtime

@@ -317,7 +317,11 @@ spec:
             - name: POSTGRES_WARN_ONLY
               value: "false"
             - name: POSTGRES_SSL_MODE
-              value: "disable"
+              value: "verify-full"
+            - name: POSTGRES_SSL_CA_PATH
+              value: "/var/run/pgbouncer-tls/ca.crt"
+            - name: POSTGRES_SSL_SERVER_NAME
+              value: "postgres-pgbouncer"
             - name: OCTOPUS_PROCESSORS_ENABLED
               value: "true"
             - name: OCTOPUS_ENABLED_PROCESSORS
@@ -405,6 +409,9 @@ spec:
               mountPath: /sync-outbox
             - name: tmp
               mountPath: /tmp
+            - name: pgbouncer-ca
+              mountPath: /var/run/pgbouncer-tls
+              readOnly: true
       volumes:
         - name: topics-manifest
           configMap:
@@ -413,6 +420,12 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        - name: pgbouncer-ca
+          secret:
+            secretName: pgbouncer-listener-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: v1
 kind: Service

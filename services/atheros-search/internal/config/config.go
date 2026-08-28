@@ -64,6 +64,7 @@ func Load() (Config, error) {
 	env := viper.New()
 	env.AutomaticEnv()
 	postgresDSN := strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_DSN"))
+	postgresTLSCAFile := strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_TLS_CA_FILE"))
 	if postgresDSN == "" {
 		postgresHost := strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_HOST"))
 		postgresPort := envInt("ATHSEARCH_POSTGRES_PORT", 5432)
@@ -86,13 +87,17 @@ func Load() (Config, error) {
 			Path:   "/" + postgresDatabase,
 		}
 		query := connectionURL.Query()
-		query.Set("sslmode", "disable")
+		if postgresTLSCAFile != "" {
+			query.Set("sslmode", "verify-full")
+		} else {
+			query.Set("sslmode", "disable")
+		}
 		connectionURL.RawQuery = query.Encode()
 		postgresDSN = connectionURL.String()
 	}
 	cfg := Config{
 		PostgresDSN:                  postgresDSN,
-		PostgresTLSCAFile:            strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_TLS_CA_FILE")),
+		PostgresTLSCAFile:            postgresTLSCAFile,
 		PostgresTLSCertFile:          strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_TLS_CERT_FILE")),
 		PostgresTLSKeyFile:           strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_TLS_KEY_FILE")),
 		PostgresTLSServerName:        strings.TrimSpace(os.Getenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME")),
@@ -157,6 +162,12 @@ func Load() (Config, error) {
 	}
 	if cfg.PostgresTLSCAFile != "" && cfg.PostgresTLSServerName == "" {
 		return cfg, errors.New("ATHSEARCH_POSTGRES_TLS_SERVER_NAME is required")
+	}
+	if cfg.PostgresTLSCAFile != "" {
+		parsedDSN, err := url.Parse(cfg.PostgresDSN)
+		if err != nil || parsedDSN.Query().Get("sslmode") != "verify-full" {
+			return cfg, errors.New("ATHSEARCH_POSTGRES_DSN must set sslmode=verify-full when Postgres TLS is configured")
+		}
 	}
 	if len(cfg.PostgresSchemaManifestSHA256) != sha256.Size*2 {
 		return cfg, errors.New("ATHSEARCH_SCHEMA_MANIFEST_SHA256 must be a 64-character hex SHA-256 digest")

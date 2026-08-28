@@ -62,7 +62,10 @@ spec:
                   'reserve_pool_size = 10' \
                   'server_tls_sslmode = verify-full' \
                   'server_tls_ca_file = /etc/pgbouncer/upstream/ca.crt' \
-                  'client_tls_sslmode = disable' \
+                  'client_tls_sslmode = require' \
+                  'client_tls_ca_file = /etc/pgbouncer/listener/ca.crt' \
+                  'client_tls_cert_file = /etc/pgbouncer/listener/tls.crt' \
+                  'client_tls_key_file = /etc/pgbouncer/listener/tls.key' \
                   'ignore_startup_parameters = extra_float_digits,search_path'
               } > /generated/pgbouncer.ini
           env:
@@ -136,6 +139,9 @@ spec:
             - name: upstream-tls
               mountPath: /etc/pgbouncer/upstream
               readOnly: true
+            - name: listener-tls
+              mountPath: /etc/pgbouncer/listener
+              readOnly: true
             - name: run
               mountPath: /var/run/pgbouncer
       volumes:
@@ -151,6 +157,16 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+        - name: listener-tls
+          secret:
+            secretName: pgbouncer-listener-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
         - name: run
           emptyDir: {}
 ---

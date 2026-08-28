@@ -35,15 +35,17 @@ type LokiHtpasswdValidation struct {
 }
 
 type PostgresValidation struct {
-	EndpointConfigMapName string            `yaml:"endpointConfigMapName"`
-	Database              string            `yaml:"database"`
-	Transport             string            `yaml:"transport"`
-	TLSSecretName         string            `yaml:"tlsSecretName"`
-	GrantMatrixDocument   string            `yaml:"grantMatrixDocument"`
-	Accounts              map[string]string `yaml:"accounts"`
-	Host                  string            `yaml:"-"`
-	Port                  int               `yaml:"-"`
-	TLSServerName         string            `yaml:"-"`
+	EndpointConfigMapName          string            `yaml:"endpointConfigMapName"`
+	Database                       string            `yaml:"database"`
+	Transport                      string            `yaml:"transport"`
+	TLSSecretName                  string            `yaml:"tlsSecretName"`
+	PgBouncerListenerTLSSecretName string            `yaml:"pgbouncerListenerTLSSecretName"`
+	PgBouncerListenerTLSServerName string            `yaml:"pgbouncerListenerTLSServerName"`
+	GrantMatrixDocument            string            `yaml:"grantMatrixDocument"`
+	Accounts                       map[string]string `yaml:"accounts"`
+	Host                           string            `yaml:"-"`
+	Port                           int               `yaml:"-"`
+	TLSServerName                  string            `yaml:"-"`
 }
 
 type Validation struct {
@@ -127,6 +129,8 @@ func Load(path string) (*Contract, error) {
 			v.Postgres.Database = getString(pg, "database")
 			v.Postgres.Transport = getString(pg, "transport")
 			v.Postgres.TLSSecretName = getString(pg, "tlsSecretName")
+			v.Postgres.PgBouncerListenerTLSSecretName = getString(pg, "pgbouncerListenerTLSSecretName")
+			v.Postgres.PgBouncerListenerTLSServerName = getString(pg, "pgbouncerListenerTLSServerName")
 			v.Postgres.GrantMatrixDocument = getString(pg, "grantMatrixDocument")
 			if accounts, ok := pg["accounts"].(map[string]interface{}); ok {
 				v.Postgres.Accounts = make(map[string]string)
@@ -203,7 +207,8 @@ func (c *Contract) Validate() error {
 
 	pg := c.Validation.Postgres
 	if pg.EndpointConfigMapName == "" || pg.Database == "" || pg.Transport == "" ||
-		pg.TLSSecretName == "" || pg.GrantMatrixDocument == "" || len(pg.Accounts) == 0 {
+		pg.TLSSecretName == "" || pg.PgBouncerListenerTLSSecretName == "" ||
+		pg.PgBouncerListenerTLSServerName == "" || pg.GrantMatrixDocument == "" || len(pg.Accounts) == 0 {
 		return fmt.Errorf("contract PostgreSQL validation is incomplete")
 	}
 	if pg.Host == "" || pg.Port < 1 || pg.Port > 65535 || pg.TLSServerName == "" {

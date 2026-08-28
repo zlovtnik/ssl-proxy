@@ -10,7 +10,14 @@ import (
 )
 
 func validateTLS(c *contract.Contract, data map[string]map[string][]byte) error {
-	name := c.Validation.IdentityCertificate.SecretName
+	return validateServerTLS(
+		c.Validation.IdentityCertificate.SecretName,
+		c.Validation.IdentityCertificate.DNSName,
+		data,
+	)
+}
+
+func validateServerTLS(name, dnsName string, data map[string]map[string][]byte) error {
 	tlsInput, ok := data[name]
 	if !ok {
 		return fmt.Errorf("TLS secret %s not found", name)
@@ -54,7 +61,7 @@ func validateTLS(c *contract.Contract, data map[string]map[string][]byte) error 
 	if _, err := leaf.Verify(x509.VerifyOptions{
 		Roots:         caPool,
 		Intermediates: intermediates,
-		DNSName:       c.Validation.IdentityCertificate.DNSName,
+		DNSName:       dnsName,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}); err != nil {
 		return fmt.Errorf("certificate chain or DNS verification failed: %w", err)

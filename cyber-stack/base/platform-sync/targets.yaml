@@ -113,6 +113,13 @@ type: Opaque
 apiVersion: v1
 kind: Secret
 metadata:
+  name: pgbouncer-listener-tls
+  namespace: prod-ssl-proxy
+type: kubernetes.io/tls
+---
+apiVersion: v1
+kind: Secret
+metadata:
   name: pgbouncer-runtime-users
   namespace: prod-ssl-proxy
 type: Opaque

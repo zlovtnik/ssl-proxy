@@ -8,6 +8,14 @@ import (
 )
 
 func validatePgBouncer(c *contract.Contract, data map[string]map[string][]byte) error {
+	if err := validateServerTLS(
+		c.Validation.Postgres.PgBouncerListenerTLSSecretName,
+		c.Validation.Postgres.PgBouncerListenerTLSServerName,
+		data,
+	); err != nil {
+		return fmt.Errorf("listener TLS: %w", err)
+	}
+
 	pgbouncerData, ok := data["pgbouncer-runtime-users"]
 	if !ok {
 		return fmt.Errorf("PgBouncer users secret not found")

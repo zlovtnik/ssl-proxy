@@ -17,7 +17,7 @@ Host-side Vault-to-Kubernetes secret synchronization for the ssl-proxy productio
                     └─────────────┘
 ```
 
-The platform sync program reads all 19 required inputs from Vault, retains only contract-declared keys, validates them (TLS chain and key pairing, live PostgreSQL identity/grants, Loki, PgBouncer, and WireGuard), and performs Kubernetes server-side dry runs before applying. If a later apply fails, it restores objects already changed in that run from its in-memory preflight snapshot.
+The platform sync program reads all 20 required inputs from Vault, retains only contract-declared keys, validates them (TLS chains, key pairs, DNS identities including the PgBouncer listener, live PostgreSQL identity/grants, Loki, PgBouncer, and WireGuard), and performs Kubernetes server-side dry runs before applying. If a later apply fails, it restores objects already changed in that run from its in-memory preflight snapshot.
 
 ## Prerequisites
 

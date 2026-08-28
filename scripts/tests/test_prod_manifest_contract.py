@@ -89,7 +89,7 @@ spec:
         - name: render-pgbouncer-config
           image: busybox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           args:
-            - POSTGRES_SSL_MODE verify-full POSTGRES_SSL_SERVER_NAME POSTGRES_HOST unix_socket_dir = /var/run/pgbouncer ignore_startup_parameters = extra_float_digits,search_path
+            - POSTGRES_SSL_MODE verify-full POSTGRES_SSL_SERVER_NAME POSTGRES_HOST unix_socket_dir = /var/run/pgbouncer ignore_startup_parameters = extra_float_digits,search_path client_tls_sslmode = require client_tls_cert_file = /etc/pgbouncer/listener/tls.crt client_tls_key_file = /etc/pgbouncer/listener/tls.key
           env:
             - {name: POSTGRES_HOST, valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_HOST}}}
             - {name: POSTGRES_PORT, valueFrom: {configMapKeyRef: {name: ssl-proxy-prod-postgres-endpoint, key: POSTGRES_PORT}}}
@@ -103,6 +103,7 @@ spec:
         - {name: generated-config, emptyDir: {}}
         - {name: users, secret: {secretName: pgbouncer-runtime-users}}
         - {name: upstream-tls, secret: {secretName: postgres-runtime-tls}}
+        - {name: listener-tls, secret: {secretName: pgbouncer-listener-tls}}
 """
     )
 

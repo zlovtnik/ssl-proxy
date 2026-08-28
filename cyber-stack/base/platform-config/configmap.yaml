@@ -51,7 +51,7 @@ data:
   IDENTITY_KEYCLOAK_ISSUER: "https://identity.example.internal/realms/middleware"
   SCHEMA_MIGRATOR_CORS_ORIGIN: "https://migrator.example.internal"
   ATHEROS_SEARCH_CORS_ORIGIN: "https://search.example.internal"
-  SCHEMA_MIGRATOR_POSTGRES_JDBC_URL: "jdbc:postgresql://postgres-pgbouncer:5432/sync?currentSchema=schema_migrator&sslmode=disable"
+  SCHEMA_MIGRATOR_POSTGRES_JDBC_URL: "jdbc:postgresql://postgres-pgbouncer:5432/sync?currentSchema=schema_migrator&sslmode=verify-full&sslrootcert=/var/run/pgbouncer-tls/ca.crt"
   REGISTRY_PLAIN_HTTP: "0"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://ssl-proxy-telemetry-otel-collector:4317"
 ---

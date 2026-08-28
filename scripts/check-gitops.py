@@ -696,6 +696,9 @@ def _check_prod_pgbouncer_external_postgres(
         "POSTGRES_HOST",
         "unix_socket_dir = /var/run/pgbouncer",
         "ignore_startup_parameters = extra_float_digits,search_path",
+        "client_tls_sslmode = require",
+        "client_tls_cert_file = /etc/pgbouncer/listener/tls.crt",
+        "client_tls_key_file = /etc/pgbouncer/listener/tls.key",
     ):
         if required not in renderer_script:
             errors.append(
@@ -729,6 +732,7 @@ def _check_prod_pgbouncer_external_postgres(
     expected_secrets = {
         "users": "pgbouncer-runtime-users",
         "upstream-tls": "postgres-runtime-tls",
+        "listener-tls": "pgbouncer-listener-tls",
     }
     for volume_name, secret_name in expected_secrets.items():
         secret = _mapping(volumes.get(volume_name, {}).get("secret"))
@@ -1694,30 +1698,65 @@ def _check_postgres_waves(rendered: Documents | str, relative: str) -> list[str]
     return errors
 
 
-def _check_postgres_plaintext_contract(
+def _check_postgres_tls_contract(
     rendered: Documents | str, relative: str
 ) -> list[str]:
     documents = _documents(rendered)
     rendered_text = yaml.safe_dump(documents, sort_keys=False)
     errors: list[str] = []
-    for forbidden in (
-        "postgres-client-ca",
-        "POSTGRES_TLS_CA_FILE",
-        "POSTGRES_TLS_SERVER_NAME",
-        "sslMode=VERIFY_IDENTITY",
-    ):
-        if forbidden in rendered_text:
-            errors.append(f"{relative}: rendered PostgreSQL workload retains {forbidden}")
+    if "sslmode=disable" in rendered_text:
+        errors.append(f"{relative}: rendered PostgreSQL workload retains plaintext TLS settings")
 
     octopus = _find(documents, "Deployment", "ssl-proxy-java-coordinator")
     if octopus:
-        ssl_modes = [
-            entry.get("value")
-            for entry in _environment(_pod_containers(octopus[0]))
-            if entry.get("name") == "POSTGRES_SSL_MODE"
-        ]
-        if ssl_modes != ["disable"]:
-            errors.append(f"{relative}: Octopus must set POSTGRES_SSL_MODE=disable")
+        container = _pod_containers(octopus[0])[0]
+        environment = {entry.get("name"): entry.get("value") for entry in _environment([container])}
+        expected = {
+            "POSTGRES_SSL_MODE": "verify-full",
+            "POSTGRES_SSL_CA_PATH": "/var/run/pgbouncer-tls/ca.crt",
+            "POSTGRES_SSL_SERVER_NAME": "postgres-pgbouncer",
+        }
+        for name, value in expected.items():
+            if environment.get(name) != value:
+                errors.append(f"{relative}: Octopus must set {name}={value}")
+        mounts = {mount.get("name"): mount for mount in _list(container.get("volumeMounts"))}
+        if _mapping(mounts.get("pgbouncer-ca")).get("mountPath") != "/var/run/pgbouncer-tls":
+            errors.append(f"{relative}: Octopus must mount the PgBouncer listener CA")
+
+    for deployment_name, container_name in (
+        ("ssl-proxy-atheros-search", "atheros-search"),
+        ("ssl-proxy-schema-migrator-backend", "backend"),
+    ):
+        deployments = _find(documents, "Deployment", deployment_name)
+        if not deployments:
+            continue
+        containers = [container for container in _pod_containers(deployments[0]) if container.get("name") == container_name]
+        if len(containers) != 1:
+            errors.append(f"{relative}: expected one {container_name} container")
+            continue
+        mounts = {mount.get("name"): mount for mount in _list(containers[0].get("volumeMounts"))}
+        if _mapping(mounts.get("pgbouncer-ca")).get("mountPath") != "/var/run/pgbouncer-tls":
+            errors.append(f"{relative}: {container_name} must mount the PgBouncer listener CA")
+        volumes = {
+            volume.get("name"): _mapping(volume.get("secret"))
+            for volume in _list(_path(deployments[0], "spec", "template", "spec", "volumes"))
+        }
+        listener_ca = _mapping(volumes.get("pgbouncer-ca"))
+        if listener_ca.get("secretName") != "pgbouncer-listener-tls" or _list(listener_ca.get("items")) != [{"key": "ca.crt", "path": "ca.crt"}]:
+            errors.append(f"{relative}: {container_name} may mount only the PgBouncer listener CA")
+        if deployment_name == "ssl-proxy-atheros-search":
+            environment = {entry.get("name"): entry.get("value") for entry in _environment(containers)}
+            if environment.get("ATHSEARCH_POSTGRES_TLS_CA_FILE") != "/var/run/pgbouncer-tls/ca.crt" or environment.get("ATHSEARCH_POSTGRES_TLS_SERVER_NAME") != "postgres-pgbouncer":
+                errors.append(f"{relative}: Atheros Search must verify the PgBouncer listener certificate")
+        else:
+            configmaps = _find(documents, "ConfigMap", "ssl-proxy-platform-config")
+            jdbc_url = _mapping(_mapping(configmaps[0]).get("data")).get("SCHEMA_MIGRATOR_POSTGRES_JDBC_URL") if len(configmaps) == 1 else None
+            required_jdbc = (
+                "jdbc:postgresql://postgres-pgbouncer:5432/sync?currentSchema=schema_migrator"
+                "&sslmode=verify-full&sslrootcert=/var/run/pgbouncer-tls/ca.crt"
+            )
+            if configmaps and jdbc_url != required_jdbc:
+                errors.append(f"{relative}: schema-migrator must use verified PgBouncer TLS")
     return errors
 
 
@@ -2205,7 +2244,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for image in FIRST_PARTY_IMAGES:
             if any(rendered_image == image or rendered_image.startswith(f"{image}:") for rendered_image in _rendered_images(documents)):
                 errors.append(f"{relative}: rendered workload retains logical image name {image}")
-        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_postgres_waves, _check_postgres_plaintext_contract):
+        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_postgres_waves, _check_postgres_tls_contract):
             errors.extend(check(documents, relative))
         if relative.startswith("cyber-stack/matrix/"):
             errors.extend(_check_phase_one_workload_edge(documents, relative))

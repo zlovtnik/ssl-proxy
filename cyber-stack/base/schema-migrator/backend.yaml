@@ -143,10 +143,19 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: pgbouncer-ca
+              mountPath: /var/run/pgbouncer-tls
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 2Gi
+        - name: pgbouncer-ca
+          secret:
+            secretName: pgbouncer-listener-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: v1
 kind: Service

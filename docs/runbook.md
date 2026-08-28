@@ -219,7 +219,7 @@ The evidence must show:
   client address matches that client rather than a spoofed forwarding header,
   and each request has a matching JSON access-log record;
 - `192.168.1.242:5000/v2/` responds, a CRI image pull succeeds, PostgreSQL accepts
-  password-authenticated plaintext clients on `.242:4000`, all workloads are healthy, and the
+  password-authenticated verified-TLS clients on `.242:4000`, all workloads are healthy, and the
   Atheros Sensor image-pull failure is resolved.
 
 Use arbitrary Host values for the LAN response check:
@@ -290,7 +290,8 @@ The current recovery incident is blocked by missing platform-owned Secrets,
 not by first-party publication. Republishing `$TAG` or `latest` cannot satisfy
 that contract. Have the platform declarative control plane run its atomic Vault
 KV-v2 sync for the contract, including the PostgreSQL owner/runtime accounts,
-CA bundle, PgBouncer user list and Loki htpasswd preflight, then rerun
+CA bundles, the PgBouncer listener certificate/key bundle, PgBouncer user list
+and Loki htpasswd preflight, then rerun
 `make stack-health`; do not create or patch the Secrets interactively. Existing
 pending pods recover through kubelet retries and Argo CD self-healing. Do not
 restart, patch or scale workloads to force reconciliation.
@@ -353,8 +354,9 @@ missing Application, unhealthy status or timeout is a failed release check.
 
 ### Octopus health fails
 
-- Verify the rendered PostgreSQL host, port, database, account and explicit
-  `POSTGRES_SSL_MODE=DISABLED` setting.
+- Verify the rendered PgBouncer host, port, database, account and explicit
+  `POSTGRES_SSL_MODE=verify-full`, listener CA path, and
+  `POSTGRES_SSL_SERVER_NAME=postgres-pgbouncer` settings.
 - Confirm the canonical manifest and versioned Kafka consumer-group settings.
 - Do not fall back to PostgreSQL.
 
