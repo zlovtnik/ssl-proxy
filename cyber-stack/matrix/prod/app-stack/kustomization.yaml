@@ -15,7 +15,7 @@ resources:
 - ../../../base/cloudflared
 - ../../../base/public-gateway
 images:
-- digest: sha256:908957abe5db0c5c05b9acc95dd73cf4117f696864c82fcb3b2f875ca6f53cfa
+- digest: sha256:7313414747940780243b966483e50dd25dc4d25aea78707c9dab622e6257a7bb
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
 - digest: sha256:6dc839a84ea9aa80b0cae52b4158dd79abff6364827e7689b257411dea130618
