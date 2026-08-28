@@ -27,6 +27,26 @@ if ! vault status -format=json >/dev/null 2>&1; then
     exit 1
 fi
 
+require_admin_capability() {
+    local path="$1"
+    local capabilities
+    capabilities="$(vault token capabilities "$path" | tr -d '[:space:]')" || {
+        echo "ERROR: Cannot inspect Vault capabilities for $path." >&2
+        exit 1
+    }
+    case ",$capabilities," in
+        *,root,*|*,sudo,*|*,create,*|*,update,*) return 0 ;;
+        *)
+            echo "ERROR: The active Vault token cannot administer $path." >&2
+            echo "Use a Vault administrator token; do not use the platform sync service token." >&2
+            exit 1
+            ;;
+    esac
+}
+
+require_admin_capability "sys/policies/acl/$POLICY_NAME"
+require_admin_capability "auth/token/create-orphan"
+
 echo "Writing Vault policy: $POLICY_NAME"
 vault policy write "$POLICY_NAME" "$POLICY_FILE" >/dev/null
 

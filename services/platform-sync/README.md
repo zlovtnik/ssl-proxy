@@ -26,6 +26,8 @@ The platform sync program reads all 19 required inputs from Vault, retains only 
 - Renewable read-only Vault token created by `scripts/bootstrap-vault-platform-sync.sh`
 - Vault CA certificate available as a host file
 - Ubuntu server with systemd
+- Go 1.25+ or Docker. When Go is absent, the installer uses a pinned, hardened
+  Go builder container and installs only the resulting static binaries.
 
 ## Installation
 
@@ -33,7 +35,18 @@ The platform sync program reads all 19 required inputs from Vault, retains only 
 export VAULT_ADDR=https://192.168.1.242:8200
 export VAULT_CACERT="$HOME/.config/vault/ca.crt"
 export PLATFORM_SYNC_TOKEN_FILE="$HOME/.config/platform-sync/vault-token"
+
+# Capture the administrator token without storing it in shell history.
+if [ -n "${ZSH_VERSION:-}" ]; then
+  read -rs "VAULT_TOKEN?Vault administrator token: "
+else
+  read -rsp 'Vault administrator token: ' VAULT_TOKEN
+fi
+export VAULT_TOKEN
+printf '\n'
+
 ./scripts/bootstrap-vault-platform-sync.sh
+unset VAULT_TOKEN
 
 sudo VAULT_TOKEN_SOURCE="$PLATFORM_SYNC_TOKEN_FILE" \
   VAULT_CA_SOURCE="$VAULT_CACERT" \

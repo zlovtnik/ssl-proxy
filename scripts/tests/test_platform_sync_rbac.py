@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -12,6 +13,8 @@ import yaml
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 RBAC_DIR = REPOSITORY_ROOT / "cyber-stack" / "base" / "platform-sync"
 BOOTSTRAP_KUST = REPOSITORY_ROOT / "cyber-stack" / "matrix" / "prod" / "bootstrap" / "kustomization.yaml"
+INSTALLER = REPOSITORY_ROOT / "scripts" / "install-platform-sync.sh"
+VAULT_BOOTSTRAP = REPOSITORY_ROOT / "scripts" / "bootstrap-vault-platform-sync.sh"
 
 
 def load_yaml(path: Path) -> list[dict]:
@@ -23,6 +26,32 @@ def load_yaml(path: Path) -> list[dict]:
 
 
 class PlatformSyncRbacTest(unittest.TestCase):
+    def test_host_scripts_have_valid_bash_syntax(self) -> None:
+        for script in (INSTALLER, VAULT_BOOTSTRAP):
+            subprocess.run(["bash", "-n", str(script)], check=True)
+
+    def test_installer_has_pinned_hardened_container_fallback(self) -> None:
+        installer = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("command -v go", installer)
+        self.assertIn("command -v docker", installer)
+        self.assertRegex(
+            installer,
+            r'GO_BUILDER_IMAGE="docker\.io/library/golang:1\.25-alpine@sha256:[0-9a-f]{64}"',
+        )
+        for flag in (
+            "--read-only",
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges",
+            "-mod=readonly",
+            "CGO_ENABLED=0",
+        ):
+            self.assertIn(flag, installer)
+
+    def test_vault_bootstrap_preflights_admin_permissions(self) -> None:
+        bootstrap = VAULT_BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn('require_admin_capability "sys/policies/acl/$POLICY_NAME"', bootstrap)
+        self.assertIn('require_admin_capability "auth/token/create-orphan"', bootstrap)
+
     def test_serviceaccount_exists(self) -> None:
         """Verify ServiceAccount exists with correct properties."""
         docs = load_yaml(RBAC_DIR / "serviceaccount.yaml")

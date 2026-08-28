@@ -4,12 +4,15 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALL_DIR="/opt/platform-sync"
 CONFIG_DIR="/etc/platform-sync"
 SERVICE_USER="platform-sync"
 SERVICE_GROUP="platform-sync"
 VAULT_TOKEN_SOURCE="${VAULT_TOKEN_SOURCE:-}"
 VAULT_CA_SOURCE="${VAULT_CA_SOURCE:-}"
+GO_BUILDER_IMAGE="docker.io/library/golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59"
 
 echo "=== Platform Sync Installer ==="
 
@@ -33,15 +36,43 @@ mkdir -p "$CONFIG_DIR"
 
 # Install binaries
 echo "Installing binaries"
-if [ -f "./services/platform-sync/platform-sync" ]; then
-    cp ./services/platform-sync/platform-sync "$INSTALL_DIR/bin/"
-    cp ./services/platform-sync/cred-gen "$INSTALL_DIR/bin/"
+if command -v go >/dev/null 2>&1; then
+    echo "Building binaries with host Go"
+    (
+        cd "$REPO_ROOT/services/platform-sync"
+        go build -trimpath -mod=readonly -buildvcs=false -o "$INSTALL_DIR/bin/platform-sync" .
+        go build -trimpath -mod=readonly -buildvcs=false -o "$INSTALL_DIR/bin/cred-gen" ./cmd/cred-gen
+    )
+elif command -v docker >/dev/null 2>&1; then
+    echo "Host Go not found; building binaries with pinned Go container"
+    build_dir="$(mktemp -d)"
+    trap 'rm -rf "$build_dir"' EXIT
+    docker run --rm \
+        --pull=missing \
+        --read-only \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        --pids-limit=512 \
+        --memory=2g \
+        --cpus=2 \
+        --tmpfs /tmp:rw,noexec,nosuid,size=1073741824 \
+        --env CGO_ENABLED=0 \
+        --env GOCACHE=/tmp/go-build \
+        --env GOMODCACHE=/tmp/go-mod \
+        --env GOTOOLCHAIN=local \
+        --env HOME=/tmp/home \
+        --mount "type=bind,src=$REPO_ROOT/services/platform-sync,dst=/src,readonly" \
+        --mount "type=bind,src=$build_dir,dst=/out" \
+        --workdir /src \
+        "$GO_BUILDER_IMAGE" \
+        sh -ec 'go build -trimpath -mod=readonly -buildvcs=false -o /out/platform-sync . && go build -trimpath -mod=readonly -buildvcs=false -o /out/cred-gen ./cmd/cred-gen'
+    install -m 755 "$build_dir/platform-sync" "$INSTALL_DIR/bin/platform-sync"
+    install -m 755 "$build_dir/cred-gen" "$INSTALL_DIR/bin/cred-gen"
+    rm -rf "$build_dir"
+    trap - EXIT
 else
-    echo "Building binaries"
-    cd services/platform-sync
-    go build -o "$INSTALL_DIR/bin/platform-sync" .
-    go build -o "$INSTALL_DIR/bin/cred-gen" ./cmd/cred-gen
-    cd ../..
+    echo "ERROR: Install Go 1.25+ or Docker before running this installer." >&2
+    exit 1
 fi
 
 chmod 755 "$INSTALL_DIR/bin/platform-sync"
@@ -49,12 +80,12 @@ chmod 755 "$INSTALL_DIR/bin/cred-gen"
 
 # Install contract
 echo "Installing contract"
-cp cyber-stack/platform-input-contract.yaml "$INSTALL_DIR/contract/"
+cp "$REPO_ROOT/cyber-stack/platform-input-contract.yaml" "$INSTALL_DIR/contract/"
 
 # Install configuration
 echo "Installing configuration"
 if [ ! -f "$CONFIG_DIR/platform-sync.conf" ]; then
-    cp config/platform-sync/platform-sync.conf "$CONFIG_DIR/"
+    cp "$REPO_ROOT/config/platform-sync/platform-sync.conf" "$CONFIG_DIR/"
 else
     echo "Configuration file already exists, skipping"
 fi
@@ -75,9 +106,9 @@ fi
 
 # Install systemd units
 echo "Installing systemd units"
-cp config/platform-sync/credential-generator.service /etc/systemd/system/
-cp config/platform-sync/vault-k8s-sync.service /etc/systemd/system/
-cp config/platform-sync/vault-k8s-sync.timer /etc/systemd/system/
+cp "$REPO_ROOT/config/platform-sync/credential-generator.service" /etc/systemd/system/
+cp "$REPO_ROOT/config/platform-sync/vault-k8s-sync.service" /etc/systemd/system/
+cp "$REPO_ROOT/config/platform-sync/vault-k8s-sync.timer" /etc/systemd/system/
 
 # Set permissions
 echo "Setting permissions"
