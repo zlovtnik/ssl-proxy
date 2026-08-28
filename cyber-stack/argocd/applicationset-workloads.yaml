@@ -64,6 +64,16 @@ spec:
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
+      ignoreDifferences:
+        # The host-side synchronizer is the only writer for this platform input.
+        # Its validated Vault bundle changes both fields from the empty shell
+        # rendered by the bootstrap slice.
+        - group: ""
+          kind: Secret
+          name: pgbouncer-listener-tls
+          jsonPointers:
+            - /data
+            - /type
       syncPolicy:
         automated:
           prune: true
