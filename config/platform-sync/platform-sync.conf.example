@@ -1,0 +1,20 @@
+# Platform sync configuration
+# Edit this file and restart the timer.
+
+# Vault configuration
+VAULT_ADDR=https://192.168.1.242:8200
+VAULT_KV_MOUNT=secret
+VAULT_KV_PREFIX=ssl-proxy/prod
+
+# Kubernetes configuration
+SYNC_NAMESPACE=prod-ssl-proxy
+
+# Contract path
+CONTRACT_PATH=/opt/platform-sync/contract/platform-input-contract.yaml
+
+# Sync behavior
+SYNC_DRY_RUN=false
+SYNC_LOCK_TTL_SECONDS=600
+
+# Logging
+LOG_LEVEL=info

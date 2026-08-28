@@ -15,6 +15,7 @@ RBAC_DIR = REPOSITORY_ROOT / "cyber-stack" / "base" / "platform-sync"
 BOOTSTRAP_KUST = REPOSITORY_ROOT / "cyber-stack" / "matrix" / "prod" / "bootstrap" / "kustomization.yaml"
 INSTALLER = REPOSITORY_ROOT / "scripts" / "install-platform-sync.sh"
 VAULT_BOOTSTRAP = REPOSITORY_ROOT / "scripts" / "bootstrap-vault-platform-sync.sh"
+DEFAULT_CONFIG = REPOSITORY_ROOT / "config" / "platform-sync" / "platform-sync.conf.example"
 
 
 def load_yaml(path: Path) -> list[dict]:
@@ -46,6 +47,15 @@ class PlatformSyncRbacTest(unittest.TestCase):
             "CGO_ENABLED=0",
         ):
             self.assertIn(flag, installer)
+
+    def test_installer_default_configuration_is_packaged(self) -> None:
+        installer = INSTALLER.read_text(encoding="utf-8")
+        self.assertTrue(DEFAULT_CONFIG.is_file())
+        self.assertIn("platform-sync.conf.example", installer)
+        self.assertIn(
+            'install -m 640 "$DEFAULT_CONFIG" "$CONFIG_DIR/platform-sync.conf"',
+            installer,
+        )
 
     def test_vault_bootstrap_preflights_admin_permissions(self) -> None:
         bootstrap = VAULT_BOOTSTRAP.read_text(encoding="utf-8")

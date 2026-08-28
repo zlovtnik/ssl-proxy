@@ -13,12 +13,18 @@ SERVICE_GROUP="platform-sync"
 VAULT_TOKEN_SOURCE="${VAULT_TOKEN_SOURCE:-}"
 VAULT_CA_SOURCE="${VAULT_CA_SOURCE:-}"
 GO_BUILDER_IMAGE="docker.io/library/golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59"
+DEFAULT_CONFIG="$REPO_ROOT/config/platform-sync/platform-sync.conf.example"
 
 echo "=== Platform Sync Installer ==="
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
     echo "ERROR: Please run as root or with sudo" >&2
+    exit 1
+fi
+
+if [ ! -f "$DEFAULT_CONFIG" ]; then
+    echo "ERROR: Missing packaged configuration: $DEFAULT_CONFIG" >&2
     exit 1
 fi
 
@@ -85,7 +91,7 @@ cp "$REPO_ROOT/cyber-stack/platform-input-contract.yaml" "$INSTALL_DIR/contract/
 # Install configuration
 echo "Installing configuration"
 if [ ! -f "$CONFIG_DIR/platform-sync.conf" ]; then
-    cp "$REPO_ROOT/config/platform-sync/platform-sync.conf" "$CONFIG_DIR/"
+    install -m 640 "$DEFAULT_CONFIG" "$CONFIG_DIR/platform-sync.conf"
 else
     echo "Configuration file already exists, skipping"
 fi
