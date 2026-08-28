@@ -42,19 +42,6 @@ def write_contract(root: Path, environment: str, *, registry: str) -> None:
             f"images:\n{images}",
             encoding="utf-8",
         )
-    aggregate_images = "".join(
-        f"  - name: {service}\n"
-        f"    newName: {registry}/{environment}/{service}\n"
-        f"    digest: {PIN}\n"
-        for service in FIRST_PARTY_SERVICES
-    )
-    (matrix / "kustomization.yaml").write_text(
-        "apiVersion: kustomize.config.k8s.io/v1beta1\n"
-        "kind: Kustomization\n"
-        f"namespace: {environment}-ssl-proxy\n"
-        f"images:\n{aggregate_images}",
-        encoding="utf-8",
-    )
 
 
 class ImageContractTest(unittest.TestCase):
@@ -76,16 +63,6 @@ class ImageContractTest(unittest.TestCase):
         self.assertTrue(all(contract.repository.startswith("prod.registry.test/release/prod/") for contract in prod))
         self.assertEqual("data-plane", dev[-1].slice_name)
         self.assertEqual("app-stack", dev[0].slice_name)
-
-    def test_rejects_slice_aggregate_inconsistency(self) -> None:
-        aggregate = self.root / "cyber-stack/matrix/prod/kustomization.yaml"
-        aggregate.write_text(
-            aggregate.read_text(encoding="utf-8").replace(PIN, "sha256:" + "b" * 64, 1),
-            encoding="utf-8",
-        )
-
-        with self.assertRaisesRegex(ImageContractError, "differs between"):
-            load_image_contracts(self.root, "prod")
 
     def test_rejects_missing_duplicate_tagged_and_invalid_digest_mappings(self) -> None:
         app = self.root / "cyber-stack/matrix/dev/app-stack/kustomization.yaml"

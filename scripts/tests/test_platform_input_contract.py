@@ -17,6 +17,7 @@ from platform_input_contract import (  # noqa: E402
     CONTRACT_RELATIVE_PATH,
     PLATFORM_BOOTSTRAP,
     PlatformInputContractError,
+    compare_contract_to_bootstrap,
     compare_contract_to_rendered,
     find_committed_secret_values,
     load_platform_input_contract,
@@ -85,7 +86,7 @@ def render_production() -> list[dict[str, object]]:
             "build",
             "--load-restrictor",
             "LoadRestrictionsNone",
-            "cyber-stack/matrix/prod",
+            "cyber-stack/matrix/prod/bootstrap",
         ],
         cwd=REPOSITORY_ROOT,
         check=True,
@@ -133,11 +134,27 @@ class PlatformInputContractTest(unittest.TestCase):
     def test_production_render_exactly_matches_contract(self) -> None:
         contract = load_platform_input_contract(REPOSITORY_ROOT)
 
-        self.assertEqual([], compare_contract_to_rendered(contract, render_production()))
+        self.assertEqual([], compare_contract_to_bootstrap(contract, render_production()))
 
     def test_rejects_undeclared_object_and_key_drift(self) -> None:
         contract = load_platform_input_contract(REPOSITORY_ROOT)
-        rendered = render_production()
+        result = subprocess.run(
+            [
+                "kustomize",
+                "build",
+                "--load-restrictor",
+                "LoadRestrictionsNone",
+                "cyber-stack/matrix/prod/app-stack",
+            ],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        rendered = [
+            document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict)
+        ]
         deployment = next(
             document
             for document in rendered

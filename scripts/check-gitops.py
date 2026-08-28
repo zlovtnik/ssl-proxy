@@ -20,6 +20,7 @@ if str(SCRIPTS_DIRECTORY) not in sys.path:
 
 from platform_input_contract import (  # noqa: E402
     PlatformInputContractError,
+    compare_contract_to_bootstrap,
     compare_contract_to_rendered,
     find_committed_secret_values,
     load_platform_input_contract,
@@ -32,7 +33,6 @@ Documents = list[Document]
 CANONICAL_KUSTOMIZATIONS = (
     "cyber-stack/argocd-bootstrap",
     "cyber-stack/argocd",
-    "cyber-stack/matrix/prod",
     "cyber-stack/matrix/prod/bootstrap",
     "cyber-stack/matrix/prod/data-plane",
     "cyber-stack/matrix/prod/app-stack",
@@ -298,7 +298,6 @@ def _check_proxy_probes(rendered: Documents | str, relative: str) -> list[str]:
             "cyber-stack/base/proxy",
             "cyber-stack/matrix/dev",
             "cyber-stack/matrix/dev/app-stack",
-            "cyber-stack/matrix/prod",
             "cyber-stack/matrix/prod/app-stack",
         }
         return (
@@ -982,7 +981,7 @@ def _check_ingress_policy_coverage(
                 f"{relative}: {document.get('kind')}/{_metadata(document).get('name')} "
                 "has no explicit ingress NetworkPolicy"
             )
-    if relative == "cyber-stack/matrix/prod" and not has_default_deny:
+    if relative == "cyber-stack/matrix/prod/bootstrap" and not has_default_deny:
         errors.append(f"{relative}: namespace ingress default-deny policy is missing")
     return errors
 
@@ -2253,12 +2252,10 @@ def check_repository(root: Path, executable: str) -> list[str]:
             errors.extend(_check_immutable_image_pulls(documents, relative))
             errors.extend(_check_ingress_policy_coverage(documents, relative))
         if relative in {
-            "cyber-stack/matrix/prod",
             "cyber-stack/matrix/prod/app-stack",
         }:
             errors.extend(_check_public_gateway(documents, relative))
         if relative in {
-            "cyber-stack/matrix/prod",
             "cyber-stack/matrix/prod/data-plane",
         }:
             errors.extend(_check_observability_contract(documents, relative))
@@ -2273,12 +2270,6 @@ def check_repository(root: Path, executable: str) -> list[str]:
             _check_prod_keycloak_external_postgres,
             _check_octopus_runtime,
         ),
-        "cyber-stack/matrix/prod": (
-            _check_prod_alloy_positions,
-            _check_prod_pgbouncer_external_postgres,
-            _check_prod_keycloak_external_postgres,
-            _check_octopus_runtime,
-        ),
     }
     for relative, checks in environment_render_checks.items():
         if relative not in rendered_kustomizations:
@@ -2286,10 +2277,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for check in checks:
             errors.extend(check(rendered_kustomizations[relative], relative))
     if expected_octopus_checksum is not None:
-        for relative in (
-            "cyber-stack/matrix/prod",
-            "cyber-stack/matrix/prod/app-stack",
-        ):
+        for relative in ("cyber-stack/matrix/prod/app-stack",):
             if relative in rendered_kustomizations:
                 errors.extend(
                     _check_octopus_schema_contract(
@@ -2312,14 +2300,14 @@ def check_repository(root: Path, executable: str) -> list[str]:
                 errors.extend(_check_schema_executor_contract(rendered_kustomizations[relative], relative, expected_schema_marker))
     prod_documents = [document for component in ("bootstrap", "data-plane", "app-stack") for document in rendered_kustomizations.get(f"cyber-stack/matrix/prod/{component}", [])]
     errors.extend(_check_redpanda_topic_replication(prod_documents, "cyber-stack/matrix/prod"))
-    prod_aggregate = rendered_kustomizations.get("cyber-stack/matrix/prod")
-    if prod_aggregate is not None:
+    prod_bootstrap = rendered_kustomizations.get("cyber-stack/matrix/prod/bootstrap")
+    if prod_bootstrap is not None:
         try:
             platform_contract = load_platform_input_contract(root)
         except PlatformInputContractError as error:
             errors.append(str(error))
         else:
-            errors.extend(compare_contract_to_rendered(platform_contract, prod_aggregate))
+            errors.extend(compare_contract_to_bootstrap(platform_contract, prod_bootstrap))
     errors.extend(find_committed_secret_values(root))
     if "cyber-stack/argocd-bootstrap" in rendered_kustomizations:
         _check_platform_bootstrap_application(

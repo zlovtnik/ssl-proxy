@@ -49,8 +49,8 @@ explicitly only for an isolated local HTTP registry whose host and port are
 trusted by every builder and Kubernetes node runtime. `PLATFORM` defaults to
 `linux/amd64`; override it only when the target architecture differs.
 
-`make publish` defaults to `ENV=prod`. It validates the selected app-stack,
-data-plane and aggregate Kustomizations, then publishes the eight
+`make publish` defaults to `ENV=prod`. It validates the owning app-stack or
+data-plane Kustomization, then publishes the eight
 Kubernetes-deployed first-party images to the exact repositories configured
 there. It pushes `$TAG` and `latest`, reads the pushed manifest digest from
 Buildx metadata, and reports either `MATCH` or `UNPINNED` against the selected

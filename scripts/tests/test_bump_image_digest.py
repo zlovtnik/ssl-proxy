@@ -36,25 +36,12 @@ class BumpImageDigestTest(unittest.TestCase):
                     "    digest: sha256:" + "b" * 64 + "\n",
                     encoding="utf-8",
                 )
-            aggregate = self.root / "cyber-stack" / "matrix" / environment
-            (aggregate / "kustomization.yaml").write_text(
-                "apiVersion: kustomize.config.k8s.io/v1beta1\n"
-                "kind: Kustomization\n"
-                "images:\n"
-                "  - name: ssl-proxy\n"
-                "    newName: registry/ssl-proxy\n"
-                "    digest: sha256:" + "b" * 64 + "\n"
-                "  - name: postgres-runtime-schema\n"
-                "    newName: registry/postgres-runtime-schema\n"
-                "    digest: sha256:" + "b" * 64 + "\n",
-                encoding="utf-8",
-            )
         self.kustomize = self.root / "fake-kustomize"
         self.kustomize.write_text(
             "#!/usr/bin/env bash\n"
             "set -eu\n"
             "printf '%s\\n' \"$*\" >> \"$KUSTOMIZE_LOG\"\n"
-            "if [ \"${KUSTOMIZE_FAIL_DIRECTORY:-}\" = \"$PWD\" ]; then exit 9; fi\n"
+            "if [ \"$1\" = build ] && [ \"${KUSTOMIZE_FAIL_DIRECTORY:-}\" = \"${!#}\" ]; then exit 9; fi\n"
             "if [ \"$1\" = edit ]; then\n"
             "  assignment=$4\n"
             "  service=${assignment%%=*}\n"
@@ -90,6 +77,7 @@ class BumpImageDigestTest(unittest.TestCase):
         environment.update(extra_environment or {})
         return subprocess.run(
             [str(self.root / "scripts" / SCRIPT.name), *arguments],
+            cwd=self.root,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -102,10 +90,8 @@ class BumpImageDigestTest(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         changed = (self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml").read_text()
-        aggregate = (self.root / "cyber-stack/matrix/prod/kustomization.yaml").read_text()
         untouched = (self.root / "cyber-stack/matrix/prod/data-plane/kustomization.yaml").read_text()
         self.assertIn(f"digest: {DIGEST}", changed)
-        self.assertIn(f"digest: {DIGEST}", aggregate)
         self.assertIn("digest: sha256:" + "b" * 64, untouched)
         self.assertIn("edit set image ssl-proxy=registry/ssl-proxy@" + DIGEST, self.log.read_text())
         self.assertIn("build --load-restrictor LoadRestrictionsNone", self.log.read_text())
@@ -116,16 +102,11 @@ class BumpImageDigestTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         data_plane = self.root / "cyber-stack/matrix/prod/data-plane/kustomization.yaml"
         app_stack = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
-        aggregate = self.root / "cyber-stack/matrix/prod/kustomization.yaml"
         self.assertIn(f"digest: {DIGEST}", data_plane.read_text())
-        self.assertIn(f"digest: {DIGEST}", aggregate.read_text())
         self.assertIn("digest: sha256:" + "b" * 64, app_stack.read_text())
 
     def test_accepts_kustomize_reordered_image_mapping_keys(self) -> None:
-        for relative in (
-            "cyber-stack/matrix/prod/app-stack/kustomization.yaml",
-            "cyber-stack/matrix/prod/kustomization.yaml",
-        ):
+        for relative in ("cyber-stack/matrix/prod/app-stack/kustomization.yaml",):
             path = self.root / relative
             path.write_text(
                 path.read_text(encoding="utf-8").replace(
@@ -145,10 +126,6 @@ class BumpImageDigestTest(unittest.TestCase):
         self.assertIn(
             f"digest: {DIGEST}",
             (self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml").read_text(),
-        )
-        self.assertIn(
-            f"digest: {DIGEST}",
-            (self.root / "cyber-stack/matrix/prod/kustomization.yaml").read_text(),
         )
 
     def test_rejects_invalid_arguments_without_editing(self) -> None:
@@ -175,22 +152,18 @@ class BumpImageDigestTest(unittest.TestCase):
         self.assertIn("exactly one image mapping", result.stderr)
         self.assertFalse(self.log.exists())
 
-    def test_rolls_back_both_files_when_second_update_fails(self) -> None:
+    def test_reports_owner_render_failure_after_editing_owner(self) -> None:
         owner = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
-        aggregate = self.root / "cyber-stack/matrix/prod/kustomization.yaml"
-        owner_before = owner.read_text(encoding="utf-8")
-        aggregate_before = aggregate.read_text(encoding="utf-8")
 
         result = self.run_helper(
             "ssl-proxy",
             "prod",
             DIGEST,
-            extra_environment={"KUSTOMIZE_FAIL_DIRECTORY": str(aggregate.parent)},
+            extra_environment={"KUSTOMIZE_FAIL_DIRECTORY": str(owner.parent)},
         )
 
         self.assertNotEqual(0, result.returncode)
-        self.assertEqual(owner_before, owner.read_text(encoding="utf-8"))
-        self.assertEqual(aggregate_before, aggregate.read_text(encoding="utf-8"))
+        self.assertIn(f"digest: {DIGEST}", owner.read_text(encoding="utf-8"))
 
     def test_rejects_kubectl_as_an_editor(self) -> None:
         result = self.run_helper(

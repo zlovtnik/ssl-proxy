@@ -116,20 +116,19 @@ development overlay before documenting or automating local Kubernetes use.
    interface. For an environment-aware manual publication of the eight
    Kubernetes images, run `make publish ENV=prod`
    (`prod` is the default). This target derives every repository and current pin
-   from the selected owning slice and aggregate; `REGISTRY` and image tags do
+   from its owning slice; `REGISTRY` and image tags do
    not define deployment identity.
 2. Use the pushed manifest digest and exact bump command printed by
    environment-aware publication. `MATCH` means the selected Kustomization
    already pins that content; `UNPINNED` still means publication succeeded and
    requires a reviewed `make bump-digest-<service> ENV=prod
    DIGEST=sha256:<digest>` Git change. The helper keeps the owning production
-   slice and aggregate synchronized.
+   slice as the single source of truth.
 3. CI must pass `make gitops-check`, documentation checks and component tests.
 4. Complete the component acceptance checks against the published digest.
 5. Open a production pull request that records the accepted digest in the
    corresponding production Kustomizations. `scripts/bump-image-digest.sh` and its generated
-   `make bump-digest-<service>` targets keep the slice and aggregate render
-   aligned.
+   `make bump-digest-<service>` targets update only the owning slice.
 6. Merge the production pull request and verify all three prod Applications.
 
 Rollback is a Git revert of the promotion commit. Argo CD reconciles the prior
@@ -156,8 +155,8 @@ rotation harness through the Docker API.
    gates. Do not put an environment address or credential in the base.
 4. Add required ConfigMap and Secret names/keys to the platform input contract.
    Never commit a usable secret value.
-5. Add the first-party image to the owning production slice and aggregate with
-   a digest, and teach `scripts/bump-image-digest.sh` which slice owns it.
+5. Add the first-party image to its owning production slice with a digest, and
+   teach `scripts/bump-image-digest.sh` which slice owns it.
 6. Assign the smallest sync wave that satisfies real dependencies. Jobs must
    declare the appropriate Argo CD hook and deletion policy.
 7. Update component documentation and run `make gitops-check` plus the targeted
@@ -176,7 +175,9 @@ Read-only cluster checks:
 ```bash
 export KUBE_CONTEXT="$(kubectl config current-context)"
 make stack-health
-kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/prod >/dev/null
+kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/prod/bootstrap >/dev/null
+kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/prod/data-plane >/dev/null
+kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/prod/app-stack >/dev/null
 ```
 
 `stack-health` defaults to production and the current Kubernetes context. It

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Atomically update one deployable image digest in its canonical slice and aggregate.
+# Update one deployable image digest in its owning canonical slice.
 set -euo pipefail
 
 usage() {
@@ -91,40 +91,8 @@ update_overlay() {
 }
 
 slice_overlay="$repository_root/cyber-stack/matrix/$environment/$slice"
-aggregate_overlay="$repository_root/cyber-stack/matrix/$environment"
 slice_new_name="$(validate_overlay "$slice_overlay")"
-aggregate_new_name="$(validate_overlay "$aggregate_overlay")"
-if [ "$slice_new_name" != "$aggregate_new_name" ]; then
-  echo "image repository differs between $environment/$slice and aggregate" >&2
-  exit 2
-fi
-
-backup_dir="$(mktemp -d "${TMPDIR:-/tmp}/ssl-proxy-image-bump.XXXXXX")"
-slice_kustomization="$slice_overlay/kustomization.yaml"
-aggregate_kustomization="$aggregate_overlay/kustomization.yaml"
-slice_backup="$backup_dir/slice-kustomization.yaml"
-aggregate_backup="$backup_dir/aggregate-kustomization.yaml"
-cp "$slice_kustomization" "$slice_backup"
-cp "$aggregate_kustomization" "$aggregate_backup"
-committed=0
-
-cleanup() {
-  local status="$?"
-  trap - EXIT
-  if [ "$committed" -ne 1 ]; then
-    cp "$slice_backup" "$slice_kustomization"
-    cp "$aggregate_backup" "$aggregate_kustomization"
-  fi
-  rm -f "$slice_backup" "$aggregate_backup"
-  rmdir "$backup_dir"
-  exit "$status"
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
 update_overlay "$slice_overlay" "$slice_new_name"
-update_overlay "$aggregate_overlay" "$aggregate_new_name"
-committed=1
 
-echo "Updated $environment/$slice and $environment aggregate $service to $digest"
+echo "Updated $environment/$slice $service to $digest"

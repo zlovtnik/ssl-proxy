@@ -148,7 +148,6 @@ def load_image_contracts(repository_root: Path, environment: str) -> tuple[Image
     paths = {
         "app-stack": matrix / "app-stack" / "kustomization.yaml",
         "data-plane": matrix / "data-plane" / "kustomization.yaml",
-        "aggregate": matrix / "kustomization.yaml",
     }
     entries = {name: _image_entries(path) for name, path in paths.items()}
     service_slices = dict(SERVICE_SLICES)
@@ -170,22 +169,8 @@ def load_image_contracts(repository_root: Path, environment: str) -> tuple[Image
 
     contracts: list[ImageContract] = []
     for service, slice_name in SERVICE_SLICES:
-        aggregate_count = len(entries["aggregate"].get(service, []))
-        if aggregate_count != 1:
-            raise ImageContractError(
-                f"{paths['aggregate']} must contain exactly one image mapping for "
-                f"{service}; found {aggregate_count}"
-            )
         owner_entry = entries[slice_name][service][0]
-        aggregate_entry = entries["aggregate"][service][0]
         owner_value = _validate_entry(service, owner_entry, path=paths[slice_name])
-        aggregate_value = _validate_entry(service, aggregate_entry, path=paths["aggregate"])
-        if owner_value != aggregate_value:
-            raise ImageContractError(
-                f"{environment} {service} differs between {slice_name} and aggregate: "
-                f"{owner_value[0]}@{owner_value[1]} != "
-                f"{aggregate_value[0]}@{aggregate_value[1]}"
-            )
         contracts.append(
             ImageContract(
                 service=service,

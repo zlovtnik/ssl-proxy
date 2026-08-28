@@ -692,15 +692,22 @@ class RecoveryReporter:
         return context, source
 
     def _namespace(self) -> str:
-        path = self.repository_root / "cyber-stack" / "matrix" / self.environment / "kustomization.yaml"
+        path = (
+            self.repository_root
+            / "cyber-stack"
+            / "matrix"
+            / self.environment
+            / "bootstrap"
+            / "kustomization.yaml"
+        )
         try:
             document = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as error:
-            self._block(f"cannot read environment namespace from {path}: {error}")
+            self._block(f"cannot read bootstrap namespace from {path}: {error}")
             return f"{self.environment}-ssl-proxy"
         namespace = _mapping(document).get("namespace")
         if not isinstance(namespace, str) or not namespace:
-            self._block(f"environment Kustomization has no namespace: {path}")
+            self._block(f"bootstrap Kustomization has no namespace: {path}")
             return f"{self.environment}-ssl-proxy"
         return namespace
 
@@ -715,9 +722,8 @@ class RecoveryReporter:
         self.lines.append(f"  Git HEAD: {head}")
         self.lines.append(f"  Worktree: {dirty}")
 
-        paths = [(slice_name, matrix / slice_name) for slice_name in CANONICAL_SLICES]
-        paths.append(("aggregate", matrix))
-        for label, path in paths:
+        for label in CANONICAL_SLICES:
+            path = matrix / label
             result = self._run(*kustomize_build_command(self.kustomize, path))
             if result.returncode != 0:
                 self.lines.append(f"  Render {label}: ERROR {_short_error(result)}")

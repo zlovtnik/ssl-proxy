@@ -431,6 +431,36 @@ def compare_contract_to_rendered(
     return errors
 
 
+def compare_contract_to_bootstrap(
+    contract: PlatformInputContract,
+    documents: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """Verify the bootstrap slice owns every value-free platform input target."""
+
+    errors: list[str] = []
+    expected = contract.by_identity()
+    rendered: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for document in documents:
+        kind = document.get("kind")
+        name = _mapping(document.get("metadata")).get("name")
+        if kind in INPUT_KINDS and isinstance(name, str):
+            rendered.setdefault((kind, name), []).append(document)
+
+    for identity, entry in expected.items():
+        matches = rendered.get(identity, [])
+        if len(matches) != 1:
+            errors.append(
+                f"bootstrap must render exactly one platform input target: "
+                f"{identity[0]}/{identity[1]}"
+            )
+            continue
+        if entry.kind == "Secret" and matches[0].get("type") != entry.secret_type:
+            errors.append(
+                f"bootstrap Secret/{entry.name} must use type {entry.secret_type}"
+            )
+    return errors
+
+
 def iter_yaml_files(root: Path) -> Iterable[Path]:
     for suffix in ("*.yaml", "*.yml"):
         yield from (root / "cyber-stack").rglob(suffix)

@@ -31,10 +31,10 @@ make publish ENV=prod REGISTRY_PLAIN_HTTP=1
 ```
 
 `make publish` defaults to production, derives repositories and pins from the
-selected Kustomize slice and aggregate, and reports each pushed digest as
+owning Kustomize slice, and reports each pushed digest as
 `MATCH` or `UNPINNED`. Use its exact bump command to record an immutable dev
 digest. `UNPINNED` does not fail publication. Merge only after CI and review
-pass, then apply the dev aggregate to an explicit local context and complete
+pass, then apply the relevant dev slice to an explicit local context and complete
 its acceptance checks. Jenkins and the Compose-only key rotator continue to use
 `make publish-all REGISTRY=192.168.1.242:5000 REGISTRY_PLAIN_HTTP=1`.
 

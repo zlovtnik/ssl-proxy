@@ -61,20 +61,10 @@ def write_contract(root: Path, environment: str) -> None:
     bootstrap = matrix / "bootstrap" / "kustomization.yaml"
     bootstrap.parent.mkdir(parents=True, exist_ok=True)
     bootstrap.write_text(
-        "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: []\n",
-        encoding="utf-8",
-    )
-    (matrix / "kustomization.yaml").write_text(
         "apiVersion: kustomize.config.k8s.io/v1beta1\n"
         "kind: Kustomization\n"
         f"namespace: {environment}-ssl-proxy\n"
-        "images:\n"
-        + "".join(
-            f"  - name: {service}\n"
-            f"    newName: {repository_prefix}/{service}\n"
-            f"    digest: {PIN}\n"
-            for service in FIRST_PARTY_SERVICES
-        ),
+        "resources: []\n",
         encoding="utf-8",
     )
 
@@ -131,7 +121,6 @@ spec:
         "bootstrap": bootstrap,
         "app-stack": app_stack,
         "data-plane": data_plane,
-        "aggregate": "---\n".join((bootstrap, app_stack, data_plane)),
     }
 
 
@@ -200,7 +189,7 @@ class FakeRunner:
             return CommandResult(1, "", self.cluster_error)
         if command[0] == "fake-kustomize":
             path = Path(command[-1])
-            label = path.name if path.name in ("bootstrap", "data-plane", "app-stack") else "aggregate"
+            label = path.name
             return CommandResult(0, self.rendered[label], "")
         if "applications.argoproj.io" in command:
             items = []
@@ -412,7 +401,7 @@ class RecoverStackTest(unittest.TestCase):
         self.assertIn("imageID=docker-pullable://", report)
         self.assertTrue(report.rstrip().endswith("RESULT: HEALTHY"))
         render_commands = [command for command in runner.commands if command[0] == "fake-kustomize"]
-        self.assertEqual(4, len(render_commands))
+        self.assertEqual(3, len(render_commands))
 
     def test_empty_context_uses_current_context(self) -> None:
         runner = FakeRunner("prod", current_context="active-cluster", contexts=("active-cluster",))
@@ -503,7 +492,7 @@ class RecoverStackTest(unittest.TestCase):
 
         self.assertEqual(HEAD, git_head)
         self.assertEqual(
-            {"bootstrap", "data-plane", "app-stack", "aggregate"}, set(rendered)
+            {"bootstrap", "data-plane", "app-stack"}, set(rendered)
         )
 
     def test_kubectl_uses_its_kustomize_subcommand(self) -> None:
