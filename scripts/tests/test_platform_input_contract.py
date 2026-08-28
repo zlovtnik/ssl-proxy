@@ -131,6 +131,12 @@ class PlatformInputContractTest(unittest.TestCase):
 
         self.assertEqual("kubernetes.io/tls", tls.secret_type)
 
+    def test_pgbouncer_tls_input_uses_bootstrap_compatible_type(self) -> None:
+        contract = load_platform_input_contract(REPOSITORY_ROOT)
+        tls = contract.by_identity()[("Secret", "pgbouncer-listener-tls")]
+
+        self.assertEqual("Opaque", tls.secret_type)
+
     def test_production_render_exactly_matches_contract(self) -> None:
         contract = load_platform_input_contract(REPOSITORY_ROOT)
 

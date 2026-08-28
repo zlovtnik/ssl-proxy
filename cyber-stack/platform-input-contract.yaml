@@ -183,7 +183,7 @@ spec:
         - userlist.txt
     - kind: Secret
       name: pgbouncer-listener-tls
-      type: kubernetes.io/tls
+      type: Opaque
       vaultPath: secret/ssl-proxy/prod/pgbouncer-listener-tls
       keys:
         - ca.crt

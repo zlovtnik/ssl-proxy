@@ -14,8 +14,9 @@ CONTRACT_RELATIVE_PATH = Path("cyber-stack/platform-input-contract.yaml")
 CONTRACT_API_VERSION = "platform.ssl-proxy.io/v1alpha1"
 CONTRACT_KIND = "PlatformInputContract"
 INPUT_KINDS = ("ConfigMap", "Secret")
-# Kubernetes rejects an empty Secret of type kubernetes.io/tls. The
-# synchronizer replaces this pre-provisioned shell with the validated Vault TLS
+# Kubernetes rejects an empty Secret of type kubernetes.io/tls and does not
+# allow changing a Secret's type in place. The synchronizer therefore keeps
+# this pre-provisioned shell Opaque while cryptographically validating its TLS
 # bundle before dependent workloads can start.
 EMPTY_TARGET_SECRET_TYPES = {
     "pgbouncer-listener-tls": "Opaque",
@@ -241,11 +242,11 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
     ]
     if (
         len(pgbouncer_tls_inputs) != 1
-        or pgbouncer_tls_inputs[0].secret_type != "kubernetes.io/tls"
+        or pgbouncer_tls_inputs[0].secret_type != "Opaque"
         or set(pgbouncer_tls_inputs[0].keys) != {"ca.crt", "tls.crt", "tls.key"}
     ):
         raise PlatformInputContractError(
-            f"{CONTRACT_RELATIVE_PATH} Secret/pgbouncer-listener-tls must use kubernetes.io/tls with a CA, certificate, and key"
+            f"{CONTRACT_RELATIVE_PATH} Secret/pgbouncer-listener-tls must use Opaque with a CA, certificate, and key"
         )
 
     return PlatformInputContract(

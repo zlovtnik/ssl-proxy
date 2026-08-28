@@ -99,7 +99,9 @@ kind: Secret
 metadata:
   name: pgbouncer-listener-tls
 # This is only a pre-provisioned shell for the host-side synchronizer. It
-# replaces the type and data atomically with the validated Vault TLS bundle.
+# populates the data only after validating the complete Vault TLS bundle.
+# Opaque is required because Kubernetes rejects an empty kubernetes.io/tls
+# Secret and does not allow changing a Secret's type in place.
 type: Opaque
 ---
 apiVersion: v1
