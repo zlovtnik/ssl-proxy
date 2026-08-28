@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-atheros-search
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: atheros-search
+          env:
+            - name: ATHSEARCH_JWT_JWKS_URI
+              value: "https://staging-gateway.rclabs.uk/realms/middleware/protocol/openid-connect/certs"

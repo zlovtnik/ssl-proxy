@@ -38,7 +38,7 @@ spec:
       containers:
         - name: backend
           image: schema-migrator-backend:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           env:
             - name: JAVA_TOOL_OPTIONS
               value: -Djava.io.tmpdir=/tmp

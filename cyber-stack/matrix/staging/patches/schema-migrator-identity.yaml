@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-schema-migrator-keycloak-realm
+  namespace: ssl-proxy
+data:
+  realm.json: |
+    {
+      "realm": "middleware",
+      "enabled": true,
+      "bruteForceProtected": true,
+      "registrationAllowed": false,
+      "resetPasswordAllowed": true,
+      "loginWithEmailAllowed": true,
+      "sslRequired": "external",
+      "requiredActions": [{"alias":"CONFIGURE_TOTP","name":"Configure OTP","providerId":"CONFIGURE_TOTP","enabled":true,"defaultAction":true,"priority":10}],
+      "roles": {"realm":[{"name":"admin"},{"name":"operator"},{"name":"viewer"}]},
+      "clients": [
+        {
+          "clientId":"schema-migrator-ui", "name":"Schema Migrator UI", "enabled":true,
+          "publicClient":true, "protocol":"openid-connect", "standardFlowEnabled":true,
+          "directAccessGrantsEnabled":false, "implicitFlowEnabled":false, "serviceAccountsEnabled":false,
+          "redirectUris":["https://staging-migrator.rclabs.uk/callback"],
+          "webOrigins":["https://staging-migrator.rclabs.uk"],
+          "defaultClientScopes":["web-origins","acr","profile","roles","email"],
+          "optionalClientScopes":["address","phone","offline_access","microprofile-jwt"],
+          "attributes":{"pkce.code.challenge.method":"S256","post.logout.redirect.uris":"https://staging-migrator.rclabs.uk/login"}
+        },
+        {
+          "clientId":"atheros-search-ui", "name":"Atheros Search UI", "enabled":true,
+          "publicClient":true, "protocol":"openid-connect", "standardFlowEnabled":true,
+          "directAccessGrantsEnabled":false, "implicitFlowEnabled":false, "serviceAccountsEnabled":false,
+          "redirectUris":["https://staging-search.rclabs.uk/callback"],
+          "webOrigins":["https://staging-search.rclabs.uk"],
+          "defaultClientScopes":["web-origins","acr","profile","roles","email"],
+          "optionalClientScopes":["address","phone","offline_access","microprofile-jwt"],
+          "attributes":{"pkce.code.challenge.method":"S256","post.logout.redirect.uris":"https://staging-search.rclabs.uk/"}
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-schema-migrator-traefik
+  namespace: ssl-proxy
+data:
+  dynamic.yaml: |
+    http:
+      routers:
+        keycloak:
+          rule: "Host(`staging-gateway.rclabs.uk`) && (PathPrefix(`/realms/middleware`) || PathPrefix(`/resources/`))"
+          entryPoints: [websecure]
+          priority: 30
+          service: keycloak
+          tls: {store: {name: default}}
+        backend:
+          rule: "Host(`staging-gateway.rclabs.uk`) && PathPrefix(`/api/`) && !Path(`/api/health`)"
+          entryPoints: [websecure]
+          priority: 20
+          service: backend
+          tls: {store: {name: default}}
+      services:
+        backend: {loadBalancer: {servers: [{url: "http://ssl-proxy-schema-migrator-backend:8080"}]}}
+        keycloak: {loadBalancer: {servers: [{url: "http://ssl-proxy-schema-migrator-keycloak:8080"}]}}
+      tls:
+        stores:
+          default:
+            defaultCertificate: {certFile: /etc/tls-cert/tls.crt, keyFile: /etc/tls-cert/tls.key}

@@ -9,7 +9,6 @@ spec:
     spec:
       containers:
         - name: java-coordinator
-          imagePullPolicy: IfNotPresent
           resources:
             limits:
               cpu: "2"

@@ -36,6 +36,9 @@ CANONICAL_KUSTOMIZATIONS = (
     "cyber-stack/matrix/prod/bootstrap",
     "cyber-stack/matrix/prod/data-plane",
     "cyber-stack/matrix/prod/app-stack",
+    "cyber-stack/matrix/staging/bootstrap",
+    "cyber-stack/matrix/staging/data-plane",
+    "cyber-stack/matrix/staging/app-stack",
 )
 
 PLATFORM_BOOTSTRAP_APPLICATION = "ssl-proxy-platform-bootstrap"
@@ -46,12 +49,14 @@ WORKLOAD_APPLICATIONS = {
         "namespace": "prod-ssl-proxy",
         "component": "bootstrap",
         "environment": "prod",
+        "server": "https://kubernetes.default.svc",
     },
     "ssl-proxy-prod-data-plane": {
         "path": "cyber-stack/matrix/prod/data-plane",
         "namespace": "prod-ssl-proxy",
         "component": "data-plane",
         "environment": "prod",
+        "server": "https://kubernetes.default.svc",
         "ignore_pvc": True,
     },
     "ssl-proxy-prod-app-stack": {
@@ -59,8 +64,26 @@ WORKLOAD_APPLICATIONS = {
         "namespace": "prod-ssl-proxy",
         "component": "app-stack",
         "environment": "prod",
+        "server": "https://kubernetes.default.svc",
+    },
+    **{
+        f"ssl-proxy-staging-{component}": {
+            "path": f"cyber-stack/matrix/staging/{component}",
+            "namespace": "staging-ssl-proxy",
+            "component": component,
+            "environment": "staging",
+            "server": "https://staging-kubernetes.default.svc",
+            **({"ignore_pvc": True} if component == "data-plane" else {}),
+        }
+        for component in ("bootstrap", "data-plane", "app-stack")
     },
 }
+
+ENVIRONMENTS = ("prod", "staging")
+PRODUCTION_WORKLOAD_APPLICATIONS = tuple(
+    name for name, value in WORKLOAD_APPLICATIONS.items()
+    if value["environment"] == "prod"
+)
 
 FIRST_PARTY_IMAGES = (
     "ssl-proxy",
@@ -233,6 +256,14 @@ def _environment(containers: Iterable[Mapping[str, Any]]) -> list[Mapping[str, A
         for entry in _list(container.get("env"))
         if isinstance(entry, Mapping)
     ]
+
+
+def _environment_name(relative: str) -> str:
+    return "staging" if "/staging/" in relative else "prod"
+
+
+def _postgres_endpoint_name(relative: str) -> str:
+    return f"ssl-proxy-{_environment_name(relative)}-postgres-endpoint"
 
 
 def _parse_bytes(value: str, unit: str = "") -> int:
@@ -585,12 +616,12 @@ def _check_prod_keycloak_external_postgres(
             if (
                 len(entries) != 1
                 or "value" in entries[0]
-                or reference.get("name") != "ssl-proxy-prod-postgres-endpoint"
+                or reference.get("name") != _postgres_endpoint_name(relative)
                 or reference.get("key") != key
             ):
                 errors.append(
                     f"{relative}: Keycloak {description} {variable} must come from "
-                    f"ssl-proxy-prod-postgres-endpoint/{key}"
+                    f"{_postgres_endpoint_name(relative)}/{key}"
                 )
         literal_environment = {
             str(_mapping(entry).get("name")): _mapping(entry).get("value")
@@ -680,12 +711,12 @@ def _check_prod_pgbouncer_external_postgres(
         if (
             len(entries) != 1
             or "value" in entries[0]
-            or reference.get("name") != "ssl-proxy-prod-postgres-endpoint"
+            or reference.get("name") != _postgres_endpoint_name(relative)
             or reference.get("key") != key
         ):
             errors.append(
                 f"{relative}: PgBouncer {variable} must come from "
-                f"ssl-proxy-prod-postgres-endpoint/{key}"
+                f"{_postgres_endpoint_name(relative)}/{key}"
             )
     renderer_script = "\n".join(str(arg) for arg in _list(renderer.get("args")))
     for required in (
@@ -900,7 +931,7 @@ def _check_redpanda_topic_replication(rendered: Documents | str, relative: str) 
 def _check_environment_identity_hostnames(rendered: Mapping[str, Documents | str]) -> list[str]:
     hostnames: dict[str, str] = {}
     errors: list[str] = []
-    for environment in ("prod",):
+    for environment in ENVIRONMENTS:
         relative = f"cyber-stack/matrix/{environment}/bootstrap"
         config_maps = [
             document
@@ -915,8 +946,8 @@ def _check_environment_identity_hostnames(rendered: Mapping[str, Documents | str
         hostnames[environment] = hostname
         if ".example." in hostname or hostname.endswith(".example"):
             errors.append(f"{relative}: example identity hostname is not deployable")
-    if len(hostnames) == 2 and hostnames["dev"] == hostnames["prod"]:
-        errors.append("dev and prod must not share an identity hostname")
+    if len(hostnames) == 2 and hostnames["staging"] == hostnames["prod"]:
+        errors.append("staging and prod must not share an identity hostname")
     return errors
 
 
@@ -1064,19 +1095,20 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
     if _path(spec, "tls", "store", "name") != "default":
         errors.append(f"{relative}: public gateway must use the default TLSStore")
 
+    hostname = "staging-gateway.rclabs.uk" if _environment_name(relative) == "staging" else "gateway.rclabs.uk"
     expected_routes = [
         (
-            "Host(`gateway.rclabs.uk`) && (PathPrefix(`/realms/middleware`) || PathPrefix(`/resources/`))",
+            f"Host(`{hostname}`) && (PathPrefix(`/realms/middleware`) || PathPrefix(`/resources/`))",
             "ssl-proxy-schema-migrator-keycloak",
             8080,
         ),
         (
-            "Host(`gateway.rclabs.uk`) && PathPrefix(`/api/`) && !Path(`/api/health`)",
+            f"Host(`{hostname}`) && PathPrefix(`/api/`) && !Path(`/api/health`)",
             "ssl-proxy-schema-migrator-backend",
             8080,
         ),
         (
-            "Host(`gateway.rclabs.uk`) && PathPrefix(`/v1/`)",
+            f"Host(`{hostname}`) && PathPrefix(`/v1/`)",
             "ssl-proxy-atheros-search",
             8080,
         ),
@@ -1124,9 +1156,8 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
         return errors
     tunnel_config = str(_mapping(tunnel_configs[0].get("data")).get("config.yaml", ""))
     required_tunnel_config = (
-        "tunnel: 2be9a1cd-845e-44d1-9eec-4dbc7a642b71",
-        "hostname: gateway.rclabs.uk",
-        "originServerName: gateway.rclabs.uk",
+        f"hostname: {hostname}",
+        f"originServerName: {hostname}",
         "caPool: /etc/cloudflared/origin-ca/ca.crt",
         "service: http_status:404",
     )
@@ -1134,7 +1165,7 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
         not all(fragment in tunnel_config for fragment in required_tunnel_config)
         or "noTLSVerify" in tunnel_config
     ):
-        errors.append(f"{relative}: cloudflared must verify the exact production origin")
+        errors.append(f"{relative}: cloudflared must verify the exact environment origin")
     deployment = tunnel_deployments[0]
     if _path(deployment, "spec", "replicas") != 2:
         errors.append(f"{relative}: cloudflared must run two replicas")
@@ -1143,7 +1174,36 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
         is not False
     ):
         errors.append(f"{relative}: cloudflared must not mount a service-account token")
+    errors.extend(_check_cloudflared_probes(documents, relative))
     return errors
+
+
+def _check_cloudflared_probes(rendered: Documents | str, relative: str) -> list[str]:
+    deployments = _find(_documents(rendered), "Deployment", "ssl-proxy-cloudflared")
+    if not deployments:
+        return []
+    containers = [container for container in _pod_containers(deployments[0]) if container.get("name") == "cloudflared"]
+    if len(containers) != 1:
+        return [f"{relative}: expected one cloudflared container"]
+    expected = {
+        "httpGet": {"path": "/ready", "port": "metrics"},
+        "initialDelaySeconds": 15,
+        "periodSeconds": 20,
+        "timeoutSeconds": 3,
+        "failureThreshold": 3,
+    }
+    if _mapping(containers[0].get("livenessProbe")) != expected:
+        return [f"{relative}: cloudflared livenessProbe must use /ready on metrics with the recovery contract"]
+    return []
+
+
+def _check_cluster_rbac_names(rendered: Documents | str, relative: str) -> list[str]:
+    return [
+        f"{relative}: {document.get('kind')}/{_metadata(document).get('name')} must start ssl-proxy-telemetry-"
+        for document in _documents(rendered)
+        if document.get("kind") in {"ClusterRole", "ClusterRoleBinding"}
+        and not str(_metadata(document).get("name", "")).startswith("ssl-proxy-telemetry-")
+    ]
 
 
 def _traefik_values(
@@ -1862,12 +1922,12 @@ def _check_schema_executor_contract(rendered: Documents | str, relative: str, ex
         if (
             len(entries) != 1
             or "value" in entries[0]
-            or reference.get("name") != "ssl-proxy-prod-postgres-endpoint"
+            or reference.get("name") != _postgres_endpoint_name(relative)
             or reference.get("key") != key
         ):
             errors.append(
                 f"{relative}: schema executor {variable} must come from "
-                f"ssl-proxy-prod-postgres-endpoint/{key} without a literal value"
+                f"{_postgres_endpoint_name(relative)}/{key} without a literal value"
             )
     return errors
 
@@ -1987,8 +2047,8 @@ def _validate_workload_application(application: Mapping[str, Any], relative: str
         errors.append(f"{relative}: Application project must be ssl-proxy")
     if source.get("repoURL") != "https://github.com/zlovtnik/ssl-proxy.git":
         errors.append(f"{relative}: Application source repository is not preserved")
-    if destination.get("server") != "https://kubernetes.default.svc":
-        errors.append(f"{relative}: Application destination server is not preserved")
+    if destination.get("server") != expected["server"]:
+        errors.append(f"{relative}: Application destination server does not match its environment")
     sync_options = {str(option) for option in _list(_path(application, "spec", "syncPolicy", "syncOptions"))}
     required_options = {"PrunePropagationPolicy=foreground", "ApplyOutOfSyncOnly=true", "ServerSideApply=true"}
     if not required_options.issubset(sync_options):
@@ -2117,6 +2177,7 @@ def _check_prod_project(documents: Documents, errors: list[str]) -> None:
     destinations = _list(_path(projects[0], "spec", "destinations"))
     expected = {
         ("prod-ssl-proxy", "https://kubernetes.default.svc"),
+        ("staging-ssl-proxy", "https://staging-kubernetes.default.svc"),
     }
     actual = {
         (str(_mapping(destination).get("namespace")), str(_mapping(destination).get("server")))
@@ -2124,7 +2185,7 @@ def _check_prod_project(documents: Documents, errors: list[str]) -> None:
     }
     if actual != expected:
         errors.append(
-            f"{relative}: ssl-proxy AppProject destinations must be production-only"
+            f"{relative}: ssl-proxy AppProject destinations must match the environment registry"
         )
     allowed_resources = [
         _mapping(resource)
@@ -2176,7 +2237,7 @@ def _check_production_gate_rbac(documents: Documents, errors: list[str]) -> None
     expected_rule = {
         "apiGroups": ["argoproj.io"],
         "resources": ["applications"],
-        "resourceNames": list(WORKLOAD_APPLICATIONS),
+        "resourceNames": list(PRODUCTION_WORKLOAD_APPLICATIONS),
         "verbs": ["get"],
     }
     if _metadata(roles[0]).get("namespace") != "argocd" or roles[0].get("rules") != [expected_rule]:
@@ -2243,7 +2304,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for image in FIRST_PARTY_IMAGES:
             if any(rendered_image == image or rendered_image.startswith(f"{image}:") for rendered_image in _rendered_images(documents)):
                 errors.append(f"{relative}: rendered workload retains logical image name {image}")
-        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_postgres_waves, _check_postgres_tls_contract):
+        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_postgres_waves, _check_postgres_tls_contract, _check_cluster_rbac_names):
             errors.extend(check(documents, relative))
         if relative.startswith("cyber-stack/matrix/"):
             errors.extend(_check_phase_one_workload_edge(documents, relative))
@@ -2251,9 +2312,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
             errors.extend(_check_standard_labels(documents, relative))
             errors.extend(_check_immutable_image_pulls(documents, relative))
             errors.extend(_check_ingress_policy_coverage(documents, relative))
-        if relative in {
-            "cyber-stack/matrix/prod/app-stack",
-        }:
+        if relative in {f"cyber-stack/matrix/{environment}/app-stack" for environment in ENVIRONMENTS}:
             errors.extend(_check_public_gateway(documents, relative))
         if relative in {
             "cyber-stack/matrix/prod/data-plane",
@@ -2262,14 +2321,17 @@ def check_repository(root: Path, executable: str) -> list[str]:
 
     errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))
     environment_render_checks = {
-        "cyber-stack/matrix/prod/data-plane": (
+        f"cyber-stack/matrix/{environment}/data-plane": (
             _check_prod_alloy_positions,
             _check_prod_pgbouncer_external_postgres,
-        ),
-        "cyber-stack/matrix/prod/app-stack": (
+        )
+        for environment in ENVIRONMENTS
+    } | {
+        f"cyber-stack/matrix/{environment}/app-stack": (
             _check_prod_keycloak_external_postgres,
             _check_octopus_runtime,
-        ),
+        )
+        for environment in ENVIRONMENTS
     }
     for relative, checks in environment_render_checks.items():
         if relative not in rendered_kustomizations:
@@ -2277,7 +2339,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for check in checks:
             errors.extend(check(rendered_kustomizations[relative], relative))
     if expected_octopus_checksum is not None:
-        for relative in ("cyber-stack/matrix/prod/app-stack",):
+        for relative in (f"cyber-stack/matrix/{environment}/app-stack" for environment in ENVIRONMENTS):
             if relative in rendered_kustomizations:
                 errors.extend(
                     _check_octopus_schema_contract(
@@ -2294,7 +2356,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
             )
         )
     if expected_schema_marker is not None:
-        for environment in ("prod",):
+        for environment in ENVIRONMENTS:
             relative = f"cyber-stack/matrix/{environment}/data-plane"
             if relative in rendered_kustomizations:
                 errors.extend(_check_schema_executor_contract(rendered_kustomizations[relative], relative, expected_schema_marker))
@@ -2330,7 +2392,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
             )
         )
 
-    for environment in ("prod",):
+    for environment in ENVIRONMENTS:
         for component in ("data-plane", "app-stack"):
             relative = Path("cyber-stack/matrix") / environment / component / "kustomization.yaml"
             documents = _read_yaml_required(root, relative, errors, "component kustomization")
@@ -2347,7 +2409,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
             if image_entries != digest_entries:
                 errors.append(f"{relative}: expected one digest for each of {image_entries} image entries, found {digest_entries}")
 
-    for environment in ("prod",):
+    for environment in ENVIRONMENTS:
         relative = Path("cyber-stack/matrix") / environment / "namespace.yaml"
         documents = _read_yaml_required(root, relative, errors, "Namespace manifest")
         if documents is None:

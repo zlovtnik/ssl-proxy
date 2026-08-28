@@ -8,11 +8,8 @@ spec:
   template:
     spec:
       initContainers:
-        - name: copy-wireguard-config
-          imagePullPolicy: IfNotPresent
       containers:
         - name: ssl-proxy
-          imagePullPolicy: IfNotPresent
           resources:
             limits:
               cpu: "4"

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-platform-config
+  namespace: ssl-proxy
+data:
+  ENVIRONMENT: staging
+  IDENTITY_HOSTNAME: staging-gateway.rclabs.uk
+  IDENTITY_PUBLIC_ORIGIN: https://staging-gateway.rclabs.uk
+  IDENTITY_KEYCLOAK_ISSUER: https://staging-gateway.rclabs.uk/realms/middleware
+  SCHEMA_MIGRATOR_CORS_ORIGIN: https://staging-migrator.rclabs.uk
+  ATHEROS_SEARCH_CORS_ORIGIN: https://staging-search.rclabs.uk

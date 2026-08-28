@@ -71,6 +71,21 @@ images:
 
 
 class RenderedWorkloadPolicyTest(unittest.TestCase):
+    def test_cloudflared_liveness_contract_and_cluster_rbac_prefix(self) -> None:
+        good = documents(
+            workload(
+                "ssl-proxy-cloudflared",
+                containers="[{name: cloudflared, livenessProbe: {httpGet: {path: /ready, port: metrics}, initialDelaySeconds: 15, periodSeconds: 20, timeoutSeconds: 3, failureThreshold: 3}}]",
+            )
+            + "---\nkind: ClusterRole\nmetadata: {name: ssl-proxy-telemetry-reader}\n"
+        )
+        self.assertEqual([], check_gitops._check_cloudflared_probes(good, "test"))
+        self.assertEqual([], check_gitops._check_cluster_rbac_names(good, "test"))
+        good[0]["spec"]["template"]["spec"]["containers"][0]["livenessProbe"]["periodSeconds"] = 10
+        good[1]["metadata"]["name"] = "unscoped-reader"
+        self.assertEqual(1, len(check_gitops._check_cloudflared_probes(good, "test")))
+        self.assertEqual(1, len(check_gitops._check_cluster_rbac_names(good, "test")))
+
     def test_standard_labels_are_required_on_handwritten_resources(self) -> None:
         rendered = documents(
             """kind: Service
@@ -295,10 +310,10 @@ spec:
 
     def test_identity_hostname_and_traefik_policies(self) -> None:
         rendered = {
-            "cyber-stack/matrix/dev/bootstrap": documents("kind: ConfigMap\ndata: {IDENTITY_HOSTNAME: identity.example.internal}\n"),
+            "cyber-stack/matrix/staging/bootstrap": documents("kind: ConfigMap\ndata: {IDENTITY_HOSTNAME: identity.example.internal}\n"),
             "cyber-stack/matrix/prod/bootstrap": documents("data: {IDENTITY_HOSTNAME: identity.example.internal}\nkind: ConfigMap\n"),
         }
-        self.assertEqual(1, len(check_gitops._check_environment_identity_hostnames(rendered)))
+        self.assertEqual(3, len(check_gitops._check_environment_identity_hostnames(rendered)))
         redirect = documents("kind: ConfigMap\ndata: {args: entrypoints.web.http.redirections.entrypoint.port=:443}\n")
         self.assertEqual(1, len(check_gitops._check_traefik_redirect(redirect, "test")))
 
@@ -736,7 +751,7 @@ spec:
         targetRevision: main
         path: '{{path}}'
         kustomize: {}
-      destination: {server: https://kubernetes.default.svc, namespace: '{{namespace}}'}
+      destination: {server: '{{server}}', namespace: '{{namespace}}'}
       syncPolicy:
         automated: {prune: true, selfHeal: true, allowEmpty: false}
         syncOptions: [PrunePropagationPolicy=foreground, ApplyOutOfSyncOnly=true, ServerSideApply=true]
@@ -767,7 +782,7 @@ spec:
         )
         errors: list[str] = []
         check_gitops._check_application_set([application_set], errors)
-        self.assertTrue(any("ssl-proxy-prod-app-stack exactly once" in error for error in errors))
+        self.assertTrue(any("ssl-proxy-staging-app-stack exactly once" in error for error in errors))
         self.assertTrue(any("ssl-proxy-prod-bootstrap exactly once" in error for error in errors))
         self.assertTrue(any("path: cyber-stack/matrix/prod/data-plane" in error for error in errors))
         self.assertTrue(any("unexpected Applications: ssl-proxy-app-stack" in error for error in errors))
@@ -849,6 +864,7 @@ metadata: {name: ssl-proxy}
 spec:
   destinations:
     - {namespace: prod-ssl-proxy, server: https://kubernetes.default.svc}
+    - {namespace: staging-ssl-proxy, server: https://staging-kubernetes.default.svc}
 """
         )
         errors: list[str] = []
@@ -871,7 +887,7 @@ metadata: {name: ssl-proxy-image-updater}
         )
         errors: list[str] = []
         check_gitops._check_prod_project(project, errors)
-        self.assertTrue(any("production-only" in error for error in errors))
+        self.assertTrue(any("environment registry" in error for error in errors))
         self.assertTrue(any("dev controllers" in error for error in errors))
 
     def test_rejects_phase_one_route_allowlist_widening(self) -> None:
@@ -893,7 +909,7 @@ spec:
 
 class ProductionGateRbacTest(unittest.TestCase):
     def resources(self, verbs: str = "[get]", resources: str = "[applications]") -> list[dict[str, object]]:
-        names = ", ".join(check_gitops.WORKLOAD_APPLICATIONS)
+        names = ", ".join(check_gitops.PRODUCTION_WORKLOAD_APPLICATIONS)
         return documents(
             f"""apiVersion: v1
 kind: ServiceAccount

@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: staging-ssl-proxy
+resources:
+- ../../../base/redpanda/statefulset.yaml
+- ../../../base/redpanda/networkpolicy.yaml
+- ../../../base/minio/statefulset.yaml
+- ../../../base/redis-runtime/deployment.yaml
+- ../../../base/pgbouncer
+- ../../../base/postgres-schema-executor
+- ../../../base/telemetry
+images:
+- digest: sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
+  name: grafana/alloy
+- digest: sha256:ab5cb380e3ff3172d6c8bd2e7cfd31cce977d2881b260e1f5bc089bf0b759b43
+  name: grafana/grafana
+- digest: sha256:58a6c186ce78ba04d58bfe2a927eff296ba733a430df09645d56cdc158f3ba08
+  name: grafana/loki
+- digest: sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
+  name: otel/opentelemetry-collector-contrib
+- digest: sha256:728639f1eea50da73e022f7647417cb208347ffcc32479d23789c7eb99dc571f
+  name: postgres-runtime-schema
+  newName: 192.168.1.242:5000/postgres-runtime-schema
+- digest: sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
+  name: prom/prometheus
+patches:
+- path: ../patches/external-schema-executor.yaml
+- path: ../patches/pgbouncer-external-postgres.yaml
+- path: ../../prod/patches/alloy-positions.yaml
+- patch: |-
+    - op: replace
+      path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
+      value: schema-migrator-001-c728bb26dce5f13ec782e924fa61d4f3fe7a981c4611fed0c7c5291d55c621df
+  target:
+    kind: Job
+    name: ssl-proxy-postgres-schema-executor

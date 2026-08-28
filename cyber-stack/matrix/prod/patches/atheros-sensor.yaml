@@ -7,8 +7,5 @@ spec:
   template:
     spec:
       initContainers:
-        - name: configure-monitor-interface
-          imagePullPolicy: IfNotPresent
       containers:
         - name: atheros-sensor
-          imagePullPolicy: IfNotPresent

@@ -37,7 +37,7 @@ spec:
       containers:
         - name: atheros-search
           image: atheros-search:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           env:
             - name: POD_NAMESPACE
               valueFrom:
@@ -223,7 +223,7 @@ spec:
       containers:
         - name: ui
           image: atheros-search-ui:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080

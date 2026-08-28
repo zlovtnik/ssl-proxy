@@ -3,6 +3,7 @@ apps/schema-migrator/README.md
 apps/wg-key-rotator/README.md
 cyber-stack/README.md
 cyber-stack/matrix/prod/README.md
+cyber-stack/matrix/staging/README.md
 docs/schema-archive/README.md
 services/atheros-search/README.md
 services/atheros-search/migrations/README.md

@@ -32,7 +32,7 @@ spec:
       initContainers:
         - name: copy-wireguard-config
           image: ssl-proxy:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-ec", "cp -a /config-source/. /config/"]
           securityContext:
             runAsUser: 0
@@ -56,7 +56,7 @@ spec:
       containers:
         - name: ssl-proxy
           image: ssl-proxy:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           command: ["/usr/local/bin/start-proxy-wg"]
           env:
             - name: WG_INTERFACE_NAME

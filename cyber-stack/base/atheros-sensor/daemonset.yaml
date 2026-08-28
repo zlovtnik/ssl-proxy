@@ -32,7 +32,7 @@ spec:
       initContainers:
         - name: configure-monitor-interface
           image: atheros-sensor:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-ec"]
           args:
             - |
@@ -72,7 +72,7 @@ spec:
       containers:
         - name: atheros-sensor
           image: atheros-sensor:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           env:
             - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
               valueFrom:

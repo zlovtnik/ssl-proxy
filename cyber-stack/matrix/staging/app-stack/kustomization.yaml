@@ -1,0 +1,67 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: staging-ssl-proxy
+resources:
+- ../../../base/platform-config/configmap.yaml
+- ../../../base/proxy/deployment.yaml
+- ../../../base/proxy/service.yaml
+- ../../../base/proxy/networkpolicy.yaml
+- ../../../base/java-coordinator/deployment.yaml
+- ../../../base/java-coordinator/networkpolicy.yaml
+- ../../../base/schema-migrator
+- ../../../base/atheros-sensor/daemonset.yaml
+- ../../../base/atheros-sensor/networkpolicy.yaml
+- ../../../base/atheros-search
+- ../../../base/cloudflared
+- ../../../base/public-gateway
+images:
+- digest: sha256:7313414747940780243b966483e50dd25dc4d25aea78707c9dab622e6257a7bb
+  name: atheros-search
+  newName: 192.168.1.242:5000/atheros-search
+- digest: sha256:6dc839a84ea9aa80b0cae52b4158dd79abff6364827e7689b257411dea130618
+  name: atheros-search-ui
+  newName: 192.168.1.242:5000/atheros-search-ui
+- digest: sha256:d3bf1e3a262a9520407a15689b0c7a0242ceb3f07b898d17f9fc09db6ec0ec9e
+  name: atheros-sensor
+  newName: 192.168.1.242:5000/atheros-sensor
+- digest: sha256:344ca5d1a67538ae3d44bbb9e987b335bedbcc4616a785ee5dd28295318655db
+  name: java-coordinator
+  newName: 192.168.1.242:5000/java-coordinator
+- digest: sha256:9eda68bc458ae4532d00e4c6ec7fa1014f0f192862c3e1c3e70160dd258f33ba
+  name: schema-migrator-backend
+  newName: 192.168.1.242:5000/schema-migrator-backend
+- digest: sha256:1dc8ff2dd1868dfc2c98997ca5b538f0ddc39088ac18b6f24f96ed70f3b87443
+  name: schema-migrator-ui
+  newName: 192.168.1.242:5000/schema-migrator-ui
+- digest: sha256:a8b00eea911c67a4b4da509bd3516bcb0478c01eebeb4c9e24b08d9e2faa6797
+  name: ssl-proxy
+  newName: 192.168.1.242:5000/ssl-proxy
+patches:
+- path: ../patches/identity-hostname.yaml
+- path: ../patches/cloudflare-edge.yaml
+- path: ../patches/keycloak-direct-postgres.yaml
+- path: ../patches/atheros-search.yaml
+- path: ../../prod/patches/proxy.yaml
+- path: ../../prod/patches/java-coordinator.yaml
+- path: ../../prod/patches/atheros-sensor.yaml
+- path: ../patches/schema-migrator-identity.yaml
+- path: ../../prod/patches/schema-migrator-images.yaml
+- path: ../../prod/patches/octopus-runtime.yaml
+- path: ../../prod/patches/local-config-annotation.yaml
+  target:
+    kind: ConfigMap
+    labelSelector: app.kubernetes.io/component=platform-config
+replacements:
+- source:
+    kind: ConfigMap
+    name: ssl-proxy-platform-config
+    fieldPath: data.IDENTITY_PUBLIC_ORIGIN
+  targets:
+  - select:
+      kind: Deployment
+      name: ssl-proxy-schema-migrator-keycloak
+    fieldPaths:
+    - spec.template.spec.containers.[name=keycloak].args.2
+    options:
+      delimiter: "="
+      index: 1

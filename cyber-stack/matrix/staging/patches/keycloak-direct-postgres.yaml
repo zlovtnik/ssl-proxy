@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-schema-migrator-keycloak
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: prepare-keycloak-home
+        - name: bootstrap-admin-service
+          env:
+            - {name: KC_DB_URL_HOST, value: null, valueFrom: {configMapKeyRef: {name: ssl-proxy-staging-postgres-endpoint, key: POSTGRES_HOST}}}
+            - {name: KC_DB_URL_PORT, value: null, valueFrom: {configMapKeyRef: {name: ssl-proxy-staging-postgres-endpoint, key: POSTGRES_PORT}}}
+      containers:
+        - name: keycloak
+          env:
+            - {name: KC_DB_URL_HOST, value: null, valueFrom: {configMapKeyRef: {name: ssl-proxy-staging-postgres-endpoint, key: POSTGRES_HOST}}}
+            - {name: KC_DB_URL_PORT, value: null, valueFrom: {configMapKeyRef: {name: ssl-proxy-staging-postgres-endpoint, key: POSTGRES_PORT}}}

@@ -32,7 +32,7 @@ spec:
       containers:
         - name: java-coordinator
           image: java-coordinator:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

@@ -1,7 +1,7 @@
 # Kubernetes GitOps Guide
 
 This directory is the only source of Kubernetes desired state for ssl-proxy.
-Kustomize renders the production slices, which Argo CD reconciles from `main`.
+Kustomize renders the production and staging slices, which Argo CD reconciles from `main`.
 Configuration, releases, rollbacks and workload onboarding happen by reviewed
 Git changes.
 
@@ -10,8 +10,8 @@ Git changes.
 The platform team provides and operates:
 
 - Argo CD;
-- registration of `cyber-stack/argocd` as this repository's production-only
-  control-plane path;
+- registration of `cyber-stack/argocd` as this repository's control-plane path
+  and of the dedicated staging cluster;
 - registry access for `192.168.1.242:5000`;
 - workload Secrets and the production PostgreSQL endpoint ConfigMap required by the
   rendered manifests, sourced through the value-free
@@ -20,8 +20,8 @@ The platform team provides and operates:
   `gateway.rclabs.uk`.
 
 Platform inputs must be delivered by the platform's declarative control plane.
-Do not create or patch them by hand. This repository owns the production-only
-`ssl-proxy` AppProject, one list-generated production workload ApplicationSet,
+Do not create or patch them by hand. This repository owns the
+`ssl-proxy` AppProject, one list-generated workload ApplicationSet,
 and all workload desired state after registration. Local development Secrets
 and DNS are outside this production-only Kustomize matrix and must never be
 copied into the production cluster as a shortcut.
@@ -29,7 +29,7 @@ copied into the production cluster as a shortcut.
 ## Layout and applications
 
 Environment-neutral resources live under `base/`. Environment configuration
-lives under `matrix/prod/`.
+lives under `matrix/prod/` and `matrix/staging/`.
 
 | Slice | Production application | Responsibility |
 |---|---|---|
@@ -37,12 +37,20 @@ lives under `matrix/prod/`.
 | `data-plane` | `ssl-proxy-prod-data-plane` | PostgreSQL integration, Redpanda, MinIO, Redis, schema execution and telemetry |
 | `app-stack` | `ssl-proxy-prod-app-stack` | Proxy, Octopus, Search/UI, sensor and Schema Migrator |
 
-`applicationset-workloads.yaml` creates only those three production
-Applications. They track `main`, use automated sync with pruning and
+`applicationset-workloads.yaml` creates the three slice Applications for each
+environment. They track `main`, use automated sync with pruning and
 self-healing, and refuse empty desired state. The data-plane entry retains the
 StatefulSet PVC-template ignore rule. Namespace deletion requires explicit
 confirmation. Dev Applications and dev controllers are prohibited on the
 production server.
+
+Staging has matching `ssl-proxy-staging-{bootstrap,data-plane,app-stack}`
+Applications in `staging-ssl-proxy`. It uses Vault inputs under
+`secret/ssl-proxy/staging`, `sync_staging`, and the
+`ssl-proxy-staging-postgres-endpoint` ConfigMap. Production deployer RBAC stays
+production-only. The platform-operated Image Updater is configured only on
+staging Applications; it tracks `staging` tags, writes immutable digests only
+under `cyber-stack/matrix/staging/`, and commits to `main`.
 
 The single-node topology intentionally has no PodDisruptionBudgets: a PDB
 cannot create redundancy on one node and can block voluntary maintenance. The

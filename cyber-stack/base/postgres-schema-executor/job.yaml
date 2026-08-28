@@ -36,14 +36,14 @@ spec:
       containers:
         - name: schema
           image: postgres-runtime-schema
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           env:
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: POSTGRES_HOST
-              value: "ssl-proxy-prod-postgres-endpoint"
+              value: "ssl-proxy-postgres-endpoint"
             - name: POSTGRES_PORT
               value: "5432"
             - name: POSTGRES_DATABASE
@@ -66,7 +66,7 @@ spec:
             - name: PGSSLMODE
               value: "verify-full"
             - name: POSTGRES_SSL_SERVER_NAME
-              value: "ssl-proxy-prod-postgres-endpoint"
+              value: "ssl-proxy-postgres-endpoint"
             - name: PGSSLROOTCERT
               value: "/var/run/postgres-tls/ca.crt"
           volumeMounts:
