@@ -28,24 +28,6 @@ spec:
             path: cyber-stack/matrix/prod/app-stack
             namespace: prod-ssl-proxy
             server: https://kubernetes.default.svc
-          - name: ssl-proxy-staging-bootstrap
-            component: bootstrap
-            environment: staging
-            path: cyber-stack/matrix/staging/bootstrap
-            namespace: staging-ssl-proxy
-            server: https://staging-kubernetes.default.svc
-          - name: ssl-proxy-staging-data-plane
-            component: data-plane
-            environment: staging
-            path: cyber-stack/matrix/staging/data-plane
-            namespace: staging-ssl-proxy
-            server: https://staging-kubernetes.default.svc
-          - name: ssl-proxy-staging-app-stack
-            component: app-stack
-            environment: staging
-            path: cyber-stack/matrix/staging/app-stack
-            namespace: staging-ssl-proxy
-            server: https://staging-kubernetes.default.svc
   template:
     metadata:
       name: '{{ .name }}'

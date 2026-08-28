@@ -782,7 +782,7 @@ spec:
         )
         errors: list[str] = []
         check_gitops._check_application_set([application_set], errors)
-        self.assertTrue(any("ssl-proxy-staging-app-stack exactly once" in error for error in errors))
+        self.assertTrue(any("ssl-proxy-prod-app-stack exactly once" in error for error in errors))
         self.assertTrue(any("ssl-proxy-prod-bootstrap exactly once" in error for error in errors))
         self.assertTrue(any("path: cyber-stack/matrix/prod/data-plane" in error for error in errors))
         self.assertTrue(any("unexpected Applications: ssl-proxy-app-stack" in error for error in errors))

@@ -66,17 +66,6 @@ WORKLOAD_APPLICATIONS = {
         "environment": "prod",
         "server": "https://kubernetes.default.svc",
     },
-    **{
-        f"ssl-proxy-staging-{component}": {
-            "path": f"cyber-stack/matrix/staging/{component}",
-            "namespace": "staging-ssl-proxy",
-            "component": component,
-            "environment": "staging",
-            "server": "https://staging-kubernetes.default.svc",
-            **({"ignore_pvc": True} if component == "data-plane" else {}),
-        }
-        for component in ("bootstrap", "data-plane", "app-stack")
-    },
 }
 
 ENVIRONMENTS = ("prod", "staging")

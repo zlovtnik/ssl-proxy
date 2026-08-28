@@ -44,8 +44,10 @@ StatefulSet PVC-template ignore rule. Namespace deletion requires explicit
 confirmation. Dev Applications and dev controllers are prohibited on the
 production server.
 
-Staging has matching `ssl-proxy-staging-{bootstrap,data-plane,app-stack}`
-Applications in `staging-ssl-proxy`. It uses Vault inputs under
+After the platform registers its dedicated staging cluster, enable matching
+`ssl-proxy-staging-{bootstrap,data-plane,app-stack}` Applications in
+`staging-ssl-proxy`. Until then, the staging matrix is rendered and validated
+locally only. It uses Vault inputs under
 `secret/ssl-proxy/staging`, `sync_staging`, and the
 `ssl-proxy-staging-postgres-endpoint` ConfigMap. Production deployer RBAC stays
 production-only. The platform-operated Image Updater is configured only on
