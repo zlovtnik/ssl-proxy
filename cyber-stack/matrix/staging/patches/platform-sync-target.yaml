@@ -4,6 +4,29 @@ metadata:
   name: ssl-proxy-platform-sync
 rules:
   - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - cloudflared-tunnel-credentials
+      - minio-credentials
+      - observability-credentials
+      - proxy-admin-key
+      - proxy-runtime-secrets
+      - redis-runtime
+      - schema-migrator-backend
+      - schema-migrator-bootstrap
+      - schema-migrator-keycloak
+      - ssl-proxy-identity-tls
+      - postgres-atheros-search
+      - postgres-keycloak
+      - postgres-octopus
+      - postgres-schema-migrator
+      - postgres-schema-owner
+      - postgres-runtime-tls
+      - pgbouncer-listener-tls
+      - pgbouncer-runtime-users
+      - wireguard-config
+    verbs: ["get", "update"]
+  - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames:
       - platform-sync-lock

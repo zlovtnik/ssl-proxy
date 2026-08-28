@@ -14,6 +14,12 @@ CONTRACT_RELATIVE_PATH = Path("cyber-stack/platform-input-contract.yaml")
 CONTRACT_API_VERSION = "platform.ssl-proxy.io/v1alpha1"
 CONTRACT_KIND = "PlatformInputContract"
 INPUT_KINDS = ("ConfigMap", "Secret")
+# Kubernetes rejects an empty Secret of type kubernetes.io/tls. The
+# synchronizer replaces this pre-provisioned shell with the validated Vault TLS
+# bundle before dependent workloads can start.
+EMPTY_TARGET_SECRET_TYPES = {
+    "pgbouncer-listener-tls": "Opaque",
+}
 PLATFORM_BOOTSTRAP = {
     "ownership": "platform",
     "postgres": {
@@ -454,9 +460,10 @@ def compare_contract_to_bootstrap(
                 f"{identity[0]}/{identity[1]}"
             )
             continue
-        if entry.kind == "Secret" and matches[0].get("type") != entry.secret_type:
+        expected_type = EMPTY_TARGET_SECRET_TYPES.get(entry.name, entry.secret_type)
+        if entry.kind == "Secret" and matches[0].get("type") != expected_type:
             errors.append(
-                f"bootstrap Secret/{entry.name} must use type {entry.secret_type}"
+                f"bootstrap Secret/{entry.name} must use type {expected_type}"
             )
     return errors
 

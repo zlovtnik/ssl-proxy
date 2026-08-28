@@ -98,7 +98,9 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: pgbouncer-listener-tls
-type: kubernetes.io/tls
+# This is only a pre-provisioned shell for the host-side synchronizer. It
+# replaces the type and data atomically with the validated Vault TLS bundle.
+type: Opaque
 ---
 apiVersion: v1
 kind: Secret
