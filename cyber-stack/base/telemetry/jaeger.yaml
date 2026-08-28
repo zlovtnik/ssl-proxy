@@ -99,6 +99,7 @@ metadata:
   name: ssl-proxy-telemetry-jaeger
   namespace: ssl-proxy
   annotations:
+    argocd.argoproj.io/ignore-healthcheck: "true"
     argocd.argoproj.io/sync-options: Prune=false
   labels:
     app.kubernetes.io/name: ssl-proxy
