@@ -41,6 +41,7 @@ PLATFORM_BOOTSTRAP = {
         "requiredExtensions": ["pgcrypto", "vector", "pg_stat_statements"],
         "sharedPreloadLibraries": ["pg_stat_statements"],
         "persistentDataRequired": True,
+        "sharedMemorySize": "1Gi",
     },
     "secretControlPlane": {
         "provider": "hashicorp-vault",
