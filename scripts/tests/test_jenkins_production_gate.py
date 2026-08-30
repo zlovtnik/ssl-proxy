@@ -9,6 +9,47 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class JenkinsProductionGateTest(unittest.TestCase):
+    def test_pipeline_has_global_timeout_and_bounded_service_discovery(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+
+        self.assertIn("timeout(time: 135, unit: 'MINUTES')", pipeline)
+        discovery = pipeline[
+            pipeline.index("def serviceOutput") : pipeline.index(
+                "if (services.isEmpty())"
+            )
+        ]
+        self.assertIn("timeout(time: 2, unit: 'MINUTES')", discovery)
+        self.assertIn("ci-publish-services", discovery)
+
+    def test_each_publish_retry_receives_a_fresh_timeout(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        publish_branch = pipeline[
+            pipeline.index('publishBranches["Publish ${serviceName}"]') : pipeline.index(
+                "publishBranches.failFast"
+            )
+        ]
+
+        retry = publish_branch.index("retry(2)")
+        timeout = publish_branch.index("timeout(time: 30, unit: 'MINUTES')")
+        shell = publish_branch.index('sh """')
+        self.assertLess(retry, timeout)
+        self.assertLess(timeout, shell)
+
+    def test_plugin_audit_is_a_bounded_delivery_validation(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        validation = pipeline[
+            pipeline.index("stage('Validate delivery configuration')") : pipeline.index(
+                "stage('Publish images')"
+            )
+        ]
+
+        audit = validation.index("make jenkins-plugin-audit")
+        self.assertIn("timeout(time: 5, unit: 'MINUTES')", validation[:audit])
+        self.assertIn(
+            "catchError(buildResult: 'FAILURE', stageResult: 'FAILURE')",
+            validation[:audit],
+        )
+
     def test_pipeline_aborts_superseded_builds(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
 
@@ -116,6 +157,38 @@ class JenkinsProductionGateTest(unittest.TestCase):
             plugins,
             re.compile(r"^credentials-binding:728\.v902a_273b_8947$", re.MULTILINE),
         )
+
+    def test_controller_installs_complete_lock_without_latest_resolution(self) -> None:
+        dockerfile = (REPOSITORY_ROOT / "docker/jenkins/Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        direct = (
+            REPOSITORY_ROOT / "docker/jenkins/plugins.txt"
+        ).read_text(encoding="utf-8")
+        lock_path = REPOSITORY_ROOT / "docker/jenkins/plugins.lock.txt"
+
+        self.assertEqual(8, len([line for line in direct.splitlines() if line]))
+        self.assertTrue(lock_path.is_file())
+        self.assertIn("COPY plugins.lock.txt", dockerfile)
+        self.assertIn("--plugin-file /usr/share/jenkins/ref/plugins.lock.txt", dockerfile)
+        self.assertIn("--latest=false", dockerfile)
+        self.assertNotIn("COPY plugins.txt", dockerfile)
+
+    def test_compose_tag_matches_dockerfile_controller_version(self) -> None:
+        dockerfile = (REPOSITORY_ROOT / "docker/jenkins/Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
+            encoding="utf-8"
+        )
+        base = re.search(r"^FROM jenkins/jenkins:([^-]+)-lts", dockerfile, re.MULTILINE)
+        image = re.search(
+            r"^    image: ssl-proxy-ci-jenkins:([^\s]+)$", compose, re.MULTILINE
+        )
+
+        self.assertIsNotNone(base)
+        self.assertIsNotNone(image)
+        self.assertEqual(base.group(1), image.group(1))
 
     def test_observability_plugins_and_readonly_identity_are_pinned(self) -> None:
         plugins = (REPOSITORY_ROOT / "docker/jenkins/plugins.txt").read_text(

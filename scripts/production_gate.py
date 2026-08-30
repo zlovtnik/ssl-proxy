@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import re
 import subprocess
@@ -23,6 +24,8 @@ DEFAULT_NAMESPACE = "argocd"
 PRODUCTION_NAMESPACE = "prod-ssl-proxy"
 DEFAULT_TIMEOUT = "30m"
 DEFAULT_POLL_INTERVAL_SECONDS = 10.0
+KUBECTL_REQUEST_TIMEOUT = "10s"
+RBAC_MAX_WORKERS = 8
 SECRET_READ_VERBS = ("get", "list", "watch")
 MUTATION_VERBS = ("create", "update", "patch", "delete")
 MUTATION_RESOURCES = (
@@ -42,6 +45,15 @@ class CommandResult:
 
 
 CommandRunner = Callable[[Sequence[str]], CommandResult]
+
+
+@dataclass(frozen=True)
+class AccessReview:
+    verb: str
+    resource: str
+    namespace: str | None
+    expected: bool
+    failure: str
 
 
 def subprocess_runner(command: Sequence[str]) -> CommandResult:
@@ -196,6 +208,7 @@ class ProductionGate:
             arguments.append("--all-namespaces")
         else:
             arguments.extend(("--namespace", namespace))
+        arguments.append(f"--request-timeout={KUBECTL_REQUEST_TIMEOUT}")
         result = self._kubectl(*arguments)
         answer = result.stdout.strip().lower()
         if answer == "yes":
@@ -205,18 +218,18 @@ class ProductionGate:
         detail = sanitize_diagnostic(result.stderr or result.stdout or f"exit {result.returncode}")
         return None, detail
 
-    def _verify_access(self) -> bool:
-        self.lines.append("RBAC preflight:")
-        valid = True
+    def _access_reviews(self) -> tuple[AccessReview, ...]:
+        reviews = []
         for name in APPLICATIONS:
-            allowed, detail = self._can_i(
-                "get", f"applications.argoproj.io/{name}", namespace=self.namespace
+            reviews.append(
+                AccessReview(
+                    verb="get",
+                    resource=f"applications.argoproj.io/{name}",
+                    namespace=self.namespace,
+                    expected=True,
+                    failure=f"cannot get {name}",
+                )
             )
-            if allowed is True:
-                continue
-            valid = False
-            suffix = detail or "denied"
-            self.lines.append(f"  cannot get {name}: {suffix}")
 
         scopes = (
             ("all namespaces", None),
@@ -225,29 +238,50 @@ class ProductionGate:
         )
         for scope_label, scope_namespace in scopes:
             for verb in SECRET_READ_VERBS:
-                secret_read, detail = self._can_i(
-                    verb, "secrets", namespace=scope_namespace
-                )
-                if secret_read is not False:
-                    valid = False
-                    suffix = detail or "unexpectedly allowed"
-                    self.lines.append(
-                        f"  Secret {verb} isolation failed in {scope_label}: {suffix}"
+                reviews.append(
+                    AccessReview(
+                        verb=verb,
+                        resource="secrets",
+                        namespace=scope_namespace,
+                        expected=False,
+                        failure=f"Secret {verb} isolation failed in {scope_label}",
                     )
+                )
 
             for verb in MUTATION_VERBS:
                 for resource in MUTATION_RESOURCES:
-                    allowed, detail = self._can_i(
-                        verb, resource, namespace=scope_namespace
+                    reviews.append(
+                        AccessReview(
+                            verb=verb,
+                            resource=resource,
+                            namespace=scope_namespace,
+                            expected=False,
+                            failure=(
+                                f"mutation isolation failed in {scope_label} for "
+                                f"{verb} {resource}"
+                            ),
+                        )
                     )
-                    if allowed is False:
-                        continue
-                    valid = False
-                    suffix = detail or "unexpectedly allowed"
-                    self.lines.append(
-                        f"  mutation isolation failed in {scope_label} for "
-                        f"{verb} {resource}: {suffix}"
-                    )
+        return tuple(reviews)
+
+    def _run_access_review(self, review: AccessReview) -> str | None:
+        allowed, detail = self._can_i(
+            review.verb, review.resource, namespace=review.namespace
+        )
+        if allowed is review.expected:
+            return None
+        default = "denied" if review.expected else "unexpectedly allowed"
+        return f"  {review.failure}: {detail or default}"
+
+    def _verify_access(self) -> bool:
+        self.lines.append("RBAC preflight:")
+        reviews = self._access_reviews()
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=RBAC_MAX_WORKERS
+        ) as executor:
+            failures = tuple(executor.map(self._run_access_review, reviews))
+        self.lines.extend(failure for failure in failures if failure is not None)
+        valid = not any(failure is not None for failure in failures)
         if valid:
             self.lines.append(
                 "  PASS: three named Application reads allowed; Secret reads and "
@@ -320,6 +354,7 @@ class ProductionGate:
         attempt = 0
         while True:
             attempt += 1
+            attempt_started = self.clock()
             states = tuple(self._query_application(name) for name in APPLICATIONS)
             if states != previous_snapshot:
                 self.lines.append(f"Attempt {attempt}:")
@@ -336,7 +371,9 @@ class ProductionGate:
                     f"RESULT: FAILED (timed out waiting for exact revision {self.revision})"
                 )
                 return 1, "\n".join(self.lines) + "\n"
-            self.sleeper(min(self.poll_interval_seconds, remaining))
+            query_seconds = self.clock() - attempt_started
+            delay = max(0.0, self.poll_interval_seconds - query_seconds)
+            self.sleeper(min(delay, remaining))
 
 
 def build_parser() -> argparse.ArgumentParser:

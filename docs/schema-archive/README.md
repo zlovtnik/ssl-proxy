@@ -8,6 +8,7 @@ The only canonical runtime manifests are:
 - [`octopus_core`](../../sql/postgres/octopus_core/)
 - [`atheros_search`](../../sql/postgres/atheros_search/)
 - [`schema_migrator`](../../sql/postgres/schema_migrator/)
+- [`keycloak`](../../sql/postgres/keycloak/)
 - shared [`contracts`](../../sql/postgres/contracts/)
 
 The provisioning schema executor applies those ordered, checksummed manifests.

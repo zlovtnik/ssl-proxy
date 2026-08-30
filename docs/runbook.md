@@ -319,13 +319,15 @@ missing Application, unhealthy status or timeout is a failed release check.
 1. Confirm the frontdoor sees packets and pins clients to a healthy backend.
 2. Confirm the proxy publishes to Redpanda and its local outbox is not growing.
 3. Confirm `sync.scan.request` consumer lag is moving.
-4. Confirm Octopus writes topic/partition/offset ingestion evidence in
+4. Confirm `proxy.payload_audit` lag is moving when the proxy publishes audits,
+   and that `proxy.payload_audit.dlq` is not growing.
+5. Confirm Octopus writes topic/partition/offset ingestion evidence in
    `octopus_core`.
-5. Confirm `sync.oracle.load` and `sync.oracle.result` progress as PostgreSQL work and
+6. Confirm `sync.oracle.load` and `sync.oracle.result` progress as PostgreSQL work and
    results; the names do not indicate Oracle.
-6. Confirm the sensor publishes `wireless.audit` and the matching
+7. Confirm the sensor publishes `wireless.audit` and the matching
    `sync.scan.request` without database credentials.
-7. Confirm `search_documents` and `embedding_jobs` exist before enabling Search
+8. Confirm `search_documents` and `embedding_jobs` exist before enabling Search
    workers, then check leases, terminal failures and vector counts.
 
 ## Common incidents
