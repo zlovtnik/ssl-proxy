@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/component: telemetry-otel-collector
     app.kubernetes.io/managed-by: kustomize
 spec:
+  revisionHistoryLimit: 3
   replicas: 1
   selector:
     matchLabels:

@@ -5,6 +5,9 @@ SHELL := /bin/bash
 
 REGISTRY ?= 192.168.1.242:5000
 REGISTRY_PLAIN_HTTP ?= 0
+REGISTRY_KEEP_RECENT ?= 12
+REGISTRY_CLEAN_CONFIRM ?=
+REGISTRY_GC_CONFIRM ?=
 ENV ?= prod
 KUBE_CONTEXT ?=
 KUBECTL ?= kubectl
@@ -42,7 +45,7 @@ BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health pvc-audit argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry registry-clean-plan registry-clean registry-gc octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 
@@ -102,6 +105,9 @@ recover-stack: kube-context-check
 		--kube-context "$(KUBE_CONTEXT)" \
 		--kustomize "$(KUSTOMIZE)" \
 		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)"
+
+pvc-audit: kube-context-check
+	python3 scripts/pvc_audit.py $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
 production-gate:
 	@test -n "$(PRODUCTION_GATE_REVISION)" || { echo "PRODUCTION_GATE_REVISION is required" >&2; exit 2; }
@@ -190,6 +196,34 @@ platform-sync-lint:
 
 require-registry:
 	@test -n "$(REGISTRY)" || { echo "REGISTRY is required" >&2; exit 2; }
+
+registry-clean-plan: require-registry kube-context-check
+	python3 scripts/registry_cleanup.py \
+		--registry "$(REGISTRY)" \
+		$(if $(filter 1,$(REGISTRY_PLAIN_HTTP)),--plain-http,) \
+		$(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",) \
+		--keep-recent "$(REGISTRY_KEEP_RECENT)"
+
+registry-clean: require-registry kube-context-check
+	python3 scripts/registry_cleanup.py \
+		--registry "$(REGISTRY)" \
+		$(if $(filter 1,$(REGISTRY_PLAIN_HTTP)),--plain-http,) \
+		$(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",) \
+		--keep-recent "$(REGISTRY_KEEP_RECENT)" \
+		--apply \
+		--confirm "$(REGISTRY_CLEAN_CONFIRM)"
+
+registry-gc:
+	@test "$(REGISTRY_GC_CONFIRM)" = "GC-REGISTRY-BLOBS" || { \
+		echo "Set REGISTRY_GC_CONFIRM=GC-REGISTRY-BLOBS after manifest cleanup review." >&2; \
+		exit 2; \
+	}
+	@docker compose -f docker-compose.ci.yaml stop registry; \
+	status=0; \
+	docker compose -f docker-compose.ci.yaml run --rm registry \
+		garbage-collect /etc/docker/registry/config.yml || status=$$?; \
+	docker compose -f docker-compose.ci.yaml up -d registry; \
+	exit $$status
 
 buildx-ready: require-registry
 	@docker info >/dev/null

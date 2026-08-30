@@ -112,6 +112,12 @@ or placed under the ignored local `secrets/` directory.
 Use the [rotator README](../apps/wg-key-rotator/README.md) for WireGuard keys.
 For PostgreSQL, rotate accounts independently and re-run the TLS/grant checks in the
 [PostgreSQL runtime manifests](../sql/postgres/).
+Use the confirmation-gated workflow in the
+[platform storage and rotation runbook](platform-storage-operations.md) so the
+database role, PgBouncer user list, Vault values and host bootstrap files stay
+consistent. PostgreSQL TLS rotations must keep a stable CA or use an overlapping
+CA bundle; never switch the server certificate and client trust anchor in one
+uncoordinated step.
 
 ## Incident response
 

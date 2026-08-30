@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/component: telemetry-alertmanager
     app.kubernetes.io/managed-by: kustomize
 spec:
+  revisionHistoryLimit: 3
   serviceName: ssl-proxy-telemetry-alertmanager
   replicas: 1
   selector:

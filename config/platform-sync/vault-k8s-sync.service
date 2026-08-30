@@ -13,6 +13,7 @@ LoadCredential=vault-ca:/etc/platform-sync/vault-ca.crt
 Environment=VAULT_TOKEN_FILE=%d/vault-token
 Environment=VAULT_CACERT=%d/vault-ca
 ExecStartPre=/usr/bin/test -f /run/platform-sync/kubeconfig
+ExecStartPre=/usr/bin/sha256sum --check --status /opt/platform-sync/contract/platform-input-contract.sha256
 ExecStart=/opt/platform-sync/bin/platform-sync
 RuntimeDirectory=platform-sync
 RuntimeDirectoryMode=0700

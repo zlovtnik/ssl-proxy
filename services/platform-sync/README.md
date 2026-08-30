@@ -61,6 +61,11 @@ This will:
 5. Install the Vault token and CA as root-only systemd credential sources
 6. Enable the single sync timer
 
+The installer records the SHA-256 digest of the installed input contract. The
+systemd service verifies that digest before every run, so an ad hoc or partial
+contract replacement fails closed. Re-run the installer to deploy a reviewed
+contract update; do not copy the file independently.
+
 ## Configuration
 
 Edit `/etc/platform-sync/platform-sync.conf`:
@@ -85,6 +90,7 @@ sudo systemctl start vault-k8s-sync.service
 # Check status
 sudo systemctl status vault-k8s-sync
 sudo journalctl -u vault-k8s-sync -f
+sudo sha256sum --check /opt/platform-sync/contract/platform-input-contract.sha256
 ```
 
 ## Monitoring
