@@ -126,7 +126,7 @@ class JenkinsPluginsTest(unittest.TestCase):
             )
 
         self.assertEqual({"git": "5.10.1"}, pins)
-        self.assertIn("--latest=false", captured[0])
+        self.assertIn("--latest=true", captured[0])
         self.assertIn("--no-download", captured[0])
         self.assertIn("--list", captured[0])
         self.assertIn("jenkins-plugin-cli", captured[0])

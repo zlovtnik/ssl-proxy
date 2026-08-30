@@ -142,7 +142,7 @@ def resolve_plugins(
         "jenkins-plugin-cli",
         "--plugin-file",
         "/tmp/plugins.txt",
-        "--latest=false",
+        "--latest=true",
         "--no-download",
         "--list",
     ]
