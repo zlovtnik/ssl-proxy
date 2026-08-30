@@ -204,13 +204,20 @@ def header(headers: Mapping[str, str], name: str) -> str | None:
 def next_link(link: str | None, current_url: str) -> str | None:
     if not link:
         return None
+    current_parts = urllib.parse.urlsplit(current_url)
     for part in link.split(","):
         target, _, parameters = part.strip().partition(";")
         if 'rel="next"' not in parameters and "rel=next" not in parameters:
             continue
         if not target.startswith("<") or not target.endswith(">"):
             raise RegistryCleanupError("registry returned an invalid pagination Link")
-        return urllib.parse.urljoin(current_url, target[1:-1])
+        resolved = urllib.parse.urljoin(current_url, target[1:-1])
+        resolved_parts = urllib.parse.urlsplit(resolved)
+        if resolved_parts.scheme != current_parts.scheme or resolved_parts.netloc != current_parts.netloc:
+            raise RegistryCleanupError(
+                "registry returned a pagination link to a different authority"
+            )
+        return resolved
     return None
 
 
@@ -247,6 +254,8 @@ def reference_digest(reference: str) -> tuple[str, str, str] | None:
 def git_protected_digests(root: Path, registry: str) -> dict[str, set[str]]:
     protected: dict[str, set[str]] = {}
     matrix = root / "cyber-stack/matrix"
+    if not matrix.is_dir():
+        raise RegistryCleanupError(f"cyber-stack/matrix directory not found: {matrix}")
     for path in sorted(matrix.rglob("*.yaml")):
         try:
             documents = yaml.safe_load_all(path.read_text(encoding="utf-8"))
@@ -448,6 +457,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.apply and arguments.confirm != CONFIRMATION:
             raise RegistryCleanupError(
                 f"--apply requires --confirm {CONFIRMATION}"
+            )
+        if arguments.apply and arguments.plain_http:
+            raise RegistryCleanupError(
+                "--apply is not allowed with --plain-http"
             )
         if arguments.apply and arguments.skip_live_cluster:
             raise RegistryCleanupError(

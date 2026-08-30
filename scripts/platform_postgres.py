@@ -569,7 +569,11 @@ def verify_database_login(
     account: Account,
     password: bytes,
 ) -> None:
-    env_file = write_env_file({"PGPASSWORD": password})
+    env_file = write_env_file({
+        "PGPASSWORD": password,
+        "PGSSLMODE": contract.tls_mode,
+        "PGSSLROOTCERT": "/var/run/postgres-tls/ca.crt",
+    })
     try:
         runner.run(
             (
@@ -586,12 +590,14 @@ def verify_database_login(
                 "--entrypoint",
                 "psql",
                 contract.image,
-                f"host={contract.host}",
-                f"port={contract.port}",
-                f"dbname={contract.database}",
-                f"user={account.role}",
-                f"sslmode={contract.tls_mode}",
-                "sslrootcert=/var/run/postgres-tls/ca.crt",
+                "-h",
+                contract.host,
+                "-p",
+                str(contract.port),
+                "-U",
+                account.role,
+                "-d",
+                contract.database,
                 "--no-psqlrc",
                 "--tuples-only",
                 "--no-align",
@@ -617,7 +623,6 @@ def rotate_password(
         runner, runtime, account.secret_name, "password", single_line=True
     )
     original_userlist: bytes | None = None
-    rotated_userlist: bytes | None = None
     if account.pgbouncer:
         original_userlist = vault_read(
             runner,
@@ -632,44 +637,42 @@ def rotate_password(
                 f"PgBouncer userlist and Vault password already differ for {role}"
             )
     new_password = secrets.token_hex(32).encode("ascii")
-    if original_userlist is not None:
-        rotated_userlist = replace_userlist_password(original_userlist, role, new_password)
 
     database_changed = False
     vault_account_changed = False
-    vault_userlist_changed = False
     try:
         set_database_password(runner, runtime, account, new_password)
         database_changed = True
         verify_database_login(runner, runtime, contract, account, new_password)
         vault_patch(runner, runtime, account.secret_name, "password", new_password)
         vault_account_changed = True
-        if rotated_userlist is not None:
+        if original_userlist is not None:
+            current_userlist = vault_read(
+                runner,
+                runtime,
+                "pgbouncer-runtime-users",
+                "userlist.txt",
+                single_line=False,
+            )
+            current_userlist = replace_userlist_password(current_userlist, role, new_password)
+            current_users = parse_userlist(current_userlist)
+            if role not in current_users:
+                raise MaintenanceError(
+                    f"PgBouncer userlist no longer contains {role} after concurrent rotation"
+                )
             vault_patch(
                 runner,
                 runtime,
                 "pgbouncer-runtime-users",
                 "userlist.txt",
-                rotated_userlist,
+                current_userlist,
             )
-            vault_userlist_changed = True
         uid, gid = postgres_ids(runner, runtime, contract)
         write_volume_secret(
             runner, runtime, account.file_name, new_password, uid, gid
         )
     except Exception as primary_error:
         rollback_errors: list[str] = []
-        if vault_userlist_changed and original_userlist is not None:
-            try:
-                vault_patch(
-                    runner,
-                    runtime,
-                    "pgbouncer-runtime-users",
-                    "userlist.txt",
-                    original_userlist,
-                )
-            except Exception as error:  # pragma: no cover - integration failure path
-                rollback_errors.append(f"PgBouncer Vault rollback failed: {error}")
         if vault_account_changed:
             try:
                 vault_patch(

@@ -8,13 +8,14 @@ Requires=credential-generator.service
 Type=oneshot
 EnvironmentFile=-/etc/platform-sync/platform-sync.conf
 Environment=KUBECONFIG=/run/platform-sync/kubeconfig
+Environment=CONTRACT_PATH=/opt/platform-sync/contract/platform-input-contract.yaml
 LoadCredential=vault-token:/etc/platform-sync/vault-token
 LoadCredential=vault-ca:/etc/platform-sync/vault-ca.crt
 Environment=VAULT_TOKEN_FILE=%d/vault-token
 Environment=VAULT_CACERT=%d/vault-ca
 ExecStartPre=/usr/bin/test -f /run/platform-sync/kubeconfig
 ExecStartPre=/usr/bin/sh -c '/usr/bin/sha256sum --check --status "${CONTRACT_PATH%.yaml}.sha256"'
-ExecStart=/opt/platform-sync/bin/platform-sync
+ExecStart=/opt/platform-sync/bin/platform-sync --contract=${CONTRACT_PATH}
 RuntimeDirectory=platform-sync
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes

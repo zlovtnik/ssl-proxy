@@ -15,6 +15,12 @@ if [ -z "$TOKEN_FILE" ]; then
     echo "ERROR: Set POSTGRES_ROTATION_TOKEN_FILE to a path outside the repository." >&2
     exit 1
 fi
+case "$TOKEN_FILE" in
+    "$REPO_ROOT"/*|"")
+        echo "ERROR: Token file must be outside the repository: $TOKEN_FILE" >&2
+        exit 1
+        ;;
+esac
 if [ -e "$TOKEN_FILE" ]; then
     echo "ERROR: Refusing to replace existing token file: $TOKEN_FILE" >&2
     exit 1
@@ -45,8 +51,16 @@ require_admin_capability "auth/token/create-orphan"
 vault policy write "$POLICY_NAME" "$POLICY_FILE" >/dev/null
 
 token_dir="$(dirname "$TOKEN_FILE")"
-mkdir -p "$token_dir"
-chmod 700 "$token_dir"
+if [ ! -d "$token_dir" ]; then
+    mkdir -p "$token_dir"
+    chmod 700 "$token_dir"
+else
+    current_mode="$(stat -f '%Lp' "$token_dir" 2>/dev/null || stat -c '%a' "$token_dir" 2>/dev/null)"
+    if [ "$current_mode" != "700" ]; then
+        echo "ERROR: Existing token directory $token_dir has mode $current_mode, expected 700" >&2
+        exit 1
+    fi
+fi
 umask 077
 temporary_token="$(mktemp "$token_dir/.postgres-rotation-token.XXXXXX")"
 trap 'rm -f "$temporary_token"' EXIT
