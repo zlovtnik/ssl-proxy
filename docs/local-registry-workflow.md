@@ -149,6 +149,17 @@ is never automatic. The retention planner protects every digest pinned under
 the newest retained window for each repository. Manifests with unknown creation
 timestamps are kept rather than guessed about.
 
+After adding or changing the registry service configuration, recreate only the
+registry container so manifest deletion is enabled without requiring the
+unrelated Jenkins environment:
+
+```bash
+make registry-recreate REGISTRY=192.168.1.242:5000
+```
+
+The target preserves the named registry data volume and verifies that the
+recreated process received `REGISTRY_STORAGE_DELETE_ENABLED=true`.
+
 Run the read-only plan first:
 
 ```bash
