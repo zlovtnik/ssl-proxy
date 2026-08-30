@@ -1,4 +1,5 @@
 README.md
+apps/integration-console/README.md
 apps/schema-migrator/README.md
 apps/wg-key-rotator/README.md
 cyber-stack/README.md

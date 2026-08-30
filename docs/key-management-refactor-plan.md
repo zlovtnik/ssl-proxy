@@ -36,10 +36,10 @@ tools.
 | `scripts/bootstrap-vault-platform-sync.sh` | Creates the renewable read-only Vault service token | Active one-time bootstrap | Keep; require administrator capability preflight and immediate removal of temporary root access |
 | `scripts/gen-secrets` | Generates local files and a local environment by loading `WgKeyRotator.Secrets` | Local compatibility | Extract into a dedicated local-only tool, preserving output and permission tests |
 | `apps/wg-key-rotator/lib/.../secrets.ex` | Implements the local generator used by `scripts/gen-secrets` | Coupling only | Remove the coupling before retiring the application |
-| `apps/wg-key-rotator` staged rotation | Generates keys, writes checkout-local files and controls Docker Compose services | Not production-capable | Retire after local generator extraction unless a separately approved local harness still needs it |
+| `apps/wg-key-rotator` staged rotation | Generates keys, writes checkout-local files and controls local compatibility services | Not production-capable | Retire after local generator extraction unless a separately approved local harness still needs it |
 | Vault Shamir material | Emergency authorization for unseal and root recovery | Break-glass only | Split custody and encrypted offline storage; never use as a routine generator |
 
-## Why the WireGuard rotator is not a production component
+## Local development evidence: why the WireGuard rotator is not a production component
 
 - No `wg-key-rotator` workload exists under `cyber-stack/`.
 - The root Makefile explicitly excludes it from deployable Kubernetes images.
