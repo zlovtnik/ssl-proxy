@@ -53,6 +53,22 @@ class RegistryCleanupTest(unittest.TestCase):
         )
         self.assertIsNone(reference_digest("registry.test/service:latest"))
 
+    def test_digest_reference_strips_tag_before_split(self) -> None:
+        self.assertEqual(
+            ("registry-1.docker.io", "library/redis", digest("a")),
+            reference_digest(f"docker://redis:7.4.3-alpine@{digest('a')}"),
+        )
+        self.assertEqual(
+            ("docker.io", "library/redis", digest("b")),
+            reference_digest(f"docker://docker.io/library/redis:7.4.3-alpine@{digest('b')}"),
+        )
+        self.assertEqual(
+            ("registry.test:5000", "team/service", digest("c")),
+            reference_digest(
+                f"docker://registry.test:5000/team/service:latest@{digest('c')}"
+            ),
+        )
+
     def test_timestamp_and_pagination_parsing(self) -> None:
         parsed = parse_timestamp("2026-08-30T12:00:00Z")
         self.assertEqual(dt.timezone.utc, parsed.tzinfo)

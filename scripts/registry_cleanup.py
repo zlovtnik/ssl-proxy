@@ -247,6 +247,10 @@ def reference_digest(reference: str) -> tuple[str, str, str] | None:
     repository_reference, separator, digest = reference.rpartition("@")
     if not separator or not DIGEST_PATTERN.fullmatch(digest):
         return None
+    last_slash = repository_reference.rfind("/")
+    last_colon = repository_reference.rfind(":")
+    if last_colon > last_slash:
+        repository_reference = repository_reference[:last_colon]
     authority, repository = split_registry_repository(repository_reference)
     return authority, repository, digest
 
