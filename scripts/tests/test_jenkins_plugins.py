@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,15 @@ def warning(name: str, pattern: str) -> dict[str, object]:
 
 
 class JenkinsPluginsTest(unittest.TestCase):
+    def test_positive_float_rejects_non_positive_and_non_finite_values(self) -> None:
+        self.assertEqual(0.5, jenkins_plugins.positive_float("0.5"))
+
+        for value in ("0", "-1", "inf", "-inf", "nan"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                argparse.ArgumentTypeError, "timeout must be positive"
+            ):
+                jenkins_plugins.positive_float(value)
+
     def test_pin_parser_rejects_malformed_and_duplicate_pins(self) -> None:
         invalid = (
             "git\n",

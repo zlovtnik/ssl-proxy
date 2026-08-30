@@ -93,9 +93,11 @@ ingest contracts:
 | `wireless.audit` | Sensor to Redpanda/Octopus | Schema-versioned wireless audit events |
 | `proxy.payload_audit` | Proxy to Octopus | Payload-audit records ingested as scan requests; poison goes to `proxy.payload_audit.dlq` |
 
-Octopus also consumes wireless backlog, MAC lookup, authorized-network and
-probe-flush request/reply topics. Those names, consumer groups and DLQ rules
-are in the [Octopus README](../services/octopus/README.md). `OCTOPUS_CONSUMERS_ENABLED`
+Octopus also consumes wireless operational topics. Backlog listing and pruning,
+MAC lookup, and authorized-network operations have request/reply contracts;
+backlog save, mark-synced, probe-flush, and other remaining operations are
+one-way unless a reply topic is explicitly provisioned. Topic names, consumer
+groups, and DLQ rules are in the [Octopus README](../services/octopus/README.md). `OCTOPUS_CONSUMERS_ENABLED`
 starts that Kafka consumer set even when the IDs are absent from
 `OCTOPUS_ENABLED_PROCESSORS`.
 

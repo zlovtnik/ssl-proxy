@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import ssl
@@ -357,7 +358,7 @@ def audit(
 
 def positive_float(value: str) -> float:
     parsed = float(value)
-    if parsed <= 0:
+    if not math.isfinite(parsed) or parsed <= 0:
         raise argparse.ArgumentTypeError("timeout must be positive")
     return parsed
 

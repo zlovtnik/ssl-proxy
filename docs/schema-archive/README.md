@@ -1,4 +1,8 @@
+> **Status: Historical / superseded.**
+
 # Schema Archive
+
+This document contains historical schema material and references that must not be used as current runtime definitions.
 
 This directory contains historical schema fragments retained for provenance.
 They are not active migrations and must not be executed for a new environment.
