@@ -11,12 +11,15 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY_ROOT / "scripts"))
 
 from registry_cleanup import (  # noqa: E402
+    CONFIRMATION,
     DigestRecord,
     RegistryCleanupError,
     choose_retention,
     next_link,
+    parser,
     parse_timestamp,
     reference_digest,
+    validate_arguments,
 )
 
 
@@ -25,6 +28,20 @@ def digest(character: str) -> str:
 
 
 class RegistryCleanupTest(unittest.TestCase):
+    def test_apply_accepts_explicit_plain_http_registry(self) -> None:
+        arguments = parser().parse_args(
+            [
+                "--registry",
+                "registry.test:5000",
+                "--plain-http",
+                "--apply",
+                "--confirm",
+                CONFIRMATION,
+            ]
+        )
+
+        validate_arguments(arguments)
+
     def test_retention_protects_pins_latest_recent_and_unknown_dates(self) -> None:
         now = dt.datetime(2026, 8, 30, tzinfo=dt.timezone.utc)
         records = (

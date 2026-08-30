@@ -158,14 +158,17 @@ make registry-clean-plan \
   REGISTRY_KEEP_RECENT=12
 ```
 
-After reviewing every proposed digest, apply the same plan with the exact
-confirmation token:
+The apply step requires a reachable live cluster and a working pod inventory
+so the script can distinguish live digests from removable ones. Ensure a
+Kubernetes context is active (the `kube-context-check` prerequisite enforces
+this), or pass one explicitly:
 
 ```bash
 make registry-clean \
   REGISTRY=192.168.1.242:5000 \
   REGISTRY_PLAIN_HTTP=1 \
   REGISTRY_KEEP_RECENT=12 \
+  KUBE_CONTEXT=<context> \
   REGISTRY_CLEAN_CONFIRM=DELETE-UNPINNED-MANIFESTS
 ```
 
