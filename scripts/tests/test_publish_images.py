@@ -69,6 +69,9 @@ def settings() -> PublishSettings:
         registry_plain_http="1",
         atheros_search_ui_api_base="",
         atheros_search_ui_title="search title",
+        atheros_search_ui_keycloak_url="https://identity.test",
+        atheros_search_ui_keycloak_realm="test-realm",
+        atheros_search_ui_keycloak_client_id="search-ui",
         make_command=("gmake",),
     )
 
@@ -94,6 +97,11 @@ class PublishImagesTest(unittest.TestCase):
         self.assertIn("REGISTRY=registry.test:5000", command)
         self.assertIn("PUBLISH_REPOSITORY=registry.test:5000/team/proxy-runtime", command)
         self.assertIn(f"PUBLISH_METADATA_FILE={metadata}", command)
+        self.assertIn(
+            "ATHEROS_SEARCH_UI_KEYCLOAK_URL=https://identity.test", command
+        )
+        self.assertIn("ATHEROS_SEARCH_UI_KEYCLOAK_REALM=test-realm", command)
+        self.assertIn("ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID=search-ui", command)
         self.assertNotIn("registry.test:5000/ssl-proxy", " ".join(command))
 
     def test_publishes_eight_images_and_reports_match_and_unpinned(self) -> None:
