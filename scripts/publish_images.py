@@ -35,6 +35,9 @@ class PublishSettings:
     registry_plain_http: str
     atheros_search_ui_api_base: str
     atheros_search_ui_title: str
+    atheros_search_ui_keycloak_url: str
+    atheros_search_ui_keycloak_realm: str
+    atheros_search_ui_keycloak_client_id: str
     make_command: tuple[str, ...] = ("make",)
 
 
@@ -58,6 +61,9 @@ def make_publish_command(
         f"PUBLISH_METADATA_FILE={metadata_path}",
         f"ATHEROS_SEARCH_UI_API_BASE={settings.atheros_search_ui_api_base}",
         f"ATHEROS_SEARCH_UI_TITLE={settings.atheros_search_ui_title}",
+        f"ATHEROS_SEARCH_UI_KEYCLOAK_URL={settings.atheros_search_ui_keycloak_url}",
+        f"ATHEROS_SEARCH_UI_KEYCLOAK_REALM={settings.atheros_search_ui_keycloak_realm}",
+        f"ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID={settings.atheros_search_ui_keycloak_client_id}",
     ]
 
 
@@ -129,6 +135,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--registry-plain-http", choices=("0", "1"), default="0")
     parser.add_argument("--atheros-search-ui-api-base", default="")
     parser.add_argument("--atheros-search-ui-title", default="atheros search")
+    parser.add_argument(
+        "--atheros-search-ui-keycloak-url", default="https://gateway.rclabs.uk"
+    )
+    parser.add_argument("--atheros-search-ui-keycloak-realm", default="middleware")
+    parser.add_argument(
+        "--atheros-search-ui-keycloak-client-id", default="atheros-search-ui"
+    )
     parser.add_argument("--make-command", default="make")
     return parser
 
@@ -144,6 +157,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         registry_plain_http=arguments.registry_plain_http,
         atheros_search_ui_api_base=arguments.atheros_search_ui_api_base,
         atheros_search_ui_title=arguments.atheros_search_ui_title,
+        atheros_search_ui_keycloak_url=arguments.atheros_search_ui_keycloak_url,
+        atheros_search_ui_keycloak_realm=arguments.atheros_search_ui_keycloak_realm,
+        atheros_search_ui_keycloak_client_id=(
+            arguments.atheros_search_ui_keycloak_client_id
+        ),
         make_command=tuple(shlex.split(arguments.make_command)),
     )
     try:

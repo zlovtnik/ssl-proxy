@@ -29,6 +29,9 @@ override OCTOPUS_COMMIT := $(shell git -C services/octopus rev-parse HEAD 2>/dev
 
 ATHEROS_SEARCH_UI_API_BASE ?=
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
+ATHEROS_SEARCH_UI_KEYCLOAK_URL ?= https://gateway.rclabs.uk
+ATHEROS_SEARCH_UI_KEYCLOAK_REALM ?= middleware
+ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID ?= atheros-search-ui
 
 SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui postgres-runtime-schema
 # wg-key-rotator is an operational tool, not a long-lived Kubernetes workload.
@@ -53,6 +56,9 @@ publish: octopus-source-integrity
 		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)" \
 		--atheros-search-ui-api-base "$(ATHEROS_SEARCH_UI_API_BASE)" \
 		--atheros-search-ui-title "$(ATHEROS_SEARCH_UI_TITLE)" \
+		--atheros-search-ui-keycloak-url "$(ATHEROS_SEARCH_UI_KEYCLOAK_URL)" \
+		--atheros-search-ui-keycloak-realm "$(ATHEROS_SEARCH_UI_KEYCLOAK_REALM)" \
+		--atheros-search-ui-keycloak-client-id "$(ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID)" \
 		--make-command "$(MAKE)"
 
 build-all: $(BUILD_TARGETS)
@@ -237,7 +243,7 @@ $(eval $(call service_rules,java-coordinator,services/octopus/Dockerfile,--build
 $(eval $(call service_rules,atheros-sensor,Dockerfile,--target atheros-sensor --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),atheros-sensor,.))
 $(eval $(call service_rules,atheros-search,services/atheros-search/Dockerfile,,atheros-search,.))
 $(eval $(call service_rules,wg-key-rotator,apps/wg-key-rotator/Dockerfile,,wg-key-rotator,apps/wg-key-rotator))
-$(eval $(call service_rules,atheros-search-ui,apps/integration-console/atheros-search-ui/Dockerfile,--build-arg 'VITE_API_BASE=$(ATHEROS_SEARCH_UI_API_BASE)' --build-arg 'VITE_APP_TITLE=$(ATHEROS_SEARCH_UI_TITLE)',atheros-search-ui,apps/integration-console/atheros-search-ui))
+$(eval $(call service_rules,atheros-search-ui,apps/integration-console/atheros-search-ui/Dockerfile,--build-arg 'VITE_API_BASE=$(ATHEROS_SEARCH_UI_API_BASE)' --build-arg 'VITE_APP_TITLE=$(ATHEROS_SEARCH_UI_TITLE)' --build-arg 'VITE_KEYCLOAK_URL=$(ATHEROS_SEARCH_UI_KEYCLOAK_URL)' --build-arg 'VITE_KEYCLOAK_REALM=$(ATHEROS_SEARCH_UI_KEYCLOAK_REALM)' --build-arg 'VITE_KEYCLOAK_CLIENT_ID=$(ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID)',atheros-search-ui,apps/integration-console/atheros-search-ui))
 $(eval $(call service_rules,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,apps/schema-migrator))
 $(eval $(call service_rules,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,apps/schema-migrator))
 $(eval $(call service_rules,postgres-runtime-schema,k8s/postgres-schema-executor/Dockerfile,,postgres-runtime-schema,.))
