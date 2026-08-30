@@ -107,7 +107,7 @@ recover-stack: kube-context-check
 		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)"
 
 pvc-audit: kube-context-check
-	python3 scripts/pvc_audit.py $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
+	python3 scripts/pvc_audit.py --kubectl "$(KUBECTL)" $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
 production-gate:
 	@test -n "$(PRODUCTION_GATE_REVISION)" || { echo "PRODUCTION_GATE_REVISION is required" >&2; exit 2; }

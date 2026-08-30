@@ -114,8 +114,8 @@ def find_candidates(
     return tuple(sorted(candidates, key=lambda item: (item.namespace, item.name)))
 
 
-def kubectl_json(context: str | None, resource: str) -> Mapping[str, Any]:
-    command = ["kubectl"]
+def kubectl_json(kubectl: str, context: str | None, resource: str) -> Mapping[str, Any]:
+    command = [kubectl]
     if context:
         command.extend(("--context", context))
     command.extend(("get", resource, "--all-namespaces", "-o", "json"))
@@ -136,6 +136,7 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--context")
     result.add_argument("--format", choices=("table", "json"), default="table")
+    result.add_argument("--kubectl", default="kubectl")
     return result
 
 
@@ -143,9 +144,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
         candidates = find_candidates(
-            kubectl_json(arguments.context, "persistentvolumeclaims"),
-            kubectl_json(arguments.context, "persistentvolumes"),
-            kubectl_json(arguments.context, "pods"),
+            kubectl_json(arguments.kubectl, arguments.context, "persistentvolumeclaims"),
+            kubectl_json(arguments.kubectl, arguments.context, "persistentvolumes"),
+            kubectl_json(arguments.kubectl, arguments.context, "pods"),
         )
         if arguments.format == "json":
             print(json.dumps([asdict(candidate) for candidate in candidates], indent=2))

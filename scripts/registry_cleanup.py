@@ -309,7 +309,14 @@ def live_protected_digests(
     if context:
         command.extend(("--context", context))
     command.extend(("get", "pods", "--all-namespaces", "-o", "json"))
-    completed = subprocess.run(command, capture_output=True, check=False)
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, check=False, timeout=60
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RegistryCleanupError(
+            "live Kubernetes image inventory timed out"
+        ) from error
     if completed.returncode != 0:
         detail = completed.stderr.decode("utf-8", errors="replace").strip()
         raise RegistryCleanupError(f"live Kubernetes image inventory failed: {detail}")

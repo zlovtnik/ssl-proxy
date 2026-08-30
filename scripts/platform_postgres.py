@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import json
 import os
 import secrets
 import shlex
@@ -219,7 +220,19 @@ def postgres_ids(runner: Runner, runtime: Runtime, contract: PostgresContract) -
     inspect = runner.run(
         ("docker", "inspect", runtime.container), check=False
     )
+    running = False
     if inspect.returncode == 0:
+        try:
+            info = json.loads(inspect.stdout)
+            running = (
+                isinstance(info, list)
+                and info
+                and isinstance(info[0], dict)
+                and info[0].get("State", {}).get("Running") is True
+            )
+        except (json.JSONDecodeError, IndexError):
+            pass
+    if running:
         uid = runner.run(("docker", "exec", runtime.container, "id", "-u", "postgres"))
         gid = runner.run(("docker", "exec", runtime.container, "id", "-g", "postgres"))
     else:
