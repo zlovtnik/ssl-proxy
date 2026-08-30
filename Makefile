@@ -39,7 +39,7 @@ BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry octopus-source-integrity check-java-coordinator-image docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 
@@ -143,6 +143,12 @@ octopus-source-integrity:
 check-java-coordinator-image:
 	@test -n "$(IMAGE)" || { echo "IMAGE is required" >&2; exit 2; }
 	python3 scripts/octopus_image_contract.py image "$(IMAGE)"
+
+jenkins-plugin-lock:
+	python3 scripts/jenkins_plugins.py lock
+
+jenkins-plugin-audit:
+	python3 scripts/jenkins_plugins.py audit
 
 docs-check:
 	python3 scripts/check-docs.py

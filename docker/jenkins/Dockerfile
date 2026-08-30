@@ -56,8 +56,10 @@ RUN apt-get update \
     && rm -f /tmp/kubectl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
-RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt
+COPY plugins.lock.txt /usr/share/jenkins/ref/plugins.lock.txt
+RUN jenkins-plugin-cli \
+      --plugin-file /usr/share/jenkins/ref/plugins.lock.txt \
+      --latest=false
 
 COPY casc /usr/share/jenkins/ref/casc
 

@@ -6,6 +6,7 @@ pipeline {
     disableConcurrentBuilds(abortPrevious: true)
     skipDefaultCheckout(true)
     timestamps()
+    timeout(time: 135, unit: 'MINUTES')
   }
 
   environment {
@@ -90,16 +91,25 @@ pipeline {
             catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
               sh 'make gitops-check'
             }
+            catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+              timeout(time: 5, unit: 'MINUTES') {
+                sh 'make jenkins-plugin-audit'
+              }
+            }
           }
         }
 
         stage('Publish images') {
           steps {
             script {
-              def services = sh(
-                script: 'make --no-print-directory ci-publish-services',
-                returnStdout: true
-              ).trim().split('\\n').findAll { it }
+              def serviceOutput
+              timeout(time: 2, unit: 'MINUTES') {
+                serviceOutput = sh(
+                  script: 'make --no-print-directory ci-publish-services',
+                  returnStdout: true
+                )
+              }
+              def services = serviceOutput.trim().split('\\n').findAll { it }
               if (services.isEmpty()) {
                 error('ci-publish-services returned no image publish targets')
               }
@@ -108,8 +118,8 @@ pipeline {
               services.each { service ->
                 def serviceName = service
                 publishBranches["Publish ${serviceName}"] = {
-                  timeout(time: 30, unit: 'MINUTES') {
-                    retry(2) {
+                  retry(2) {
+                    timeout(time: 30, unit: 'MINUTES') {
                       sh """
                         build_tag=\"\$(git rev-parse --short=12 HEAD)\"
                         env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \\

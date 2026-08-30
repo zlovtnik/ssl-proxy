@@ -97,6 +97,14 @@ Production readiness is determined from the production Argo CD Applications.
 | `sync.oracle.load` | Octopus-owned PostgreSQL load dispatch; legacy name |
 | `sync.oracle.result` | Octopus-owned PostgreSQL load outcome; legacy name |
 | `wireless.audit` | Sensor-published schema-versioned wireless events |
+| `proxy.payload_audit` | Proxy payload-audit records ingested by Octopus as scan requests |
+
+Octopus also consumes wireless operational topics. Backlog listing and pruning,
+MAC lookup, and authorized-network operations have request/reply contracts;
+backlog save, mark-synced, probe-flush, and other remaining operations are
+one-way unless a reply topic is explicitly provisioned. See the [Octopus
+README](services/octopus/README.md) for consumer groups, DLQ suffixes, and the
+`OCTOPUS_CONSUMERS_ENABLED` gate.
 
 Delivery is at least once from committed Kafka consumer-group offsets, with durable PostgreSQL
 dedupe and topic/partition/offset evidence.

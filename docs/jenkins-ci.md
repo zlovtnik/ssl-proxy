@@ -108,17 +108,21 @@ The managed pipeline polls `main` every five minutes and supports manual builds.
 When a new run is scheduled, Jenkins aborts any active run before starting it.
 This prevents an obsolete checkout from waiting on an exact-revision production
 gate after Argo CD has advanced to newer `main`. The pipeline does not expose or
-require a GitHub webhook. Each run:
+require a GitHub webhook. Every run has a 135-minute hard timeout. The timeout
+covers checkout, validation, both fresh publication attempts and the production
+gate; the one-hour `JenkinsBuildLikelyStuck` alert remains an early operational
+warning before that hard stop. Each run:
 
 1. checks out the superproject and its pinned submodules, then requires the
    Octopus checkout to match that pin with both worktrees clean;
 2. creates and bootstraps its shared Buildx builder after bounded Docker and
    registry checks;
-3. runs `make docs-check` and `make gitops-check` in parallel with image
-   publishing;
-4. publishes every Makefile service independently with a 30-minute limit and
-   one retry, using a 12-character commit tag plus the mutable `latest`
-   channel; and
+3. runs `make docs-check`, `make gitops-check` and the hard-failing, five-minute
+   `make jenkins-plugin-audit` in parallel with image publishing;
+4. discovers the image target set within two minutes, then publishes every
+   Makefile service independently with one retry; each attempt receives its own
+   fresh 30-minute limit and uses a 12-character commit tag plus the mutable
+   `latest` channel; and
 5. when validation and every publication branch succeeded, waits up to 30
    minutes for all three production Argo CD Applications to report the full
    triggering checkout SHA with `Synced` sync and `Healthy` health.
@@ -130,6 +134,32 @@ A missing Application, stale revision, `OutOfSync`, `Progressing`, `Degraded`
 or timeout fails the otherwise-successful run with sanitized Argo operation and
 condition messages. Build results remain available in Jenkins; no outbound
 failure webhook is configured.
+
+## Local development plugin lock workflow
+
+[`plugins.txt`](../docker/jenkins/plugins.txt) contains only the eight
+human-maintained direct plugin requirements. The sorted
+[`plugins.lock.txt`](../docker/jenkins/plugins.lock.txt) records the complete
+effective direct and transitive set resolved by the digest-pinned Jenkins base
+image. The controller image installs only the lock with `--latest=false`, so a
+rebuild cannot silently select newer dependencies.
+
+After reviewing a direct requirement update, regenerate and audit the lock:
+
+```bash
+make jenkins-plugin-lock
+make jenkins-plugin-audit
+docker compose -f docker-compose.ci.yaml build jenkins
+```
+
+Lock generation atomically replaces the committed file. The read-only audit
+resolves `plugins.txt` again, rejects added, removed or changed lock entries,
+and checks every locked version against the official Jenkins update-center
+warning patterns. Resolver failures, metadata fetch or format failures, invalid
+pins and any matching direct or transitive security warning fail the audit.
+There is no warning allowlist. When the audit finds drift or a warning, update
+the responsible direct requirement where a newer compatible version exists,
+regenerate the lock, rebuild the controller and rerun the audit before merging.
 
 The target set covers the proxy, Octopus coordinator, Atheros Sensor, Atheros
 Search, key rotator, Search UI, both Schema Migrator images and the PostgreSQL runtime
@@ -183,9 +213,17 @@ Confirm the next production gate succeeds before revoking the old credential.
 Record only the rotation time, credential version and verification result; do
 not include kubeconfig content or command output that contains it.
 
-The gate performs a read-only authorization preflight before polling. It
-requires each named Application read and rejects a credential that can read
-Secrets or perform representative Argo, workload, Secret or RBAC mutations.
-`make gitops-check` separately enforces the exact ServiceAccount, Role and
-RoleBinding rules, preventing repository RBAC drift from broadening that
-identity.
+The gate performs the same 72 precise read-only authorization reviews before
+polling. An eight-worker bounded pool executes the reviews with a ten-second
+request timeout, while diagnostics remain in declaration order. It requires
+each named Application read and rejects a credential that can read Secrets or
+perform representative Argo, workload, Secret or RBAC mutations. It does not
+use `SelfSubjectRulesReview`, whose result may be incomplete and is unsuitable
+for an external authorization decision. `make gitops-check` separately
+enforces the exact ServiceAccount, Role and RoleBinding rules, preventing
+repository RBAC drift from broadening that identity.
+
+Application polls target a ten-second start-to-start cadence. Query time is
+subtracted from the following sleep, and a query round that exceeds ten seconds
+starts the next attempt immediately while the overall deadline remains in
+force.

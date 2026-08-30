@@ -173,8 +173,21 @@ informational; queued work older than ten minutes is actionable.
 ## Jenkins stuck
 
 Compare the running build duration with recent successful duration percentiles,
-then inspect the active stage. Do not trigger or cancel builds with the scrape
-identity.
+then inspect the active stage, its console output, executor thread and queued
+successor. The one-hour `JenkinsBuildLikelyStuck` alert is an early warning;
+the pipeline's 135-minute timeout is the hard limit. Do not trigger or cancel
+builds with the scrape identity.
+
+Only a Jenkins administrator may abort a confirmed stuck build. Use the build
+page's normal stop action first, or the build URL's `stop` endpoint, and allow
+the pipeline to unwind. If it remains stuck, escalate to `term`. Use `kill` only
+as a last resort when both earlier interrupts fail, because it bypasses normal
+Pipeline cleanup. Never apply these endpoints to a newer replacement build.
+
+After any abort, verify that the executor becomes idle or starts the expected
+successor, the queue has no unexplained blockage, and both the controller and
+Docker-in-Docker health checks pass. Inspect the abandoned build's final result
+and cleanup logs before scheduling another manual run.
 
 ## Jenkins build result
 

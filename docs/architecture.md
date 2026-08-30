@@ -81,7 +81,9 @@ migration target dialects.
 
 ## Topic contracts
 
-The sync topic names are compatibility surfaces and are intentionally locked:
+The `sync.*` topic names are compatibility surfaces and are intentionally
+locked. `wireless.audit` and `proxy.payload_audit` are additional Octopus
+ingest contracts:
 
 | Topic | Direction | Meaning |
 |---|---|---|
@@ -89,6 +91,15 @@ The sync topic names are compatibility surfaces and are intentionally locked:
 | `sync.oracle.load` | Octopus dispatch to Octopus PostgreSQL load consumer | Coordinator-owned PostgreSQL load work; `oracle` is a legacy name |
 | `sync.oracle.result` | Octopus PostgreSQL load consumer to Octopus result consumer | PostgreSQL load outcomes; `oracle` is a legacy name |
 | `wireless.audit` | Sensor to Redpanda/Octopus | Schema-versioned wireless audit events |
+| `proxy.payload_audit` | Proxy to Octopus | Payload-audit records ingested as scan requests; poison goes to `proxy.payload_audit.dlq` |
+
+Octopus also consumes wireless operational topics. Backlog listing and pruning,
+MAC lookup, and authorized-network operations have request/reply contracts;
+backlog save, mark-synced, probe-flush, and other remaining operations are
+one-way unless a reply topic is explicitly provisioned. Topic names, consumer
+groups, and DLQ rules are in the [Octopus README](../services/octopus/README.md). `OCTOPUS_CONSUMERS_ENABLED`
+starts that Kafka consumer set even when the IDs are absent from
+`OCTOPUS_ENABLED_PROCESSORS`.
 
 Delivery is at least once from committed Kafka consumer-group offsets. A group
 without committed offsets starts at the earliest retained record. PostgreSQL
