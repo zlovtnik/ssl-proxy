@@ -141,6 +141,47 @@ SHA as `Synced/Healthy`. Jenkins uses the registry's internal Compose name while
 Kubernetes uses the private server address; both names reach the same registry
 storage.
 
+## Retention and garbage collection
+
+The registry allows manifest deletion so storage can be reclaimed, but cleanup
+is never automatic. The retention planner protects every digest pinned under
+`cyber-stack/matrix/`, every digest used by a live pod, the `latest` target and
+the newest retained window for each repository. Manifests with unknown creation
+timestamps are kept rather than guessed about.
+
+Run the read-only plan first:
+
+```bash
+make registry-clean-plan \
+  REGISTRY=192.168.1.242:5000 \
+  REGISTRY_PLAIN_HTTP=1 \
+  REGISTRY_KEEP_RECENT=12
+```
+
+After reviewing every proposed digest, apply the same plan with the exact
+confirmation token:
+
+```bash
+make registry-clean \
+  REGISTRY=192.168.1.242:5000 \
+  REGISTRY_PLAIN_HTTP=1 \
+  REGISTRY_KEEP_RECENT=12 \
+  REGISTRY_CLEAN_CONFIRM=DELETE-UNPINNED-MANIFESTS
+```
+
+Manifest deletion does not immediately release filesystem blocks. Run offline
+garbage collection only after publication is idle; the target always restarts
+the registry even when garbage collection fails:
+
+```bash
+make registry-gc REGISTRY_GC_CONFIRM=GC-REGISTRY-BLOBS
+```
+
+The garbage collector intentionally omits `--delete-untagged`. A digest-pinned
+release can remain pullable without a tag, so deleting all untagged manifests
+would violate the Git image contract. Re-run `make stack-health` and prove a CRI
+pull after cleanup.
+
 ## Verify
 
 ```bash

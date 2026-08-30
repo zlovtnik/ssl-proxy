@@ -86,7 +86,12 @@ chmod 755 "$INSTALL_DIR/bin/cred-gen"
 
 # Install contract
 echo "Installing contract"
-cp "$REPO_ROOT/cyber-stack/platform-input-contract.yaml" "$INSTALL_DIR/contract/"
+contract_path="$INSTALL_DIR/contract/platform-input-contract.yaml"
+contract_checksum_path="$INSTALL_DIR/contract/platform-input-contract.sha256"
+install -m 640 "$REPO_ROOT/cyber-stack/platform-input-contract.yaml" "$contract_path"
+contract_checksum="$(sha256sum "$contract_path" | awk '{print $1}')"
+printf '%s  %s\n' "$contract_checksum" "$contract_path" > "$contract_checksum_path"
+chmod 640 "$contract_checksum_path"
 
 # Install configuration
 echo "Installing configuration"

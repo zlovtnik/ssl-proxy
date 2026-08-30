@@ -34,6 +34,8 @@ tools.
 | `services/platform-sync` | Reads all 19 inputs, validates them and writes only declared objects | Active | Keep; retain read-only Vault and name-scoped Kubernetes identities |
 | `services/platform-sync/cmd/cred-gen` | Requests a short-lived Kubernetes token and writes an ephemeral kubeconfig | Active host helper | Keep; never turn it into a workload-secret generator |
 | `scripts/bootstrap-vault-platform-sync.sh` | Creates the renewable read-only Vault service token | Active one-time bootstrap | Keep; require administrator capability preflight and immediate removal of temporary root access |
+| `scripts/bootstrap-postgres-rotation-token.sh` | Creates a short-lived writer limited to five PostgreSQL accounts and the PgBouncer user list | Active operator helper | Keep separate from platform-sync and revoke after each rotation window |
+| `scripts/platform_postgres.py` | Preflights/resets the external PostgreSQL volume, rotates one account with rollback, and validates TLS candidates | Active operator helper | Keep Kubernetes-write-free; require exact destructive confirmations |
 | `scripts/gen-secrets` | Generates local files and a local environment by loading `WgKeyRotator.Secrets` | Local compatibility | Extract into a dedicated local-only tool, preserving output and permission tests |
 | `apps/wg-key-rotator/lib/.../secrets.ex` | Implements the local generator used by `scripts/gen-secrets` | Coupling only | Remove the coupling before retiring the application |
 | `apps/wg-key-rotator` staged rotation | Generates keys, writes checkout-local files and controls local compatibility services | Not production-capable | Retire after local generator extraction unless a separately approved local harness still needs it |
@@ -126,7 +128,9 @@ WireGuard rotation is a reviewed platform operation, not a cron job.
 
 ### Phase 3 - Introduce a narrow production writer
 
-- Define a separate Vault policy for reviewed creation and rotation operations.
+- Keep the implemented PostgreSQL rotation policy limited to the five account
+  paths and PgBouncer user list; define separate policies for any future secret
+  class.
 - Require explicit target paths, input schemas, dry-run validation and audit
   metadata without values.
 - Do not reuse the `platform-sync-ro` token or Kubernetes writer identity.

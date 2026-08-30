@@ -15,6 +15,8 @@ RBAC_DIR = REPOSITORY_ROOT / "cyber-stack" / "base" / "platform-sync"
 BOOTSTRAP_KUST = REPOSITORY_ROOT / "cyber-stack" / "matrix" / "prod" / "bootstrap" / "kustomization.yaml"
 INSTALLER = REPOSITORY_ROOT / "scripts" / "install-platform-sync.sh"
 VAULT_BOOTSTRAP = REPOSITORY_ROOT / "scripts" / "bootstrap-vault-platform-sync.sh"
+POSTGRES_ROTATION_BOOTSTRAP = REPOSITORY_ROOT / "scripts" / "bootstrap-postgres-rotation-token.sh"
+POSTGRES_ROTATION_POLICY = REPOSITORY_ROOT / "vault" / "policies" / "postgres-rotation.hcl"
 DEFAULT_CONFIG = REPOSITORY_ROOT / "config" / "platform-sync" / "platform-sync.conf.example"
 
 
@@ -28,7 +30,7 @@ def load_yaml(path: Path) -> list[dict]:
 
 class PlatformSyncRbacTest(unittest.TestCase):
     def test_host_scripts_have_valid_bash_syntax(self) -> None:
-        for script in (INSTALLER, VAULT_BOOTSTRAP):
+        for script in (INSTALLER, VAULT_BOOTSTRAP, POSTGRES_ROTATION_BOOTSTRAP):
             subprocess.run(["bash", "-n", str(script)], check=True)
 
     def test_installer_has_pinned_hardened_container_fallback(self) -> None:
@@ -61,6 +63,25 @@ class PlatformSyncRbacTest(unittest.TestCase):
         bootstrap = VAULT_BOOTSTRAP.read_text(encoding="utf-8")
         self.assertIn('require_admin_capability "sys/policies/acl/$POLICY_NAME"', bootstrap)
         self.assertIn('require_admin_capability "auth/token/create-orphan"', bootstrap)
+
+    def test_postgres_rotation_policy_is_narrow_and_short_lived(self) -> None:
+        policy = POSTGRES_ROTATION_POLICY.read_text(encoding="utf-8")
+        expected_paths = {
+            "postgres-atheros-search",
+            "postgres-keycloak",
+            "postgres-octopus",
+            "postgres-schema-migrator",
+            "postgres-schema-owner",
+            "pgbouncer-runtime-users",
+        }
+        for name in expected_paths:
+            self.assertIn(f'path "secret/data/ssl-proxy/prod/{name}"', policy)
+        self.assertNotIn('path "secret/data/ssl-proxy/prod/*"', policy)
+        self.assertNotIn("delete", policy)
+        bootstrap = POSTGRES_ROTATION_BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn('-explicit-max-ttl="$TOKEN_MAX_TTL"', bootstrap)
+        self.assertIn("-renewable=false", bootstrap)
+        self.assertIn("Refusing to replace existing token file", bootstrap)
 
     def test_serviceaccount_exists(self) -> None:
         """Verify ServiceAccount exists with correct properties."""

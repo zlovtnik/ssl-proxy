@@ -95,6 +95,9 @@ WAN administration, UPnP/NAT-PMP and public IPv6 exposure are disabled. With
 root evidence, bring the root and image filesystems below 80% by removing only
 approved unused caches or images. Do not remove active images, registry data,
 PostgreSQL data, Jenkins data or named volumes without separate approval.
+Use the read-only `make pvc-audit` report and the
+[platform storage runbook](platform-storage-operations.md) before approving any
+volume or registry cleanup.
 
 Retain recoverable copies of the NetworkManager `netplan-enp2s0f0` profile,
 K3s configuration, firewall rules, Compose runtime configuration, PostgreSQL

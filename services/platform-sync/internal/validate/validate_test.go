@@ -92,6 +92,16 @@ func TestValidatePgBouncerRequiresRuntimeAccounts(t *testing.T) {
 	}
 }
 
+func TestValidatePgBouncerRequiresMatchingRuntimePasswords(t *testing.T) {
+	c := postgresContract()
+	data := pgbouncerTLSData(t, "postgres-pgbouncer")
+	data["postgres-octopus"]["password"] = []byte("rotated")
+
+	if err := validatePgBouncer(c, data); err == nil {
+		t.Fatal("userlist with a stale runtime password was accepted")
+	}
+}
+
 func TestValidatePgBouncerListenerTLS(t *testing.T) {
 	c := postgresContract()
 	t.Run("accepts a valid listener certificate", func(t *testing.T) {
@@ -224,6 +234,9 @@ func pgbouncerTLSData(t *testing.T, dnsName string) map[string]map[string][]byte
 "octopus_runtime" "secret"
 "schema_migrator_runtime" "secret"`),
 		},
+		"postgres-atheros-search":  {"password": []byte("secret")},
+		"postgres-octopus":         {"password": []byte("secret")},
+		"postgres-schema-migrator": {"password": []byte("secret")},
 	}
 }
 
