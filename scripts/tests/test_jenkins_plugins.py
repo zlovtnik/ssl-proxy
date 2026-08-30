@@ -52,6 +52,13 @@ class JenkinsPluginsTest(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(PluginAuditError):
                 jenkins_plugins.parse_pins_text(text, source="pins.txt")
 
+        with self.assertRaisesRegex(PluginAuditError, "must be sorted"):
+            jenkins_plugins.parse_pins_text(
+                "z-plugin:1\na-plugin:1\n",
+                source="plugins.lock.txt",
+                require_sorted=True,
+            )
+
     def test_resolver_parser_extracts_complete_effective_set(self) -> None:
         pins = {"dep": "2.0", "git": "5.10.1"}
 
@@ -103,7 +110,7 @@ class JenkinsPluginsTest(unittest.TestCase):
             with self.subTest(document=document), self.assertRaises(PluginAuditError):
                 jenkins_plugins.matching_warnings({"git": "1"}, document)
 
-    def test_resolver_uses_digest_pinned_image_and_latest_false(self) -> None:
+    def test_resolver_uses_digest_pinned_image_and_current_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             requirements = root / "plugins.txt"
@@ -130,6 +137,8 @@ class JenkinsPluginsTest(unittest.TestCase):
         self.assertIn("--no-download", captured[0])
         self.assertIn("--list", captured[0])
         self.assertIn("jenkins-plugin-cli", captured[0])
+        self.assertIn("git:5.10.1", captured[0])
+        self.assertNotIn("--volume", captured[0])
 
     def test_resolver_failures_and_timeouts_are_actionable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -167,6 +176,23 @@ class JenkinsPluginsTest(unittest.TestCase):
             jenkins_plugins.fetch_update_center(
                 "https://updates.jenkins.io/update-center.actual.json",
                 opener=failing_opener,
+            )
+
+    def test_malformed_fetched_json_is_actionable(self) -> None:
+        class Response:
+            def __enter__(self) -> Response:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b"not-json"
+
+        with self.assertRaisesRegex(PluginAuditError, "not valid JSON"):
+            jenkins_plugins.fetch_update_center(
+                "https://updates.jenkins.io/update-center.actual.json",
+                opener=lambda *args, **kwargs: Response(),
             )
 
     def test_audit_accepts_exact_resolution_without_warnings(self) -> None:

@@ -131,17 +131,15 @@ def resolve_plugins(
     command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> dict[str, str]:
     image = extract_base_image(dockerfile)
-    mount = f"{requirements.resolve()}:/tmp/plugins.txt:ro"
+    requirements_pins = read_pins(requirements)
     command = [
         "docker",
         "run",
         "--rm",
-        "--volume",
-        mount,
         image,
         "jenkins-plugin-cli",
-        "--plugin-file",
-        "/tmp/plugins.txt",
+        "--plugins",
+        *(f"{name}:{version}" for name, version in requirements_pins.items()),
         "--latest=true",
         "--no-download",
         "--list",
