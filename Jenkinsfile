@@ -139,10 +139,10 @@ pipeline {
               }
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 rust:1.95.0-slim-bookworm \
-                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev libcurl4-openssl-dev libsasl2-dev ripgrep && cargo test -p atheros-sensor'
+                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev libcurl4-openssl-dev libsasl2-dev libpcap-dev ripgrep && cargo test -p atheros-sensor'
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 rust:1.95.0-slim-bookworm \
-                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev libcurl4-openssl-dev libsasl2-dev ripgrep make && make dependency-boundaries'
+                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev libcurl4-openssl-dev libsasl2-dev libpcap-dev ripgrep make && make dependency-boundaries'
             '''
           }
         }
