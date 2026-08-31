@@ -99,14 +99,12 @@ pipeline {
                 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
                   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
               }
-              docker_cmd run --rm \
-                -v "$PWD:/workspace" -w /workspace \
+              tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 golang:1.26-bookworm \
-                make platform-sync-lint
-              docker_cmd run --rm \
-                -v "$PWD:/workspace" -w /workspace \
+                sh -c 'tar -xf - && make platform-sync-lint'
+              tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 golang:1.26-bookworm \
-                make atheros-search-test
+                sh -c 'tar -xf - && make atheros-search-test'
             '''
           }
         }
@@ -119,16 +117,14 @@ pipeline {
                 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
                   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
               }
-              docker_cmd run --rm \
-                -v "$PWD:/workspace" -w /workspace/apps/schema-migrator \
+              tar -cf - . | docker_cmd run --rm -i -w /workspace/apps/schema-migrator \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
-                sh -c 'apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt -Dsbt.supershell=false "Test / testFull"'
-              docker_cmd run --rm \
-                -v "$PWD:/workspace" -w /workspace/services/octopus \
+                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt -Dsbt.supershell=false "Test / testFull"'
+              tar -cf - . | docker_cmd run --rm -i -w /workspace/services/octopus \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
-                sh -c 'apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt test'
+                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt test'
             '''
           }
         }
@@ -141,14 +137,12 @@ pipeline {
                 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
                   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
               }
-              docker_cmd run --rm \
-                -v "$PWD:/workspace" -w /workspace \
+              tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 rust:1.95.0-slim-bookworm \
-                sh -c 'apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev ripgrep && cargo test -p atheros-sensor'
-              docker_cmd run --rm \
-                -v "$PWD:/workspace" -w /workspace \
+                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev ripgrep && cargo test -p atheros-sensor'
+              tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 rust:1.95.0-slim-bookworm \
-                sh -c 'apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev ripgrep make && make dependency-boundaries'
+                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev ripgrep make && make dependency-boundaries'
             '''
           }
         }
