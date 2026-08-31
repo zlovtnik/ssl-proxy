@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import shutil
 import subprocess
@@ -742,6 +743,47 @@ def _check_prod_pgbouncer_external_postgres(
             errors.append(
                 f"{relative}: PgBouncer must use the pinned image's numeric postgres UID/GID 70"
             )
+    template = _mapping(_path(deployments[0], "spec", "template"))
+    if not _mapping(_metadata(template).get("annotations")).get(
+        "ssl-proxy.io/pgbouncer-auth-reload-revision"
+    ):
+        errors.append(f"{relative}: PgBouncer must carry the auth reload pod revision")
+    if pod_spec.get("shareProcessNamespace") is not True:
+        errors.append(f"{relative}: PgBouncer auth reload requires a shared process namespace")
+    reloaders = [
+        _mapping(container)
+        for container in _list(pod_spec.get("containers"))
+        if _mapping(container).get("name") == "auth-file-reloader"
+    ]
+    if len(reloaders) != 1:
+        errors.append(f"{relative}: expected one PgBouncer auth-file reloader")
+    else:
+        reloader = reloaders[0]
+        reloader_security = _mapping(reloader.get("securityContext"))
+        capabilities = _mapping(reloader_security.get("capabilities"))
+        if (
+            reloader_security.get("runAsNonRoot") is not True
+            or reloader_security.get("runAsUser") != 70
+            or reloader_security.get("runAsGroup") != 70
+            or reloader_security.get("readOnlyRootFilesystem") is not True
+            or reloader_security.get("allowPrivilegeEscalation") is not False
+            or _list(capabilities.get("drop")) != ["ALL"]
+            or capabilities.get("add")
+        ):
+            errors.append(f"{relative}: PgBouncer auth-file reloader is not least privilege")
+        mounts = _list(reloader.get("volumeMounts"))
+        if mounts != [
+            {"name": "users", "mountPath": "/etc/pgbouncer/users", "readOnly": True}
+        ]:
+            errors.append(
+                f"{relative}: PgBouncer auth-file reloader may mount only users read-only"
+            )
+        reloader_script = "\n".join(str(arg) for arg in _list(reloader.get("args")))
+        for required in ("sha256sum", "stable", "kill -HUP", "userlist.txt"):
+            if required not in reloader_script:
+                errors.append(
+                    f"{relative}: PgBouncer auth-file reloader must contain {required}"
+                )
     volumes = {
         str(_mapping(volume).get("name")): _mapping(volume)
         for volume in _list(pod_spec.get("volumes"))
@@ -1187,10 +1229,12 @@ def _check_cloudflared_probes(rendered: Documents | str, relative: str) -> list[
 
 
 def _check_cluster_rbac_names(rendered: Documents | str, relative: str) -> list[str]:
+    allowed_names = {"ssl-proxy-production-gate-wiretrap"}
     return [
         f"{relative}: {document.get('kind')}/{_metadata(document).get('name')} must start ssl-proxy-telemetry-"
         for document in _documents(rendered)
         if document.get("kind") in {"ClusterRole", "ClusterRoleBinding"}
+        and str(_metadata(document).get("name", "")) not in allowed_names
         and not str(_metadata(document).get("name", "")).startswith("ssl-proxy-telemetry-")
     ]
 
@@ -1808,6 +1852,120 @@ def _check_postgres_tls_contract(
     return errors
 
 
+def _check_postgres_pool_readiness(
+    rendered: Documents | str, relative: str, expected_contract_sha256: str
+) -> list[str]:
+    documents = _documents(rendered)
+    errors: list[str] = []
+    preflights = _find(documents, "Job", "ssl-proxy-platform-input-preflight")
+    if len(preflights) != 1:
+        errors.append(f"{relative}: expected one platform input preflight Job")
+    else:
+        preflight = preflights[0]
+        annotations = _mapping(_metadata(preflight).get("annotations"))
+        if (
+            annotations.get("argocd.argoproj.io/hook") != "PreSync"
+            or annotations.get("argocd.argoproj.io/sync-wave") != "-2"
+        ):
+            errors.append(f"{relative}: platform input preflight must be a wave -2 PreSync hook")
+        containers = _pod_containers(preflight)
+        if len(containers) != 1:
+            errors.append(f"{relative}: platform input preflight must have one container")
+        else:
+            container = containers[0]
+            script = "\n".join(str(arg) for arg in _list(container.get("args")))
+            for required in (
+                '"$PLATFORM_READY" = "true"',
+                '"$PLATFORM_CONTRACT_SHA256" = "$EXPECTED_CONTRACT_SHA256"',
+                "PLATFORM_LAST_SUCCESS_UNIX",
+            ):
+                if required not in script:
+                    errors.append(
+                        f"{relative}: platform input preflight lost {required}"
+                    )
+            environment = {
+                str(_mapping(entry).get("name")): _mapping(entry)
+                for entry in _list(container.get("env"))
+            }
+            if _mapping(environment.get("EXPECTED_CONTRACT_SHA256")).get(
+                "value"
+            ) != expected_contract_sha256:
+                errors.append(
+                    f"{relative}: platform input preflight contract checksum is stale"
+                )
+            for variable, key in (
+                ("PLATFORM_READY", "ready"),
+                ("PLATFORM_CONTRACT_SHA256", "contract-sha256"),
+                ("PLATFORM_LAST_SUCCESS_UNIX", "last-success-unix"),
+            ):
+                reference = _mapping(
+                    _path(environment.get(variable, {}), "valueFrom", "configMapKeyRef")
+                )
+                if reference != {"name": "platform-ready", "key": key}:
+                    errors.append(
+                        f"{relative}: {variable} must read platform-ready/{key}"
+                    )
+
+    readiness_jobs = _find(documents, "Job", "ssl-proxy-postgres-pool-readiness")
+    if len(readiness_jobs) != 1:
+        errors.append(f"{relative}: expected one pooled PostgreSQL readiness Job")
+        return errors
+    readiness = readiness_jobs[0]
+    annotations = _mapping(_metadata(readiness).get("annotations"))
+    if (
+        annotations.get("argocd.argoproj.io/hook") != "Sync"
+        or annotations.get("argocd.argoproj.io/sync-wave") != "2"
+    ):
+        errors.append(f"{relative}: pooled PostgreSQL readiness must be a wave 2 Sync hook")
+    containers = _pod_containers(readiness)
+    if len(containers) != 1:
+        errors.append(f"{relative}: pooled PostgreSQL readiness must have one container")
+        return errors
+    container = containers[0]
+    script = "\n".join(str(arg) for arg in _list(container.get("args")))
+    for role in (
+        "atheros_search_runtime",
+        "octopus_runtime",
+        "schema_migrator_runtime",
+    ):
+        if script.count(f"check_login {role} ") != 1:
+            errors.append(f"{relative}: pooled PostgreSQL readiness must test {role}")
+    for required in (
+        "--set=ON_ERROR_STOP=1",
+        "current_user = session_user",
+        "current_database()",
+    ):
+        if required not in script:
+            errors.append(f"{relative}: pooled PostgreSQL readiness lost {required}")
+    environment = {
+        str(_mapping(entry).get("name")): _mapping(entry).get("value")
+        for entry in _list(container.get("env"))
+    }
+    expected_environment = {
+        "PGHOST": "postgres-pgbouncer",
+        "PGPORT": "5432",
+        "PGDATABASE": "sync",
+        "PGSSLMODE": "verify-full",
+        "PGSSLROOTCERT": "/var/run/pgbouncer-tls/ca.crt",
+    }
+    if environment != expected_environment:
+        errors.append(f"{relative}: pooled PostgreSQL readiness must verify PgBouncer TLS")
+    volumes = {
+        str(_mapping(volume).get("name")): _mapping(_mapping(volume).get("secret"))
+        for volume in _list(_path(readiness, "spec", "template", "spec", "volumes"))
+    }
+    expected_secrets = {
+        "pgbouncer-tls": "pgbouncer-listener-tls",
+        "atheros-search-password": "postgres-atheros-search",
+        "octopus-password": "postgres-octopus",
+        "schema-migrator-password": "postgres-schema-migrator",
+    }
+    for volume, secret in expected_secrets.items():
+        if _mapping(volumes.get(volume)).get("secretName") != secret:
+            errors.append(f"{relative}: pooled PostgreSQL readiness {volume} must use {secret}")
+    return errors
+
+
 def _schema_migrator_contract_marker(root: Path, errors: list[str]) -> str | None:
     relative = "sql/postgres/schema_migrator/manifest.yaml"
     text = _read_required(root, relative, errors, "manifest")
@@ -1824,6 +1982,38 @@ def _schema_migrator_contract_marker(root: Path, errors: list[str]) -> str | Non
         return None
     version_text = f"{version:03d}" if isinstance(version, int) else str(version)
     return f"schema-migrator-{version_text}-{checksum}"
+
+
+def _check_schema_migrator_source_contract(root: Path) -> list[str]:
+    contracts = {
+        "apps/schema-migrator/src/main/scala/com/sslproxy/schema/store/StateDatabase.scala": (
+            "org.postgresql.Driver",
+            "setDriverClassName(Driver)",
+            "setJdbcUrl(config.url.trim)",
+        ),
+        "apps/schema-migrator/src/main/scala/com/sslproxy/schema/config/MigratorConfig.scala": (
+            "jdbc:postgresql://",
+            "currentSchema=schema_migrator",
+        ),
+    }
+    errors: list[str] = []
+    for relative, required in contracts.items():
+        path = root / relative
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as error:
+            errors.append(f"{relative}: cannot read schema-migrator PostgreSQL contract: {error}")
+            continue
+        for token in required:
+            if token not in text:
+                errors.append(
+                    f"{relative}: schema-migrator PostgreSQL contract lost {token!r}"
+                )
+        if "com.mysql.cj.jdbc.Driver" in text or "jdbc:mysql://" in text:
+            errors.append(
+                f"{relative}: schema-migrator state storage must not use MySQL/TiDB JDBC"
+            )
+    return errors
 
 
 def _octopus_contract_checksum(root: Path, errors: list[str]) -> str | None:
@@ -2310,6 +2500,17 @@ def _check_namespace_deletion_protection(document: Mapping[str, Any], relative: 
 def check_repository(root: Path, executable: str) -> list[str]:
     errors: list[str] = []
     rendered_kustomizations: dict[str, Documents] = {}
+    try:
+        platform_contract_sha256 = hashlib.sha256(
+            (root / "cyber-stack/platform-input-contract.yaml").read_bytes()
+        ).hexdigest()
+    except OSError as error:
+        errors.append(
+            "cyber-stack/platform-input-contract.yaml: cannot compute contract checksum: "
+            f"{error}"
+        )
+        platform_contract_sha256 = ""
+    errors.extend(_check_schema_migrator_source_contract(root))
     expected_schema_marker = _schema_migrator_contract_marker(root, errors)
     expected_octopus_checksum = _octopus_contract_checksum(root, errors)
 
@@ -2382,6 +2583,14 @@ def check_repository(root: Path, executable: str) -> list[str]:
                 rendered_kustomizations[prod_data_plane], prod_data_plane
             )
         )
+        if platform_contract_sha256:
+            errors.extend(
+                _check_postgres_pool_readiness(
+                    rendered_kustomizations[prod_data_plane],
+                    prod_data_plane,
+                    platform_contract_sha256,
+                )
+            )
     if expected_schema_marker is not None:
         for environment in ENVIRONMENTS:
             relative = f"cyber-stack/matrix/{environment}/data-plane"

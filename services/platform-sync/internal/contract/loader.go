@@ -165,10 +165,10 @@ func Load(path string) (*Contract, error) {
 		Readiness: Readiness{
 			ConfigMapName: getStringMap(spec, "readiness", "configMapName"),
 		},
-		Inputs:      inputs,
-		Validation:  v,
-		Raw:         raw,
-		SHA256:      fmt.Sprintf("%x", sha256.Sum256(data)),
+		Inputs:     inputs,
+		Validation: v,
+		Raw:        raw,
+		SHA256:     fmt.Sprintf("%x", sha256.Sum256(data)),
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err

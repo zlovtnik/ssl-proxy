@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.parse
@@ -105,9 +106,21 @@ def github_request(token: str, repository: str, method: str, path: str, payload:
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")[:500]
         raise RuntimeError(f"GitHub API {method} {path} failed with {error.code}: {detail}") from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(
+            f"GitHub API {method} {path} request failed: {error.reason}"
+        ) from error
+    except TimeoutError as error:
+        raise RuntimeError(f"GitHub API {method} {path} timed out") from error
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"GitHub API {method} {path} returned invalid JSON"
+        ) from error
 
 
 def promote(manifest_path: Path, repository_root: Path, repository: str, token: str) -> str:
+    if run(("git", "status", "--porcelain", "--untracked-files=all"), repository_root):
+        raise RuntimeError("promotion requires a clean dedicated checkout")
     manifest = load_release_manifest(manifest_path, repository_root)
     for image in manifest.images:
         run(
@@ -119,7 +132,7 @@ def promote(manifest_path: Path, repository_root: Path, repository: str, token: 
             ),
             repository_root,
         )
-    changed = run(("git", "diff", "--name-only"), repository_root).splitlines()
+    changed = run(("git", "diff", "--name-only", "HEAD", "--"), repository_root).splitlines()
     allowed = {
         "cyber-stack/matrix/prod/app-stack/kustomization.yaml",
         "cyber-stack/matrix/prod/data-plane/kustomization.yaml",
@@ -196,7 +209,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         print(promote(arguments.manifest, arguments.repository_root.resolve(), arguments.github_repository, token))
     except (ImageContractError, RuntimeError) as error:
-        print(f"promotion failed: {error}", file=os.sys.stderr)
+        print(f"promotion failed: {error}", file=sys.stderr)
         return 1
     return 0
 

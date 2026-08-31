@@ -464,6 +464,8 @@ def validate_arguments(arguments: argparse.Namespace) -> None:
         raise RegistryCleanupError(
             f"--apply requires --confirm {CONFIRMATION}"
         )
+    if arguments.apply and arguments.plain_http:
+        raise RegistryCleanupError("--apply requires an HTTPS registry")
     if arguments.apply and arguments.skip_live_cluster:
         raise RegistryCleanupError(
             "--apply requires live Kubernetes digest protection"

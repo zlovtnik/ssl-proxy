@@ -219,7 +219,7 @@ registry-recreate: require-registry
 	export JENKINS_URL="$${JENKINS_URL:-http://127.0.0.1:8083/}"; \
 	export JENKINS_PROD_READONLY_KUBECONFIG_FILE="$${JENKINS_PROD_READONLY_KUBECONFIG_FILE:-/dev/null}"; \
 	docker compose -f docker-compose.ci.yaml up -d --force-recreate --no-deps registry; \
-	docker compose -f docker-compose.ci.yaml exec registry env | \
+	docker compose -f docker-compose.ci.yaml exec -T registry env | \
 		grep -qx 'REGISTRY_STORAGE_DELETE_ENABLED=true'
 
 registry-gc: require-registry

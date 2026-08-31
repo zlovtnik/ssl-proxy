@@ -34,16 +34,24 @@ pipeline {
           env.IS_PROMOTION_COMMIT = sh(
             script: '''
               set -eu
-              git rev-parse HEAD^ >/dev/null 2>&1 || { printf false; exit 0; }
-              found=0
-              for path in $(git diff --name-only HEAD^ HEAD); do
-                found=1
-                case "$path" in
-                  cyber-stack/matrix/prod/app-stack/kustomization.yaml|cyber-stack/matrix/prod/data-plane/kustomization.yaml) ;;
-                  *) printf false; exit 0 ;;
-                esac
-              done
-              [ "$found" -eq 1 ] && printf true || printf false
+              case "$(git log -1 --pretty=%B)" in
+                *'[digest-promotion]'*) ;;
+                *) printf false; exit 0 ;;
+              esac
+              git rev-parse HEAD^ >/dev/null 2>&1 || {
+                echo 'marked digest promotion commit has no parent' >&2
+                exit 1
+              }
+              changed_paths="$(git diff --name-only HEAD^ HEAD)"
+              [ -n "$changed_paths" ] || { printf false; exit 0; }
+              unexpected_paths="$(printf '%s\n' "$changed_paths" | grep -Ev \
+                '^(cyber-stack/matrix/prod/app-stack/kustomization.yaml|cyber-stack/matrix/prod/data-plane/kustomization.yaml)$' || true)"
+              [ -z "$unexpected_paths" ] || {
+                echo "marked digest promotion changed unexpected paths:" >&2
+                printf '%s\n' "$unexpected_paths" >&2
+                exit 1
+              }
+              printf true
             ''',
             returnStdout: true
           ).trim()
@@ -153,7 +161,16 @@ pipeline {
         withCredentials([
           string(credentialsId: 'ssl-proxy-github-promotion-token', variable: 'GITHUB_TOKEN')
         ]) {
-          sh 'python3 scripts/promote_release.py --manifest "$RELEASE_MANIFEST"'
+          sh '''
+            set -eu
+            manifest_path="$(cd "$(dirname "$RELEASE_MANIFEST")" && pwd)/$(basename "$RELEASE_MANIFEST")"
+            promotion_dir="$(mktemp -d "$WORKSPACE/.digest-promotion.XXXXXX")"
+            trap 'rm -rf -- "$promotion_dir"' EXIT HUP INT TERM
+            origin_url="$(git remote get-url origin)"
+            git clone --no-local --branch main --single-branch "$origin_url" "$promotion_dir"
+            cd "$promotion_dir"
+            python3 scripts/promote_release.py --manifest "$manifest_path"
+          '''
         }
       }
     }

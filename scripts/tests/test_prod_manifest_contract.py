@@ -84,7 +84,10 @@ kind: Deployment
 metadata: {name: postgres-pgbouncer}
 spec:
   template:
+    metadata:
+      annotations: {ssl-proxy.io/pgbouncer-auth-reload-revision: "1"}
     spec:
+      shareProcessNamespace: true
       initContainers:
         - name: render-pgbouncer-config
           image: busybox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -99,6 +102,17 @@ spec:
       containers:
         - name: pgbouncer
           securityContext: {runAsNonRoot: true, runAsUser: 70, runAsGroup: 70}
+        - name: auth-file-reloader
+          args: ["sha256sum stable kill -HUP userlist.txt"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: users, mountPath: /etc/pgbouncer/users, readOnly: true}
       volumes:
         - {name: generated-config, emptyDir: {}}
         - {name: users, secret: {secretName: pgbouncer-runtime-users}}
@@ -195,6 +209,11 @@ class ProductionManifestContractTest(unittest.TestCase):
         pgbouncer_container["securityContext"].pop("runAsUser")
         errors = check_gitops._check_prod_pgbouncer_external_postgres(rendered, "prod")
         self.assertTrue(any("numeric postgres UID/GID 70" in error for error in errors))
+
+        pgbouncer_container["securityContext"]["runAsUser"] = 70
+        rendered[0]["spec"]["template"]["spec"]["shareProcessNamespace"] = False
+        errors = check_gitops._check_prod_pgbouncer_external_postgres(rendered, "prod")
+        self.assertTrue(any("shared process namespace" in error for error in errors))
 
     def test_keycloak_bootstrap_runs_after_home_preparation(self) -> None:
         rendered = keycloak()

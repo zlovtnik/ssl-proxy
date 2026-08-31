@@ -55,7 +55,7 @@ func (f *fakeObjectClient) Update(_ context.Context, resource schema.GroupVersio
 
 func TestWriteAllDryRunPreflightsEveryObjectWithoutMutation(t *testing.T) {
 	client, c, data := writerFixture()
-	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, true, time.Unix(1234, 0)); err != nil {
+	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, update := range client.updates {
@@ -76,7 +76,7 @@ func TestWriteAllRollsBackEarlierUpdatesAfterApplyFailure(t *testing.T) {
 	client, c, data := writerFixture()
 	client.failName = "two"
 	t.Setenv("SYNC_SNAPSHOT_PATH", filepath.Join(t.TempDir(), "snapshot.json"))
-	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, false, time.Unix(1234, 0)); err == nil {
+	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, false); err == nil {
 		t.Fatal("injected apply failure was not returned")
 	}
 	firstData, found, nestedErr := unstructured.NestedStringMap(client.objects["secrets/one"].Object, "data")
@@ -108,17 +108,23 @@ func TestDesiredObjectCopiesOnlyDeclaredKeys(t *testing.T) {
 func TestWriteAllPublishesReadinessLast(t *testing.T) {
 	client, c, data := writerFixture()
 	t.Setenv("SYNC_SNAPSHOT_PATH", filepath.Join(t.TempDir(), "snapshot.json"))
-	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, false, time.Unix(1234, 0)); err != nil {
+	before := time.Now().UTC().Unix()
+	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, false); err != nil {
 		t.Fatal(err)
 	}
-	if got := client.updates[len(client.updates)-1]; got.name != "platform-ready" || got.dryRun {
+	after := time.Now().UTC().Unix()
+	if got := client.updates[len(client.updates)-2]; got.name != "platform-ready" || got.dryRun {
 		t.Fatalf("readiness was not the final real update: %#v", client.updates)
 	}
 	values, found, err := unstructured.NestedStringMap(client.objects["configmaps/platform-ready"].Object, "data")
 	if err != nil || !found {
 		t.Fatalf("read readiness data: found=%t err=%v", found, err)
 	}
-	if values["ready"] != "true" || values["contract-sha256"] != "abc123" || values["last-success-unix"] != "1234" {
+	timestamp, parseErr := strconv.ParseInt(values["last-success-unix"], 10, 64)
+	if parseErr != nil || timestamp < before || timestamp > after {
+		t.Fatalf("readiness timestamp was not captured by the final update: %#v", values)
+	}
+	if values["ready"] != "true" || values["contract-sha256"] != "abc123" {
 		t.Fatalf("unexpected readiness data: %#v", values)
 	}
 }

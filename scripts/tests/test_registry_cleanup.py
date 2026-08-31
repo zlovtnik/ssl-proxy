@@ -28,7 +28,7 @@ def digest(character: str) -> str:
 
 
 class RegistryCleanupTest(unittest.TestCase):
-    def test_apply_accepts_explicit_plain_http_registry(self) -> None:
+    def test_apply_rejects_explicit_plain_http_registry(self) -> None:
         arguments = parser().parse_args(
             [
                 "--registry",
@@ -40,7 +40,8 @@ class RegistryCleanupTest(unittest.TestCase):
             ]
         )
 
-        validate_arguments(arguments)
+        with self.assertRaisesRegex(RegistryCleanupError, "HTTPS registry"):
+            validate_arguments(arguments)
 
     def test_retention_protects_pins_latest_recent_and_unknown_dates(self) -> None:
         now = dt.datetime(2026, 8, 30, tzinfo=dt.timezone.utc)

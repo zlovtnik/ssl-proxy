@@ -61,6 +61,62 @@ main --reg-domain ca --channel 11 wlxc01c3038d5e8
             ],
         )
 
+    def test_busy_channel_update_is_idempotent_when_interface_is_already_ready(self) -> None:
+        harness = r'''
+source "$1"
+require_root() { :; }
+require_command() { :; }
+ip() { return 0; }
+iw() {
+    if [[ "$*" == "dev wlan0 info" ]]; then
+        printf 'type monitor\nchannel 6 (2437 MHz)\n'
+        return 0
+    fi
+    if [[ "$*" == "dev wlan0 set channel 6" ]]; then
+        return 1
+    fi
+    return 0
+}
+main wlan0
+'''
+        completed = subprocess.run(
+            ["bash", "-c", harness, "prep-ath-test", str(SCRIPT)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn("Channel update was busy", completed.stdout)
+
+    def test_busy_channel_update_reports_ownership_when_interface_is_not_ready(self) -> None:
+        harness = r'''
+source "$1"
+require_root() { :; }
+require_command() { :; }
+ip() { return 0; }
+iw() {
+    if [[ "$*" == "dev wlan0 info" ]]; then
+        printf 'type managed\nchannel 1 (2412 MHz)\n'
+        return 0
+    fi
+    if [[ "$*" == "dev wlan0 set channel 6" ]]; then
+        return 1
+    fi
+    return 0
+}
+main wlan0
+'''
+        completed = subprocess.run(
+            ["bash", "-c", harness, "prep-ath-test", str(SCRIPT)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertNotEqual(0, completed.returncode)
+        self.assertIn("may be owned by another process", completed.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

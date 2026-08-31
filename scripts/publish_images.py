@@ -92,6 +92,12 @@ def _run_command(command: Sequence[str], repository_root: Path) -> int:
     return subprocess.run(command, cwd=repository_root, check=False).returncode
 
 
+def non_empty_value(value: str) -> str:
+    if not value.strip():
+        raise argparse.ArgumentTypeError("must not be empty")
+    return value
+
+
 def publish_environment(
     repository_root: Path,
     settings: PublishSettings,
@@ -181,7 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--atheros-search-ui-keycloak-client-id", default="atheros-search-ui"
     )
     parser.add_argument("--make-command", default="make")
-    parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--source-revision", required=True, type=non_empty_value)
     parser.add_argument("--max-workers", type=int, default=1)
     parser.add_argument("--manifest-out", type=Path)
     return parser

@@ -4,17 +4,34 @@ import json
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY_ROOT / "scripts"))
 
 from image_contract import FIRST_PARTY_SERVICES, ImageContractError  # noqa: E402
-from promote_release import load_release_manifest  # noqa: E402
-from test_publish_images import PIN, write_contract  # noqa: E402
+from promote_release import github_request, load_release_manifest  # noqa: E402
+from scripts.tests.test_publish_images import PIN, write_contract  # noqa: E402
 
 
 class PromoteReleaseTest(unittest.TestCase):
+    def test_github_transport_failures_are_contextual_runtime_errors(self) -> None:
+        with mock.patch(
+            "promote_release.urllib.request.urlopen",
+            side_effect=urllib.error.URLError("offline"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "request failed: offline"):
+                github_request("token", "owner/repository", "GET", "/pulls")
+
+        with mock.patch(
+            "promote_release.urllib.request.urlopen",
+            side_effect=TimeoutError(),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
+                github_request("token", "owner/repository", "GET", "/pulls")
+
     def test_manifest_requires_all_services_and_exact_repositories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

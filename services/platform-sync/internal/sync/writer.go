@@ -47,10 +47,10 @@ func WriteAll(ctx context.Context, logger *log.Logger, c *contract.Contract, sec
 	if err != nil {
 		return fmt.Errorf("kubernetes client: %w", err)
 	}
-	return writeAllWithClient(ctx, logger, client, c, secretData, lockTTL, dryRun, time.Now().UTC())
+	return writeAllWithClient(ctx, logger, client, c, secretData, lockTTL, dryRun)
 }
 
-func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectClient, c *contract.Contract, secretData map[string]map[string][]byte, lockTTL int, dryRun bool, completedAt time.Time) error {
+func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectClient, c *contract.Contract, secretData map[string]map[string][]byte, lockTTL int, dryRun bool) error {
 	lock, err := acquireLock(ctx, logger, client, c.Namespace, lockTTL, dryRun)
 	if err != nil {
 		return fmt.Errorf("acquire lock: %w", err)
@@ -62,7 +62,7 @@ func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectCl
 	inputs := append(append([]contract.Input{}, c.Inputs...), contract.Input{
 		Kind: "ConfigMap", Name: c.Readiness.ConfigMapName, Keys: readinessKeys,
 	})
-	desired, previous, err := prepareObjects(ctx, client, c, secretData, completedAt)
+	desired, previous, err := prepareObjects(ctx, client, c, secretData)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectCl
 	}
 
 	applied := make([]int, 0, len(desired))
-	for i, input := range inputs {
+	for i, input := range c.Inputs {
 		updated, updateErr := client.Update(ctx, resourceForKind(input.Kind), c.Namespace, desired[i], metav1.UpdateOptions{
 			FieldManager: fieldManager,
 		})
@@ -98,10 +98,25 @@ func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectCl
 		logger.Info("wrote object", "kind", input.Kind, "name", input.Name)
 	}
 
+	readinessIndex := len(c.Inputs)
+	readinessInput := inputs[readinessIndex]
+	readiness, err := readinessObject(desired[readinessIndex], readinessInput, c.SHA256)
+	if err != nil {
+		rollbackErr := rollbackObjects(ctx, logger, client, c.Namespace, inputs, previous, applied)
+		return errors.Join(err, rollbackErr)
+	}
+	updated, updateErr := client.Update(ctx, configMapResource, c.Namespace, readiness, metav1.UpdateOptions{FieldManager: fieldManager})
+	if updateErr != nil {
+		rollbackErr := rollbackObjects(ctx, logger, client, c.Namespace, inputs, previous, applied)
+		return errors.Join(fmt.Errorf("write ConfigMap/%s: %w", readinessInput.Name, updateErr), rollbackErr)
+	}
+	desired[readinessIndex] = updated
+	logger.Info("wrote object", "kind", readinessInput.Kind, "name", readinessInput.Name)
+
 	return nil
 }
 
-func prepareObjects(ctx context.Context, client objectClient, c *contract.Contract, secretData map[string]map[string][]byte, completedAt time.Time) ([]*unstructured.Unstructured, []*unstructured.Unstructured, error) {
+func prepareObjects(ctx context.Context, client objectClient, c *contract.Contract, secretData map[string]map[string][]byte) ([]*unstructured.Unstructured, []*unstructured.Unstructured, error) {
 	desired := make([]*unstructured.Unstructured, 0, len(c.Inputs)+1)
 	previous := make([]*unstructured.Unstructured, 0, len(c.Inputs)+1)
 	for _, input := range c.Inputs {
@@ -129,7 +144,7 @@ func prepareObjects(ctx context.Context, client objectClient, c *contract.Contra
 	values := map[string][]byte{
 		"ready":             []byte("true"),
 		"contract-sha256":   []byte(c.SHA256),
-		"last-success-unix": []byte(fmt.Sprint(completedAt.Unix())),
+		"last-success-unix": []byte("0"),
 	}
 	ready, err := desiredObject(current, readinessInput, values)
 	if err != nil {
@@ -138,6 +153,14 @@ func prepareObjects(ctx context.Context, client objectClient, c *contract.Contra
 	previous = append(previous, current.DeepCopy())
 	desired = append(desired, ready)
 	return desired, previous, nil
+}
+
+func readinessObject(current *unstructured.Unstructured, input contract.Input, contractSHA256 string) (*unstructured.Unstructured, error) {
+	return desiredObject(current, input, map[string][]byte{
+		"ready":             []byte("true"),
+		"contract-sha256":   []byte(contractSHA256),
+		"last-success-unix": []byte(fmt.Sprint(time.Now().UTC().Unix())),
+	})
 }
 
 func desiredObject(current *unstructured.Unstructured, input contract.Input, values map[string][]byte) (*unstructured.Unstructured, error) {

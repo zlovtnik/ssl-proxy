@@ -22,6 +22,11 @@ APPLICATIONS = (
     "ssl-proxy-prod-data-plane",
     "ssl-proxy-prod-app-stack",
 )
+PHASE_BUDGETS_SECONDS = {
+    "ssl-proxy-prod-bootstrap": 10 * 60,
+    "ssl-proxy-prod-data-plane": 15 * 60,
+    "ssl-proxy-prod-app-stack": 60 * 60,
+}
 DEFAULT_NAMESPACE = "argocd"
 PRODUCTION_NAMESPACE = "prod-ssl-proxy"
 EXPECTED_KUBERNETES_API = "https://192.168.1.242:6443"
@@ -33,7 +38,7 @@ EXPECTED_APPLICATION_PATHS = {
     "ssl-proxy-prod-data-plane": "cyber-stack/matrix/prod/data-plane",
     "ssl-proxy-prod-app-stack": "cyber-stack/matrix/prod/app-stack",
 }
-DEFAULT_TIMEOUT = "30m"
+DEFAULT_TIMEOUT = "85m"
 DEFAULT_POLL_INTERVAL_SECONDS = 10.0
 KUBECTL_REQUEST_TIMEOUT = "10s"
 RBAC_MAX_WORKERS = 8
@@ -150,6 +155,7 @@ class ApplicationState:
     sync: str = "Unknown"
     health: str = "Unknown"
     operation_phase: str = "Unknown"
+    operation_revision: str = ""
     messages: tuple[str, ...] = ()
     query_error: str = ""
     repo_url: str = ""
@@ -165,13 +171,21 @@ class ApplicationState:
         expected_images: frozenset[str],
         verify_contract: bool = False,
     ) -> bool:
+        expected_repositories = {
+            image.split("@sha256:", 1)[0] for image in expected_images
+        }
+        reported_first_party_images = frozenset(
+            image
+            for image in self.images
+            if image.split("@sha256:", 1)[0] in expected_repositories
+        )
         contract_valid = not verify_contract or (
             self.repo_url == EXPECTED_REPOSITORY
             and self.target_revision == "main"
             and self.path == EXPECTED_APPLICATION_PATHS[self.name]
             and self.destination_server == "https://kubernetes.default.svc"
             and self.destination_namespace == PRODUCTION_NAMESPACE
-            and expected_images.issubset(self.images)
+            and reported_first_party_images == expected_images
         )
         return (
             not self.query_error
@@ -188,6 +202,8 @@ class ApplicationState:
             f"{self.name}: revision={self.revision} sync={self.sync} "
             f"health={self.health} operation={self.operation_phase}"
         )
+        if self.operation_revision:
+            detail += f" operationRevision={self.operation_revision}"
         if self.path:
             detail += f" path={self.path}"
         if self.messages:
@@ -212,11 +228,17 @@ class ProductionGate:
         expected_images: Mapping[str, frozenset[str]] | None = None,
         on_line: Callable[[str], None] | None = None,
         verify_wiretrap: bool = False,
+        phase_budgets: Mapping[str, float] | None = None,
     ) -> None:
         if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision) is None:
             raise ValueError("revision must be a full lowercase Git SHA")
         if timeout_seconds < 0 or poll_interval_seconds <= 0:
             raise ValueError("timeout must be non-negative and poll interval must be positive")
+        if phase_budgets is not None and (
+            set(phase_budgets) != set(APPLICATIONS)
+            or any(float(value) <= 0 for value in phase_budgets.values())
+        ):
+            raise ValueError("phase budgets must provide a positive value for every Application")
         self.revision = revision
         self.kubectl = kubectl
         self.kube_context = kube_context.strip()
@@ -230,6 +252,11 @@ class ProductionGate:
         self.expected_images = expected_images or {}
         self.on_line = on_line
         self.verify_wiretrap = verify_wiretrap
+        self.phase_budgets = (
+            {name: float(phase_budgets[name]) for name in APPLICATIONS}
+            if phase_budgets is not None
+            else None
+        )
         self.lines: list[str] = []
 
     def _append(self, *lines: str) -> None:
@@ -438,6 +465,9 @@ class ProductionGate:
             sync=str(sync.get("status", "Unknown")),
             health=str(health.get("status", "Unknown")),
             operation_phase=str(operation.get("phase", "Unknown")),
+            operation_revision=str(
+                _mapping(operation.get("syncResult")).get("revision", "")
+            ),
             messages=tuple(messages),
             repo_url=str(source.get("repoURL", "")),
             target_revision=str(source.get("targetRevision", "")),
@@ -449,13 +479,11 @@ class ProductionGate:
 
     def run(self) -> tuple[int, str]:
         self._append(
-            (
-                "PRODUCTION REVISION GATE (READ ONLY)",
-                f"Expected revision: {self.revision}",
-                f"Argo namespace:   {self.namespace}",
-                f"Timeout seconds:  {self.timeout_seconds:g}",
-                "Mutation policy:   Kubernetes and Argo CD reads only",
-            )
+            "PRODUCTION REVISION GATE (READ ONLY)",
+            f"Expected revision: {self.revision}",
+            f"Argo namespace:   {self.namespace}",
+            f"Timeout seconds:  {self.timeout_seconds:g}",
+            "Mutation policy:   Kubernetes and Argo CD reads only",
         )
         if self.verify_rbac and not self._verify_access():
             self._append("RESULT: FAILED (RBAC preflight)")
@@ -465,6 +493,8 @@ class ProductionGate:
             return 1, "\n".join(self.lines) + "\n"
 
         deadline = self.clock() + self.timeout_seconds
+        phase_index = 0
+        phase_started = self.clock()
         previous_snapshot: tuple[ApplicationState, ...] | None = None
         attempt = 0
         while True:
@@ -475,11 +505,24 @@ class ProductionGate:
                 self._append(f"Attempt {attempt}:")
                 self._append(*(f"  {state.diagnostic()}" for state in states))
                 previous_snapshot = states
+            ready = {
+                state.name: state.ready_for(
+                    self.revision,
+                    self.expected_images.get(state.name, frozenset()),
+                    state.name in self.expected_images,
+                )
+                for state in states
+            }
+            if all(ready.values()):
+                self._append(
+                    f"RESULT: PASSED (all Applications Synced/Healthy at {self.revision})"
+                )
+                return 0, "\n".join(self.lines) + "\n"
             terminal = next(
                 (
                     state
                     for state in states
-                    if state.revision == self.revision
+                    if (state.operation_revision or state.revision) == self.revision
                     and state.operation_phase in {"Error", "Failed"}
                 ),
                 None,
@@ -487,18 +530,24 @@ class ProductionGate:
             if terminal is not None:
                 self._append(f"RESULT: FAILED (terminal Argo operation: {terminal.diagnostic()})")
                 return 1, "\n".join(self.lines) + "\n"
-            if all(
-                state.ready_for(
-                    self.revision,
-                    self.expected_images.get(state.name, frozenset()),
-                    state.name in self.expected_images,
-                )
-                for state in states
-            ):
-                self._append(
-                    f"RESULT: PASSED (all Applications Synced/Healthy at {self.revision})"
-                )
-                return 0, "\n".join(self.lines) + "\n"
+            phase_remaining: float | None = None
+            if self.phase_budgets is not None:
+                now = self.clock()
+                while phase_index < len(APPLICATIONS) and ready[APPLICATIONS[phase_index]]:
+                    phase_name = APPLICATIONS[phase_index]
+                    self._append(f"Phase complete: {phase_name}")
+                    phase_index += 1
+                    phase_started = now
+                if phase_index < len(APPLICATIONS):
+                    phase_name = APPLICATIONS[phase_index]
+                    phase_budget = self.phase_budgets[phase_name]
+                    phase_remaining = phase_budget - (now - phase_started)
+                    if phase_remaining <= 0:
+                        self._append(
+                            f"RESULT: FAILED ({phase_name} exceeded its "
+                            f"{phase_budget:g}-second phase budget)"
+                        )
+                        return 1, "\n".join(self.lines) + "\n"
             remaining = deadline - self.clock()
             if remaining <= 0:
                 self._append(
@@ -507,7 +556,10 @@ class ProductionGate:
                 return 1, "\n".join(self.lines) + "\n"
             query_seconds = self.clock() - attempt_started
             delay = max(0.0, self.poll_interval_seconds - query_seconds)
-            self.sleeper(min(delay, remaining))
+            sleep_limit = remaining
+            if phase_remaining is not None:
+                sleep_limit = min(sleep_limit, phase_remaining)
+            self.sleeper(min(delay, sleep_limit))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -533,19 +585,18 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
+        contracts = load_image_contracts(arguments.repository_root, "prod")
         expected_images = {
-            "ssl-proxy-prod-bootstrap": frozenset(),
-            "ssl-proxy-prod-data-plane": frozenset(
+            application: frozenset(
                 contract.reference
-                for contract in load_image_contracts(arguments.repository_root, "prod")
-                if contract.slice_name == "data-plane"
-            ),
-            "ssl-proxy-prod-app-stack": frozenset(
-                contract.reference
-                for contract in load_image_contracts(arguments.repository_root, "prod")
-                if contract.slice_name == "app-stack"
-            ),
+                for contract in contracts
+                if contract.slice_name
+                == Path(EXPECTED_APPLICATION_PATHS[application]).name
+            )
+            for application in APPLICATIONS
         }
+        if set(expected_images) != set(APPLICATIONS):
+            raise ValueError("every production Application must have an image contract")
         gate = ProductionGate(
             arguments.revision,
             kubectl=arguments.kubectl,
@@ -556,6 +607,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_images=expected_images,
             on_line=lambda line: print(line, flush=True),
             verify_wiretrap=True,
+            phase_budgets=PHASE_BUDGETS_SECONDS,
         )
     except (ValueError, ImageContractError) as error:
         print(f"production-gate: {error}", file=sys.stderr)

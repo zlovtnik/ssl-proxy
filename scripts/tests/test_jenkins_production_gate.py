@@ -4,11 +4,39 @@ import re
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class JenkinsProductionGateTest(unittest.TestCase):
+    def test_promotion_commit_marker_cannot_bypass_the_observer(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        classification = pipeline[
+            pipeline.index("env.IS_PROMOTION_COMMIT") : pipeline.index(
+                "if (env.IS_MAIN != 'true')"
+            )
+        ]
+
+        self.assertIn("'[digest-promotion]'", classification)
+        self.assertIn("git diff --name-only HEAD^ HEAD", classification)
+        self.assertIn("marked digest promotion changed unexpected paths", classification)
+        self.assertIn("exit 1", classification)
+
+    def test_promotion_runs_in_a_clean_disposable_checkout(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        promotion = pipeline[
+            pipeline.index("stage('Open digest promotion PR')") : pipeline.index(
+                "stage('Observe Wiretrap production')"
+            )
+        ]
+
+        self.assertIn("mktemp -d", promotion)
+        self.assertIn("git clone --no-local --branch main --single-branch", promotion)
+        self.assertIn("trap 'rm -rf --", promotion)
+        self.assertIn('python3 scripts/promote_release.py --manifest "$manifest_path"', promotion)
+
     def test_pipeline_validates_before_bounded_publication(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
 
@@ -299,6 +327,23 @@ class JenkinsProductionGateTest(unittest.TestCase):
                 re.MULTILINE,
             ),
         )
+
+    def test_jcasc_declares_the_github_promotion_credential(self) -> None:
+        casc = yaml.safe_load(
+            (REPOSITORY_ROOT / "docker/jenkins/casc/jenkins.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        credentials = casc["credentials"]["system"]["domainCredentials"][0][
+            "credentials"
+        ]
+        identifiers = {
+            credential_type["id"]
+            for credential in credentials
+            for credential_type in credential.values()
+        }
+
+        self.assertIn("ssl-proxy-github-promotion-token", identifiers)
 
     def test_compose_hardens_dind_inotify_capacity(self) -> None:
         compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
