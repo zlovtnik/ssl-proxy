@@ -117,14 +117,14 @@ pipeline {
                 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
                   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
               }
-              tar -cf - . | docker_cmd run --rm -i -w /workspace/apps/schema-migrator \
+              tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
-                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt -Dsbt.supershell=false "Test / testFull"'
-              tar -cf - . | docker_cmd run --rm -i -w /workspace/services/octopus \
+                sh -c 'tar -xf - && cd apps/schema-migrator && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt -Dsbt.supershell=false "Test / testFull"'
+              tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
-                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt test'
+                sh -c 'tar -xf - && cd services/octopus && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt test'
             '''
           }
         }
