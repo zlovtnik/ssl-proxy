@@ -47,10 +47,21 @@ spec:
               fi
               [ -n "$device" ] || { echo "no ath9k wireless interface found" >&2; exit 1; }
               iw reg set "$ATH_SENSOR_REG_DOMAIN"
-              ip link set "$device" down
-              iw dev "$device" set type monitor
-              ip link set "$device" up
-              iw dev "$device" set channel "$ATH_SENSOR_CHANNEL"
+              interface_info="$(iw dev "$device" info 2>/dev/null || true)"
+              if ! printf '%s\n' "$interface_info" | grep -Eq '^[[:space:]]*type[[:space:]]+monitor([[:space:]]|$)'; then
+                ip link set "$device" down
+                iw dev "$device" set type monitor
+                ip link set "$device" up
+              fi
+              if ! iw dev "$device" set channel "$ATH_SENSOR_CHANNEL"; then
+                interface_info="$(iw dev "$device" info 2>/dev/null || true)"
+                printf '%s\n' "$interface_info" | grep -Eq '^[[:space:]]*type[[:space:]]+monitor([[:space:]]|$)' &&
+                  printf '%s\n' "$interface_info" | grep -Eq "^[[:space:]]*channel[[:space:]]+${ATH_SENSOR_CHANNEL}([[:space:]]|$)" || {
+                    echo "channel update failed: $device is not already in monitor mode on channel $ATH_SENSOR_CHANNEL; another process may own it" >&2
+                    exit 1
+                  }
+                echo "channel update was busy; $device is already configured"
+              fi
           env:
             - name: ATH_SENSOR_DEVICE
               value: ""

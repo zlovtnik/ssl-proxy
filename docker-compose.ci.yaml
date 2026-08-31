@@ -65,6 +65,7 @@ services:
     secrets:
       - jenkins-admin-password
       - jenkins-prometheus-password
+      - github-promotion-token
       - ssl-proxy-prod-readonly-kubeconfig
     volumes:
       - jenkins-home:/var/jenkins_home
@@ -92,5 +93,7 @@ secrets:
     file: ${JENKINS_ADMIN_PASSWORD_FILE:-./secrets/jenkins-admin-password}
   jenkins-prometheus-password:
     file: ${JENKINS_PROMETHEUS_PASSWORD_FILE:-./secrets/jenkins-prometheus-password}
+  github-promotion-token:
+    file: ${JENKINS_GITHUB_PROMOTION_TOKEN_FILE:?JENKINS_GITHUB_PROMOTION_TOKEN_FILE is required}
   ssl-proxy-prod-readonly-kubeconfig:
     file: ${JENKINS_PROD_READONLY_KUBECONFIG_FILE:?JENKINS_PROD_READONLY_KUBECONFIG_FILE is required}

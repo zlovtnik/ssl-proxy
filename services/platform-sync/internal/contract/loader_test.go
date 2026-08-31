@@ -16,6 +16,9 @@ func TestLoadParsesAndValidatesContract(t *testing.T) {
 	if loaded.Namespace != "prod-ssl-proxy" || loaded.Validation.Postgres.Port != 4000 {
 		t.Fatalf("unexpected parsed contract: %#v", loaded)
 	}
+	if loaded.Readiness.ConfigMapName != "platform-ready" || len(loaded.SHA256) != 64 {
+		t.Fatalf("readiness contract was not loaded: %#v", loaded.Readiness)
+	}
 }
 
 func TestLoadRejectsDuplicateInputsAndWrongAPIVersion(t *testing.T) {
@@ -43,6 +46,8 @@ kind: PlatformInputContract
 spec:
   environment: prod
   namespace: prod-ssl-proxy
+  readiness:
+    configMapName: platform-ready
   bootstrap:
     postgres:
       endpoint:

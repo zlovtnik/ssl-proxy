@@ -14,9 +14,12 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "scripts"))
 
 from production_gate import (  # noqa: E402
     APPLICATIONS,
+    EXPECTED_APPLICATION_PATHS,
+    EXPECTED_REPOSITORY,
     CommandResult,
     KUBECTL_REQUEST_TIMEOUT,
     RBAC_MAX_WORKERS,
+    ApplicationState,
     ProductionGate,
 )
 
@@ -32,12 +35,16 @@ def application(
     sync: str = "Synced",
     health: str = "Healthy",
     operation: str = "Succeeded",
+    operation_revision: str = "",
     message: str = "",
 ) -> dict[str, object]:
+    operation_state: dict[str, object] = {"phase": operation, "message": message}
+    if operation_revision:
+        operation_state["syncResult"] = {"revision": operation_revision}
     status: dict[str, object] = {
         "sync": {"revision": revision, "status": sync},
         "health": {"status": health},
-        "operationState": {"phase": operation, "message": message},
+        "operationState": operation_state,
     }
     return {
         "apiVersion": "argoproj.io/v1alpha1",
@@ -123,6 +130,7 @@ def run_gate(
     unexpectedly_allowed: set[tuple[str, str, str]] | None = None,
     query_seconds: float = 0.0,
     poll_interval: float = 1.0,
+    phase_budgets: Mapping[str, float] | None = None,
 ) -> tuple[int, str, FakeRunner, FakeClock]:
     clock = FakeClock()
     runner = FakeRunner(
@@ -140,12 +148,97 @@ def run_gate(
         runner=runner,
         clock=clock,
         sleeper=clock.sleep,
+        phase_budgets=phase_budgets,
     )
     returncode, report = gate.run()
     return returncode, report, runner, clock
 
 
 class ProductionGateTest(unittest.TestCase):
+    def test_gate_report_lines_remain_strings(self) -> None:
+        clock = FakeClock()
+        runner = FakeRunner((healthy_round(),), clock=clock)
+        gate = ProductionGate(
+            REVISION,
+            timeout_seconds=0,
+            verify_rbac=False,
+            runner=runner,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+
+        returncode, _ = gate.run()
+
+        self.assertEqual(0, returncode)
+        self.assertTrue(all(isinstance(line, str) for line in gate.lines))
+
+    def test_healthy_target_revision_wins_over_stale_failed_operation(self) -> None:
+        state = healthy_round()
+        state[APPLICATIONS[0]] = application(
+            APPLICATIONS[0],
+            operation="Failed",
+            operation_revision=STALE_REVISION,
+        )
+
+        returncode, report, _, _ = run_gate((state,))
+
+        self.assertEqual(0, returncode, report)
+
+    def test_terminal_operation_matches_sync_result_revision(self) -> None:
+        state = healthy_round()
+        state[APPLICATIONS[0]] = application(
+            APPLICATIONS[0],
+            revision=STALE_REVISION,
+            sync="OutOfSync",
+            health="Progressing",
+            operation="Failed",
+            operation_revision=REVISION,
+        )
+
+        returncode, report, _, _ = run_gate((state,), timeout=10)
+
+        self.assertEqual(1, returncode)
+        self.assertIn("terminal Argo operation", report)
+        self.assertIn(f"operationRevision={REVISION}", report)
+
+    def test_contract_requires_exact_digest_for_each_first_party_repository(self) -> None:
+        expected = "registry.test/service@sha256:" + "1" * 64
+        stale = "registry.test/service@sha256:" + "2" * 64
+        state = ApplicationState(
+            name=APPLICATIONS[1],
+            revision=REVISION,
+            sync="Synced",
+            health="Healthy",
+            repo_url=EXPECTED_REPOSITORY,
+            target_revision="main",
+            path=EXPECTED_APPLICATION_PATHS[APPLICATIONS[1]],
+            destination_server="https://kubernetes.default.svc",
+            destination_namespace="prod-ssl-proxy",
+            images=(expected, stale),
+        )
+
+        self.assertFalse(state.ready_for(REVISION, frozenset({expected}), True))
+
+    def test_each_progressive_sync_phase_has_an_independent_budget(self) -> None:
+        state = {
+            APPLICATIONS[0]: application(APPLICATIONS[0]),
+            APPLICATIONS[1]: application(APPLICATIONS[1], revision=STALE_REVISION),
+            APPLICATIONS[2]: application(APPLICATIONS[2], revision=STALE_REVISION),
+        }
+        budgets = {
+            APPLICATIONS[0]: 1,
+            APPLICATIONS[1]: 2,
+            APPLICATIONS[2]: 3,
+        }
+
+        returncode, report, _, _ = run_gate(
+            (state,), timeout=20, phase_budgets=budgets
+        )
+
+        self.assertEqual(1, returncode)
+        self.assertIn(f"Phase complete: {APPLICATIONS[0]}", report)
+        self.assertIn(f"{APPLICATIONS[1]} exceeded its 2-second phase budget", report)
+
     def test_eventual_success_requires_all_three_applications(self) -> None:
         stale = {
             name: application(name, revision=STALE_REVISION) for name in APPLICATIONS

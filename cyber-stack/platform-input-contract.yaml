@@ -5,6 +5,8 @@ metadata:
 spec:
   environment: prod
   namespace: prod-ssl-proxy
+  readiness:
+    configMapName: platform-ready
   bootstrap:
     ownership: platform
     postgres:

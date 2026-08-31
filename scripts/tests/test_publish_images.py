@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 
 import sys
@@ -14,6 +16,7 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "scripts"))
 from image_contract import FIRST_PARTY_SERVICES, ImageContract  # noqa: E402
 from publish_images import (  # noqa: E402
     PublishSettings,
+    build_parser,
     make_publish_command,
     publication_report,
     publish_environment,
@@ -72,6 +75,7 @@ def settings() -> PublishSettings:
         atheros_search_ui_keycloak_url="https://identity.test",
         atheros_search_ui_keycloak_realm="test-realm",
         atheros_search_ui_keycloak_client_id="search-ui",
+        source_revision="c" * 40,
         make_command=("gmake",),
     )
 
@@ -103,6 +107,23 @@ class PublishImagesTest(unittest.TestCase):
         self.assertIn("ATHEROS_SEARCH_UI_KEYCLOAK_REALM=test-realm", command)
         self.assertIn("ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID=search-ui", command)
         self.assertNotIn("registry.test:5000/ssl-proxy", " ".join(command))
+
+    def test_parser_rejects_empty_source_revision(self) -> None:
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+            build_parser().parse_args(
+                [
+                    "--tag",
+                    "abc1234",
+                    "--build-date",
+                    "2026-08-11T00:00:00Z",
+                    "--builder",
+                    "test-builder",
+                    "--platform",
+                    "linux/amd64",
+                    "--source-revision",
+                    "",
+                ]
+            )
 
     def test_publishes_eight_images_and_reports_match_and_unpinned(self) -> None:
         commands: list[list[str]] = []

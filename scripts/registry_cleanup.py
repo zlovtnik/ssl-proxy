@@ -247,6 +247,10 @@ def reference_digest(reference: str) -> tuple[str, str, str] | None:
     repository_reference, separator, digest = reference.rpartition("@")
     if not separator or not DIGEST_PATTERN.fullmatch(digest):
         return None
+    last_slash = repository_reference.rfind("/")
+    last_colon = repository_reference.rfind(":")
+    if last_colon > last_slash:
+        repository_reference = repository_reference[:last_colon]
     authority, repository = split_registry_repository(repository_reference)
     return authority, repository, digest
 
@@ -436,7 +440,11 @@ def parser() -> argparse.ArgumentParser:
         default=os.environ.get("REGISTRY", "192.168.1.242:5000"),
         help="registry authority without a URL scheme",
     )
-    result.add_argument("--plain-http", action="store_true")
+    result.add_argument(
+        "--plain-http",
+        action="store_true",
+        help="use HTTP for a registry that is explicitly configured without TLS",
+    )
     result.add_argument("--repository-root", type=Path, default=REPOSITORY_ROOT)
     result.add_argument("--repository", action="append", default=[])
     result.add_argument("--keep-recent", type=int, default=12)
@@ -447,25 +455,27 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
+def validate_arguments(arguments: argparse.Namespace) -> None:
+    if arguments.keep_recent < 1:
+        raise RegistryCleanupError("--keep-recent must be positive")
+    if "/" in arguments.registry or "://" in arguments.registry:
+        raise RegistryCleanupError("--registry must be an authority without a path or scheme")
+    if arguments.apply and arguments.confirm != CONFIRMATION:
+        raise RegistryCleanupError(
+            f"--apply requires --confirm {CONFIRMATION}"
+        )
+    if arguments.apply and arguments.plain_http:
+        raise RegistryCleanupError("--apply requires an HTTPS registry")
+    if arguments.apply and arguments.skip_live_cluster:
+        raise RegistryCleanupError(
+            "--apply requires live Kubernetes digest protection"
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
-        if arguments.keep_recent < 1:
-            raise RegistryCleanupError("--keep-recent must be positive")
-        if "/" in arguments.registry or "://" in arguments.registry:
-            raise RegistryCleanupError("--registry must be an authority without a path or scheme")
-        if arguments.apply and arguments.confirm != CONFIRMATION:
-            raise RegistryCleanupError(
-                f"--apply requires --confirm {CONFIRMATION}"
-            )
-        if arguments.apply and arguments.plain_http:
-            raise RegistryCleanupError(
-                "--apply is not allowed with --plain-http"
-            )
-        if arguments.apply and arguments.skip_live_cluster:
-            raise RegistryCleanupError(
-                "--apply requires live Kubernetes digest protection"
-            )
+        validate_arguments(arguments)
         scheme = "http" if arguments.plain_http else "https"
         client = RegistryClient(f"{scheme}://{arguments.registry}")
         git_digests = git_protected_digests(

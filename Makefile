@@ -45,7 +45,7 @@ BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health pvc-audit argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry registry-clean-plan registry-clean registry-gc octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health pvc-audit argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry registry-clean-plan registry-clean registry-recreate registry-gc octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 
@@ -62,6 +62,7 @@ publish: octopus-source-integrity
 		--atheros-search-ui-keycloak-url "$(ATHEROS_SEARCH_UI_KEYCLOAK_URL)" \
 		--atheros-search-ui-keycloak-realm "$(ATHEROS_SEARCH_UI_KEYCLOAK_REALM)" \
 		--atheros-search-ui-keycloak-client-id "$(ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID)" \
+		--source-revision "$(PARENT_COMMIT)" \
 		--make-command "$(MAKE)"
 
 build-all: $(BUILD_TARGETS)
@@ -213,12 +214,23 @@ registry-clean: require-registry kube-context-check
 		--apply \
 		--confirm "$(REGISTRY_CLEAN_CONFIRM)"
 
-registry-gc:
+registry-recreate: require-registry
+	@export SERVER_IP="$${SERVER_IP:-$(firstword $(subst :, ,$(REGISTRY)))}"; \
+	export JENKINS_URL="$${JENKINS_URL:-http://127.0.0.1:8083/}"; \
+	export JENKINS_PROD_READONLY_KUBECONFIG_FILE="$${JENKINS_PROD_READONLY_KUBECONFIG_FILE:-/dev/null}"; \
+	docker compose -f docker-compose.ci.yaml up -d --force-recreate --no-deps registry; \
+	docker compose -f docker-compose.ci.yaml exec -T registry env | \
+		grep -qx 'REGISTRY_STORAGE_DELETE_ENABLED=true'
+
+registry-gc: require-registry
 	@test "$(REGISTRY_GC_CONFIRM)" = "GC-REGISTRY-BLOBS" || { \
 		echo "Set REGISTRY_GC_CONFIRM=GC-REGISTRY-BLOBS after manifest cleanup review." >&2; \
 		exit 2; \
 	}
-	@docker compose -f docker-compose.ci.yaml stop registry; \
+	@export SERVER_IP="$${SERVER_IP:-$(firstword $(subst :, ,$(REGISTRY)))}"; \
+	export JENKINS_URL="$${JENKINS_URL:-http://127.0.0.1:8083/}"; \
+	export JENKINS_PROD_READONLY_KUBECONFIG_FILE="$${JENKINS_PROD_READONLY_KUBECONFIG_FILE:-/dev/null}"; \
+	docker compose -f docker-compose.ci.yaml stop registry; \
 	status=0; \
 	docker compose -f docker-compose.ci.yaml run --rm registry \
 		garbage-collect /etc/docker/registry/config.yml || status=$$?; \

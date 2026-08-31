@@ -43,6 +43,36 @@ class YamlLoadingTest(unittest.TestCase):
         self.assertEqual(1, len(errors))
         self.assertIn("fixture.yaml: invalid YAML", errors[0])
 
+
+class SchemaMigratorSourceContractTest(unittest.TestCase):
+    def test_rejects_mysql_only_state_store_regression(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state_database = (
+                root
+                / "apps/schema-migrator/src/main/scala/com/sslproxy/schema/store/StateDatabase.scala"
+            )
+            migrator_config = (
+                root
+                / "apps/schema-migrator/src/main/scala/com/sslproxy/schema/config/MigratorConfig.scala"
+            )
+            state_database.parent.mkdir(parents=True)
+            migrator_config.parent.mkdir(parents=True)
+            state_database.write_text(
+                "com.mysql.cj.jdbc.Driver\nsetDriverClassName(Driver)\nsetJdbcUrl(config.url.trim)\n",
+                encoding="utf-8",
+            )
+            migrator_config.write_text(
+                "jdbc:mysql://db/sync\ncurrentSchema=schema_migrator\n",
+                encoding="utf-8",
+            )
+
+            errors = check_gitops._check_schema_migrator_source_contract(root)
+
+            self.assertTrue(any("org.postgresql.Driver" in error for error in errors))
+            self.assertTrue(any("PostgreSQL contract lost 'jdbc:postgresql://'" in error for error in errors))
+            self.assertTrue(any("must not use MySQL/TiDB JDBC" in error for error in errors))
+
     def test_missing_file_is_reported_without_reading(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             errors: list[str] = []
@@ -726,7 +756,7 @@ spec:
 
 
 class ApplicationSetTest(unittest.TestCase):
-    def application_set(self) -> dict[str, object]:
+    def application_set(self) -> list[dict[str, object]]:
         elements = []
         for name, expected in check_gitops.WORKLOAD_APPLICATIONS.items():
             elements.append({"name": name, **expected})
@@ -738,6 +768,13 @@ spec:
   generators:
     - list:
         elements: PLACEHOLDER
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - {matchExpressions: [{key: app.kubernetes.io/component, operator: In, values: [bootstrap]}]}
+        - {matchExpressions: [{key: app.kubernetes.io/component, operator: In, values: [data-plane]}]}
+        - {matchExpressions: [{key: app.kubernetes.io/component, operator: In, values: [app-stack]}]}
   template:
     metadata:
       name: '{{name}}'
@@ -754,19 +791,25 @@ spec:
       destination: {server: '{{server}}', namespace: '{{namespace}}'}
       syncPolicy:
         automated: {prune: true, selfHeal: true, allowEmpty: false}
-        syncOptions: [PrunePropagationPolicy=foreground, ApplyOutOfSyncOnly=true, ServerSideApply=true]
+        syncOptions: [PrunePropagationPolicy=foreground, ApplyOutOfSyncOnly=true, ServerSideApply=true, RespectIgnoreDifferences=true]
       ignoreDifferences:
         - {group: apps, kind: StatefulSet, jsonPointers: [/spec/volumeClaimTemplates]}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: argocd-cmd-params-cm}
+data: {applicationsetcontroller.enable.progressive.syncs: "true"}
 """.replace("PLACEHOLDER", repr(elements).replace("'", '"'))
-        )[0]
+        )
 
     def test_accepts_all_production_entries(self) -> None:
         errors: list[str] = []
-        check_gitops._check_application_set([self.application_set()], errors)
+        check_gitops._check_application_set(self.application_set(), errors)
         self.assertEqual([], errors)
 
     def test_rejects_missing_duplicate_misrouted_and_dev_entries(self) -> None:
-        application_set = self.application_set()
+        documents = self.application_set()
+        application_set = documents[0]
         elements = application_set["spec"]["generators"][0]["list"]["elements"]
         elements.pop()
         elements.append(dict(elements[0]))
@@ -781,7 +824,7 @@ spec:
             }
         )
         errors: list[str] = []
-        check_gitops._check_application_set([application_set], errors)
+        check_gitops._check_application_set(documents, errors)
         self.assertTrue(any("ssl-proxy-prod-app-stack exactly once" in error for error in errors))
         self.assertTrue(any("ssl-proxy-prod-bootstrap exactly once" in error for error in errors))
         self.assertTrue(any("path: cyber-stack/matrix/prod/data-plane" in error for error in errors))
@@ -929,6 +972,22 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: {{name: ssl-proxy-production-gate, namespace: argocd}}
 roleRef: {{apiGroup: rbac.authorization.k8s.io, kind: Role, name: ssl-proxy-production-gate}}
+subjects:
+  - {{kind: ServiceAccount, name: ssl-proxy-production-gate, namespace: argocd}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {{name: ssl-proxy-production-gate-wiretrap}}
+rules:
+  - apiGroups: ['']
+    resources: [nodes]
+    resourceNames: [wiretrap]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {{name: ssl-proxy-production-gate-wiretrap}}
+roleRef: {{apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ssl-proxy-production-gate-wiretrap}}
 subjects:
   - {{kind: ServiceAccount, name: ssl-proxy-production-gate, namespace: argocd}}
 """

@@ -17,11 +17,14 @@ spec:
       app.kubernetes.io/name: postgres-pgbouncer
   template:
     metadata:
+      annotations:
+        ssl-proxy.io/pgbouncer-auth-reload-revision: "1"
       labels:
         app.kubernetes.io/name: postgres-pgbouncer
         app.kubernetes.io/component: pgbouncer
         app.kubernetes.io/instance: ssl-proxy
     spec:
+      shareProcessNamespace: true
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
       securityContext:
@@ -145,6 +148,53 @@ spec:
               readOnly: true
             - name: run
               mountPath: /var/run/pgbouncer
+        - name: auth-file-reloader
+          image: busybox@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ceu"]
+          args:
+            - |
+              auth_file=/etc/pgbouncer/users/userlist.txt
+              previous="$(sha256sum "$auth_file" | awk '{print $1}')"
+              while sleep 2; do
+                current="$(sha256sum "$auth_file" | awk '{print $1}')"
+                [ "$current" != "$previous" ] || continue
+                sleep 2
+                stable="$(sha256sum "$auth_file" | awk '{print $1}')"
+                [ "$stable" = "$current" ] || continue
+                pid=""
+                for status in /proc/[0-9]*/status; do
+                  [ -r "$status" ] || continue
+                  [ "$(awk '$1 == "Name:" { print $2 }' "$status")" = "pgbouncer" ] || continue
+                  candidate="${status#/proc/}"
+                  candidate="${candidate%/status}"
+                  [ -z "$pid" ] || { echo "multiple PgBouncer processes found; reload deferred" >&2; pid=""; break; }
+                  pid="$candidate"
+                done
+                [ -n "$pid" ] || continue
+                kill -HUP "$pid"
+                previous="$stable"
+                echo "PgBouncer authentication file reloaded"
+              done
+          resources:
+            requests:
+              cpu: 5m
+              memory: 4Mi
+            limits:
+              cpu: 50m
+              memory: 16Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+          volumeMounts:
+            - name: users
+              mountPath: /etc/pgbouncer/users
+              readOnly: true
       volumes:
         - name: generated-config
           emptyDir:

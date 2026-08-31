@@ -90,7 +90,7 @@ class PlatformSyncRbacTest(unittest.TestCase):
         sa = docs[0]
         self.assertEqual("ServiceAccount", sa["kind"])
         self.assertEqual("ssl-proxy-platform-sync", sa["metadata"]["name"])
-        self.assertEqual("prod-ssl-proxy", sa["metadata"]["namespace"])
+        self.assertNotIn("namespace", sa["metadata"])
         self.assertFalse(sa.get("automountServiceAccountToken", True))
 
     def test_role_exists(self) -> None:
@@ -100,19 +100,23 @@ class PlatformSyncRbacTest(unittest.TestCase):
         role = docs[0]
         self.assertEqual("Role", role["kind"])
         self.assertEqual("ssl-proxy-platform-sync", role["metadata"]["name"])
-        self.assertEqual("prod-ssl-proxy", role["metadata"]["namespace"])
+        self.assertNotIn("namespace", role["metadata"])
 
         rules = role["rules"]
         self.assertEqual(2, len(rules))
 
         secrets_rule = next(r for r in rules if "secrets" in r["resources"])
         self.assertEqual(["get", "update"], secrets_rule["verbs"])
-        self.assertEqual(18, len(secrets_rule["resourceNames"]))
+        self.assertEqual(19, len(secrets_rule["resourceNames"]))
 
         configmaps_rule = next(r for r in rules if "configmaps" in r["resources"])
         self.assertEqual(["get", "update"], configmaps_rule["verbs"])
         self.assertEqual(
-            ["platform-sync-lock", "ssl-proxy-prod-postgres-endpoint"],
+            [
+                "platform-ready",
+                "platform-sync-lock",
+                "ssl-proxy-postgres-endpoint",
+            ],
             sorted(configmaps_rule["resourceNames"]),
         )
 
@@ -123,7 +127,7 @@ class PlatformSyncRbacTest(unittest.TestCase):
         rb = docs[0]
         self.assertEqual("RoleBinding", rb["kind"])
         self.assertEqual("ssl-proxy-platform-sync", rb["metadata"]["name"])
-        self.assertEqual("prod-ssl-proxy", rb["metadata"]["namespace"])
+        self.assertNotIn("namespace", rb["metadata"])
 
         self.assertEqual("Role", rb["roleRef"]["kind"])
         self.assertEqual("ssl-proxy-platform-sync", rb["roleRef"]["name"])
@@ -132,7 +136,7 @@ class PlatformSyncRbacTest(unittest.TestCase):
         self.assertEqual(1, len(subjects))
         self.assertEqual("ServiceAccount", subjects[0]["kind"])
         self.assertEqual("ssl-proxy-platform-sync", subjects[0]["name"])
-        self.assertEqual("prod-ssl-proxy", subjects[0]["namespace"])
+        self.assertNotIn("namespace", subjects[0])
 
     def test_kustomization_includes_rbac(self) -> None:
         """Verify bootstrap kustomization includes platform-sync RBAC."""

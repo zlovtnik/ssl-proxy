@@ -149,6 +149,17 @@ is never automatic. The retention planner protects every digest pinned under
 the newest retained window for each repository. Manifests with unknown creation
 timestamps are kept rather than guessed about.
 
+After adding or changing the registry service configuration, recreate only the
+registry container so manifest deletion is enabled without requiring the
+unrelated Jenkins environment:
+
+```bash
+make registry-recreate REGISTRY=192.168.1.242:5000
+```
+
+The target preserves the named registry data volume and verifies that the
+recreated process received `REGISTRY_STORAGE_DELETE_ENABLED=true`.
+
 Run the read-only plan first:
 
 ```bash
@@ -158,14 +169,17 @@ make registry-clean-plan \
   REGISTRY_KEEP_RECENT=12
 ```
 
-After reviewing every proposed digest, apply the same plan with the exact
-confirmation token:
+The apply step requires an HTTPS registry, a reachable live cluster, and a
+working pod inventory so the script can distinguish live digests from removable
+ones. Ensure a Kubernetes context is active (the `kube-context-check`
+prerequisite enforces this), or pass one explicitly. Plain HTTP is supported
+for read-only planning only.
 
 ```bash
 make registry-clean \
-  REGISTRY=192.168.1.242:5000 \
-  REGISTRY_PLAIN_HTTP=1 \
+  REGISTRY=registry.example.internal:5000 \
   REGISTRY_KEEP_RECENT=12 \
+  KUBE_CONTEXT=<context> \
   REGISTRY_CLEAN_CONFIRM=DELETE-UNPINNED-MANIFESTS
 ```
 

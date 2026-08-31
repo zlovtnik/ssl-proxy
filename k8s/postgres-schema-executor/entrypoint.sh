@@ -91,6 +91,18 @@ sed -e "s/{{SCHEMA_MIGRATOR_STATE_ACCOUNT}}/${migrator_account}/g" \
 sed -e "s/{{KEYCLOAK_ACCOUNT}}/${keycloak_account}/g" \
     "${schema_root}/keycloak/grants/least_privilege.sql.tmpl" | psql_run
 
+# Transaction-pool clients must not depend on a one-time client connection
+# initializer. Role defaults are applied whenever PgBouncer opens an upstream
+# PostgreSQL session and remain correct when a transaction borrows a new one.
+psql_run --set=ON_ERROR_STOP=1 <<SQL
+BEGIN;
+ALTER ROLE "${octopus_account}" IN DATABASE "${db_name}" SET search_path TO octopus_core, atheros_search;
+ALTER ROLE "${search_account}" IN DATABASE "${db_name}" SET search_path TO atheros_search;
+ALTER ROLE "${migrator_account}" IN DATABASE "${db_name}" SET search_path TO schema_migrator;
+ALTER ROLE "${keycloak_account}" IN DATABASE "${db_name}" SET search_path TO keycloak;
+COMMIT;
+SQL
+
 ath_sha="$(awk '/^manifest_sha256:/{print $2; exit}' "${schema_root}/atheros_search/manifest.yaml")"
 oct_version="$(awk '/^schema_version:/{print $2; exit}' "${schema_root}/octopus_core/manifest.yaml")"
 oct_sha="$(awk '/^manifest_sha256:/{print $2; exit}' "${schema_root}/octopus_core/manifest.yaml")"

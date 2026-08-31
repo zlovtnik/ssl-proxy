@@ -29,6 +29,15 @@ require_root() {
     fi
 }
 
+interface_is_ready() {
+    local iface="$1"
+    local channel="$2"
+    local info
+    info="$(iw dev "$iface" info 2>/dev/null)" || return 1
+    grep -Eq '^[[:space:]]*type[[:space:]]+monitor([[:space:]]|$)' <<<"$info" &&
+        grep -Eq "^[[:space:]]*channel[[:space:]]+${channel}([[:space:]]|$)" <<<"$info"
+}
+
 main() {
     local iface="${ATH_SENSOR_DEVICE:-wlan0}"
     local reg_domain="${ATH_SENSOR_REG_DOMAIN:-US}"
@@ -97,13 +106,20 @@ main() {
     ip link show dev "$iface" >/dev/null 2>&1 || fail "wireless interface not found: $iface"
 
     iw reg set "$reg_domain"
-    ip link set "$iface" down
-    if ! iw "$iface" set monitor control; then
-        ip link set "$iface" up || true
-        fail "could not enable monitor mode on $iface"
+    if ! interface_is_ready "$iface" "$channel"; then
+        ip link set "$iface" down
+        if ! iw "$iface" set monitor control; then
+            ip link set "$iface" up || true
+            fail "could not enable monitor mode on $iface"
+        fi
+        ip link set "$iface" up
     fi
-    ip link set "$iface" up
-    iw dev "$iface" set channel "$channel"
+    if ! iw dev "$iface" set channel "$channel"; then
+        interface_is_ready "$iface" "$channel" ||
+            fail "could not set channel $channel on $iface; the interface is not already in monitor mode on that channel and may be owned by another process"
+        printf 'Channel update was busy; %s is already in monitor mode on channel %s.\n' \
+            "$iface" "$channel"
+    fi
 
     printf 'Prepared %s for monitor mode (regulatory domain %s, channel %s).\n' \
         "$iface" "$reg_domain" "$channel"

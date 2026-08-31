@@ -105,6 +105,30 @@ func TestDesiredObjectCopiesOnlyDeclaredKeys(t *testing.T) {
 	}
 }
 
+func TestWriteAllPublishesReadinessLast(t *testing.T) {
+	client, c, data := writerFixture()
+	t.Setenv("SYNC_SNAPSHOT_PATH", filepath.Join(t.TempDir(), "snapshot.json"))
+	before := time.Now().UTC().Unix()
+	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, false); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC().Unix()
+	if got := client.updates[len(client.updates)-2]; got.name != "platform-ready" || got.dryRun {
+		t.Fatalf("readiness was not the final real update: %#v", client.updates)
+	}
+	values, found, err := unstructured.NestedStringMap(client.objects["configmaps/platform-ready"].Object, "data")
+	if err != nil || !found {
+		t.Fatalf("read readiness data: found=%t err=%v", found, err)
+	}
+	timestamp, parseErr := strconv.ParseInt(values["last-success-unix"], 10, 64)
+	if parseErr != nil || timestamp < before || timestamp > after {
+		t.Fatalf("readiness timestamp was not captured by the final update: %#v", values)
+	}
+	if values["ready"] != "true" || values["contract-sha256"] != "abc123" {
+		t.Fatalf("unexpected readiness data: %#v", values)
+	}
+}
+
 func TestActiveLockTreatsTTLAsSeconds(t *testing.T) {
 	now := time.Now().UTC()
 	lock := object("ConfigMap", lockName, map[string]interface{}{lockKey: "host:1"})
@@ -132,7 +156,8 @@ func writerFixture() (*fakeObjectClient, *contract.Contract, map[string]map[stri
 	client.objects["configmaps/"+lockName] = object("ConfigMap", lockName, map[string]interface{}{lockKey: ""})
 	client.objects["secrets/one"] = object("Secret", "one", map[string]interface{}{"old": "b2xk"})
 	client.objects["configmaps/two"] = object("ConfigMap", "two", map[string]interface{}{"old": "old"})
-	c := &contract.Contract{Namespace: "prod-ssl-proxy", Inputs: []contract.Input{
+	client.objects["configmaps/platform-ready"] = object("ConfigMap", "platform-ready", map[string]interface{}{})
+	c := &contract.Contract{Namespace: "prod-ssl-proxy", Readiness: contract.Readiness{ConfigMapName: "platform-ready"}, SHA256: "abc123", Inputs: []contract.Input{
 		{Kind: "Secret", Name: "one", Type: "Opaque", Keys: []string{"new"}},
 		{Kind: "ConfigMap", Name: "two", Keys: []string{"new"}},
 	}}
