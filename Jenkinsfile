@@ -62,6 +62,22 @@ pipeline {
       }
     }
 
+    stage('Docker test preflight') {
+      options { timeout(time: 5, unit: 'MINUTES') }
+      steps {
+        sh '''
+          set -eu
+          if docker context inspect "$DOCKER_CONTEXT_NAME" >/dev/null 2>&1; then
+            docker context rm --force "$DOCKER_CONTEXT_NAME" >/dev/null
+          fi
+          docker context create "$DOCKER_CONTEXT_NAME" \
+            --docker "host=$DOCKER_HOST,ca=$DOCKER_CERT_PATH/ca.pem,cert=$DOCKER_CERT_PATH/cert.pem,key=$DOCKER_CERT_PATH/key.pem" >/dev/null
+          env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+            DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker version
+        '''
+      }
+    }
+
     stage('Validate and test') {
       failFast true
       parallel {
@@ -105,10 +121,12 @@ pipeline {
               }
               docker_cmd run --rm \
                 -v "$PWD:/workspace" -w /workspace/apps/schema-migrator \
+                -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
                 sh -c 'apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt -Dsbt.supershell=false "Test / testFull"'
               docker_cmd run --rm \
                 -v "$PWD:/workspace" -w /workspace/services/octopus \
+                -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
                 sh -c 'apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt test'
             '''
