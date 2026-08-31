@@ -29,6 +29,7 @@ services:
       - ./docker/jenkins/dind-entrypoint.sh:/usr/local/bin/jenkins-dind-entrypoint.sh:ro
       - jenkins-docker-certs:/certs/client
       - jenkins-docker-data:/var/lib/docker
+      - jenkins-home:/var/jenkins_home
     networks:
       ci:
         aliases:

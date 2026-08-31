@@ -11,6 +11,37 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class JenkinsProductionGateTest(unittest.TestCase):
+    def test_docker_context_is_ready_before_containerized_validation(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        preflight = pipeline.index("stage('Docker test preflight')")
+        validation = pipeline.index("stage('Validate and test')")
+        block = pipeline[preflight:validation]
+
+        self.assertLess(preflight, validation)
+        self.assertIn('docker context inspect "$DOCKER_CONTEXT_NAME"', block)
+        self.assertIn('docker context create "$DOCKER_CONTEXT_NAME"', block)
+        self.assertIn('DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker version', block)
+
+    def test_dind_can_resolve_workspace_binds_and_scala_can_start_testcontainers(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
+            encoding="utf-8"
+        )
+        dind = compose[
+            compose.index("  jenkins-docker:\n") : compose.index("\n  jenkins:\n")
+        ]
+        scala = pipeline[
+            pipeline.index("stage('Scala services')") : pipeline.index(
+                "stage('Sensor')"
+            )
+        ]
+
+        self.assertIn("- jenkins-home:/var/jenkins_home", dind)
+        self.assertEqual(
+            2,
+            scala.count("-v /var/run/docker.sock:/var/run/docker.sock"),
+        )
+
     def test_promotion_commit_marker_cannot_bypass_the_observer(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
         classification = pipeline[
