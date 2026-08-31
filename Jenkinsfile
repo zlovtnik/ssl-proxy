@@ -77,22 +77,61 @@ pipeline {
         stage('Platform and search') {
           options { timeout(time: 30, unit: 'MINUTES') }
           steps {
-            sh 'make platform-sync-lint'
-            sh 'make atheros-search-test'
+            sh '''
+              set -eu
+              docker_cmd() {
+                env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+                  DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
+              }
+              docker_cmd run --rm \
+                -v "$PWD:/workspace" -w /workspace \
+                golang:1.25-bookworm \
+                make platform-sync-lint
+              docker_cmd run --rm \
+                -v "$PWD:/workspace" -w /workspace \
+                golang:1.25-bookworm \
+                make atheros-search-test
+            '''
           }
         }
         stage('Scala services') {
           options { timeout(time: 60, unit: 'MINUTES') }
           steps {
-            sh "cd apps/schema-migrator && sbt 'Test / testFull'"
-            sh 'cd services/octopus && sbt test'
+            sh '''
+              set -eu
+              docker_cmd() {
+                env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+                  DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
+              }
+              docker_cmd run --rm \
+                -v "$PWD:/workspace" -w /workspace/apps/schema-migrator \
+                sbtscala/scala-sbt:eclipse-temurin-21 \
+                sbt 'Test / testFull'
+              docker_cmd run --rm \
+                -v "$PWD:/workspace" -w /workspace/services/octopus \
+                sbtscala/scala-sbt:eclipse-temurin-21 \
+                sbt test
+            '''
           }
         }
         stage('Sensor') {
           options { timeout(time: 30, unit: 'MINUTES') }
           steps {
-            sh 'cargo test -p atheros-sensor'
-            sh 'make dependency-boundaries'
+            sh '''
+              set -eu
+              docker_cmd() {
+                env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+                  DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
+              }
+              docker_cmd run --rm \
+                -v "$PWD:/workspace" -w /workspace \
+                rust:1-bookworm \
+                bash -c "apt-get update && apt-get install -y ripgrep && cargo test -p atheros-sensor"
+              docker_cmd run --rm \
+                -v "$PWD:/workspace" -w /workspace \
+                rust:1-bookworm \
+                bash -c "apt-get update && apt-get install -y ripgrep && make dependency-boundaries"
+            '''
           }
         }
       }
