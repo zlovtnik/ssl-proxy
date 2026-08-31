@@ -1,0 +1,115 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-postgres-pool-readiness
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: postgres-pool-readiness
+    app.kubernetes.io/managed-by: kustomize
+    ssl-proxy.io/postgres-client: "true"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: postgres-pool-readiness
+        ssl-proxy.io/postgres-client: "true"
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: verify
+          image: postgres-runtime-schema
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ceu"]
+          args:
+            - |
+              check_login() {
+                role="$1"
+                password_file="$2"
+                PGPASSWORD="$(cat "$password_file")"
+                export PGPASSWORD
+                result="$(psql --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+                  --username="$role" --command='SELECT current_user = session_user AND current_database() = '\''sync'\''')"
+                unset PGPASSWORD
+                [ "$result" = "t" ] || exit 1
+              }
+              check_login atheros_search_runtime /var/run/postgres-passwords/atheros-search/password
+              check_login octopus_runtime /var/run/postgres-passwords/octopus/password
+              check_login schema_migrator_runtime /var/run/postgres-passwords/schema-migrator/password
+              echo "all pooled PostgreSQL runtime identities authenticated"
+          env:
+            - name: PGHOST
+              value: postgres-pgbouncer
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: sync
+            - name: PGSSLMODE
+              value: verify-full
+            - name: PGSSLROOTCERT
+              value: /var/run/pgbouncer-tls/ca.crt
+          volumeMounts:
+            - name: pgbouncer-tls
+              mountPath: /var/run/pgbouncer-tls
+              readOnly: true
+            - name: atheros-search-password
+              mountPath: /var/run/postgres-passwords/atheros-search
+              readOnly: true
+            - name: octopus-password
+              mountPath: /var/run/postgres-passwords/octopus
+              readOnly: true
+            - name: schema-migrator-password
+              mountPath: /var/run/postgres-passwords/schema-migrator
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+      volumes:
+        - name: pgbouncer-tls
+          secret:
+            secretName: pgbouncer-listener-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: atheros-search-password
+          secret:
+            secretName: postgres-atheros-search
+            items:
+              - key: password
+                path: password
+        - name: octopus-password
+          secret:
+            secretName: postgres-octopus
+            items:
+              - key: password
+                path: password
+        - name: schema-migrator-password
+          secret:
+            secretName: postgres-schema-migrator
+            items:
+              - key: password
+                path: password

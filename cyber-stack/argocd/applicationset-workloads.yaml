@@ -28,6 +28,22 @@ spec:
             path: cyber-stack/matrix/prod/app-stack
             namespace: prod-ssl-proxy
             server: https://kubernetes.default.svc
+  strategy:
+    type: RollingSync
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: app.kubernetes.io/component
+              operator: In
+              values: [bootstrap]
+        - matchExpressions:
+            - key: app.kubernetes.io/component
+              operator: In
+              values: [data-plane]
+        - matchExpressions:
+            - key: app.kubernetes.io/component
+              operator: In
+              values: [app-stack]
   template:
     metadata:
       name: '{{ .name }}'
@@ -47,14 +63,95 @@ spec:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
       ignoreDifferences:
-        # The host-side synchronizer is the only writer for this platform input.
-        # Its validated Vault bundle populates the data in the empty shell
-        # rendered by the bootstrap slice.
+        - group: ""
+          kind: Secret
+          name: cloudflared-tunnel-credentials
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: minio-credentials
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: observability-credentials
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: proxy-admin-key
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: proxy-runtime-secrets
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: redis-runtime
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: schema-migrator-backend
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: schema-migrator-bootstrap
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: schema-migrator-keycloak
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: ssl-proxy-identity-tls
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: postgres-atheros-search
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: postgres-keycloak
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: postgres-octopus
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: postgres-schema-migrator
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: postgres-schema-owner
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: postgres-runtime-tls
+          jsonPointers: [/data]
         - group: ""
           kind: Secret
           name: pgbouncer-listener-tls
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: pgbouncer-runtime-users
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: wireguard-config
           jsonPointers:
             - /data
+        - group: ""
+          kind: ConfigMap
+          name: ssl-proxy-prod-postgres-endpoint
+          jsonPointers: [/data]
+        - group: ""
+          kind: ConfigMap
+          name: platform-ready
+          jsonPointers: [/data]
+        - group: apps
+          kind: StatefulSet
+          name: ssl-proxy-redpanda
+          jsonPointers: [/spec/volumeClaimTemplates]
       syncPolicy:
         automated:
           prune: true
@@ -64,33 +161,4 @@ spec:
           - PrunePropagationPolicy=foreground
           - ApplyOutOfSyncOnly=true
           - ServerSideApply=true
-  templatePatch: |
-    {{- if eq .component "data-plane" }}
-    spec:
-      ignoreDifferences:
-        - group: apps
-          kind: StatefulSet
-          jsonPointers:
-            - /spec/volumeClaimTemplates
-    {{- end }}
-    {{- if eq .environment "staging" }}
-    metadata:
-      annotations:
-        argocd-image-updater.argoproj.io/write-back-method: git
-        argocd-image-updater.argoproj.io/git-branch: main
-        argocd-image-updater.argoproj.io/write-back-target: kustomization:{{ .path }}
-        {{- if eq .component "app-stack" }}
-        argocd-image-updater.argoproj.io/image-list: ssl-proxy=192.168.1.242:5000/ssl-proxy:staging,java-coordinator=192.168.1.242:5000/java-coordinator:staging,atheros-sensor=192.168.1.242:5000/atheros-sensor:staging,atheros-search=192.168.1.242:5000/atheros-search:staging,atheros-search-ui=192.168.1.242:5000/atheros-search-ui:staging,schema-migrator-backend=192.168.1.242:5000/schema-migrator-backend:staging,schema-migrator-ui=192.168.1.242:5000/schema-migrator-ui:staging
-        argocd-image-updater.argoproj.io/ssl-proxy.update-strategy: digest
-        argocd-image-updater.argoproj.io/java-coordinator.update-strategy: digest
-        argocd-image-updater.argoproj.io/atheros-sensor.update-strategy: digest
-        argocd-image-updater.argoproj.io/atheros-search.update-strategy: digest
-        argocd-image-updater.argoproj.io/atheros-search-ui.update-strategy: digest
-        argocd-image-updater.argoproj.io/schema-migrator-backend.update-strategy: digest
-        argocd-image-updater.argoproj.io/schema-migrator-ui.update-strategy: digest
-        {{- end }}
-        {{- if eq .component "data-plane" }}
-        argocd-image-updater.argoproj.io/image-list: postgres-runtime-schema=192.168.1.242:5000/postgres-runtime-schema:staging
-        argocd-image-updater.argoproj.io/postgres-runtime-schema.update-strategy: digest
-        {{- end }}
-    {{- end }}
+          - RespectIgnoreDifferences=true

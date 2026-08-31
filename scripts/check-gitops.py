@@ -2039,7 +2039,7 @@ def _validate_workload_application(application: Mapping[str, Any], relative: str
     if destination.get("server") != expected["server"]:
         errors.append(f"{relative}: Application destination server does not match its environment")
     sync_options = {str(option) for option in _list(_path(application, "spec", "syncPolicy", "syncOptions"))}
-    required_options = {"PrunePropagationPolicy=foreground", "ApplyOutOfSyncOnly=true", "ServerSideApply=true"}
+    required_options = {"PrunePropagationPolicy=foreground", "ApplyOutOfSyncOnly=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"}
     if not required_options.issubset(sync_options):
         errors.append(f"{relative}: Application sync options are not preserved")
     labels = _mapping(_metadata(application).get("labels"))
@@ -2061,7 +2061,24 @@ def _check_application_set(documents: Documents, errors: list[str]) -> None:
     if len(application_sets) != 1:
         errors.append(f"{relative}: expected one workload ApplicationSet")
         return
-    applications = _applications_from_set(application_sets[0])
+    application_set = application_sets[0]
+    expected_strategy = {
+        "type": "RollingSync",
+        "rollingSync": {
+            "steps": [
+                {"matchExpressions": [{"key": "app.kubernetes.io/component", "operator": "In", "values": [component]}]}
+                for component in ("bootstrap", "data-plane", "app-stack")
+            ]
+        },
+    }
+    if _path(application_set, "spec", "strategy") != expected_strategy:
+        errors.append(f"{relative}: ApplicationSet must roll bootstrap, data-plane, then app-stack")
+    parameters = _find(documents, "ConfigMap", "argocd-cmd-params-cm")
+    if len(parameters) != 1 or _mapping(parameters[0].get("data")).get(
+        "applicationsetcontroller.enable.progressive.syncs"
+    ) != "true":
+        errors.append(f"{relative}: ApplicationSet progressive syncs must be enabled")
+    applications = _applications_from_set(application_set)
     generated_names = {
         str(_metadata(application).get("name")) for application in applications
     }
@@ -2211,6 +2228,8 @@ def _check_production_gate_rbac(documents: Documents, errors: list[str]) -> None
     service_accounts = _find(documents, "ServiceAccount", name)
     roles = _find(documents, "Role", name)
     role_bindings = _find(documents, "RoleBinding", name)
+    cluster_roles = _find(documents, "ClusterRole", f"{name}-wiretrap")
+    cluster_role_bindings = _find(documents, "ClusterRoleBinding", f"{name}-wiretrap")
     if len(service_accounts) != 1 or len(roles) != 1 or len(role_bindings) != 1:
         errors.append(
             f"{relative}: production gate requires exactly one ServiceAccount, Role, and RoleBinding"
@@ -2253,6 +2272,25 @@ def _check_production_gate_rbac(documents: Documents, errors: list[str]) -> None
         errors.append(
             f"{relative}: production gate RoleBinding must bind only its dedicated ServiceAccount"
         )
+    expected_cluster_rule = {
+        "apiGroups": [""],
+        "resources": ["nodes"],
+        "resourceNames": ["wiretrap"],
+        "verbs": ["get"],
+    }
+    if len(cluster_roles) != 1 or cluster_roles[0].get("rules") != [expected_cluster_rule]:
+        errors.append(f"{relative}: production gate may only get the wiretrap Node")
+    expected_cluster_ref = {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "ClusterRole",
+        "name": f"{name}-wiretrap",
+    }
+    if (
+        len(cluster_role_bindings) != 1
+        or cluster_role_bindings[0].get("roleRef") != expected_cluster_ref
+        or cluster_role_bindings[0].get("subjects") != [expected_subject]
+    ):
+        errors.append(f"{relative}: Wiretrap Node read must bind only the production gate identity")
 
 
 def _check_namespace_deletion_protection(document: Mapping[str, Any], relative: str) -> list[str]:

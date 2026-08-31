@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from image_contract import ImageContractError, load_image_contracts
+
 
 APPLICATIONS = (
     "ssl-proxy-prod-bootstrap",
@@ -22,6 +24,15 @@ APPLICATIONS = (
 )
 DEFAULT_NAMESPACE = "argocd"
 PRODUCTION_NAMESPACE = "prod-ssl-proxy"
+EXPECTED_KUBERNETES_API = "https://192.168.1.242:6443"
+EXPECTED_NODE = "wiretrap"
+EXPECTED_NODE_IP = "192.168.1.242"
+EXPECTED_REPOSITORY = "https://github.com/zlovtnik/ssl-proxy.git"
+EXPECTED_APPLICATION_PATHS = {
+    "ssl-proxy-prod-bootstrap": "cyber-stack/matrix/prod/bootstrap",
+    "ssl-proxy-prod-data-plane": "cyber-stack/matrix/prod/data-plane",
+    "ssl-proxy-prod-app-stack": "cyber-stack/matrix/prod/app-stack",
+}
 DEFAULT_TIMEOUT = "30m"
 DEFAULT_POLL_INTERVAL_SECONDS = 10.0
 KUBECTL_REQUEST_TIMEOUT = "10s"
@@ -141,13 +152,33 @@ class ApplicationState:
     operation_phase: str = "Unknown"
     messages: tuple[str, ...] = ()
     query_error: str = ""
+    repo_url: str = ""
+    target_revision: str = ""
+    path: str = ""
+    destination_server: str = ""
+    destination_namespace: str = ""
+    images: tuple[str, ...] = ()
 
-    def ready_for(self, revision: str) -> bool:
+    def ready_for(
+        self,
+        revision: str,
+        expected_images: frozenset[str],
+        verify_contract: bool = False,
+    ) -> bool:
+        contract_valid = not verify_contract or (
+            self.repo_url == EXPECTED_REPOSITORY
+            and self.target_revision == "main"
+            and self.path == EXPECTED_APPLICATION_PATHS[self.name]
+            and self.destination_server == "https://kubernetes.default.svc"
+            and self.destination_namespace == PRODUCTION_NAMESPACE
+            and expected_images.issubset(self.images)
+        )
         return (
             not self.query_error
             and self.revision == revision
             and self.sync == "Synced"
             and self.health == "Healthy"
+            and contract_valid
         )
 
     def diagnostic(self) -> str:
@@ -157,6 +188,8 @@ class ApplicationState:
             f"{self.name}: revision={self.revision} sync={self.sync} "
             f"health={self.health} operation={self.operation_phase}"
         )
+        if self.path:
+            detail += f" path={self.path}"
         if self.messages:
             detail += " messages=" + " | ".join(self.messages)
         return detail
@@ -176,6 +209,9 @@ class ProductionGate:
         runner: CommandRunner = subprocess_runner,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
+        expected_images: Mapping[str, frozenset[str]] | None = None,
+        on_line: Callable[[str], None] | None = None,
+        verify_wiretrap: bool = False,
     ) -> None:
         if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision) is None:
             raise ValueError("revision must be a full lowercase Git SHA")
@@ -191,7 +227,16 @@ class ProductionGate:
         self.runner = runner
         self.clock = clock
         self.sleeper = sleeper
+        self.expected_images = expected_images or {}
+        self.on_line = on_line
+        self.verify_wiretrap = verify_wiretrap
         self.lines: list[str] = []
+
+    def _append(self, *lines: str) -> None:
+        self.lines.extend(lines)
+        if self.on_line is not None:
+            for line in lines:
+                self.on_line(line)
 
     def _kubectl(self, *arguments: str) -> CommandResult:
         command = [self.kubectl]
@@ -228,6 +273,16 @@ class ProductionGate:
                     namespace=self.namespace,
                     expected=True,
                     failure=f"cannot get {name}",
+                )
+            )
+        if self.verify_wiretrap:
+            reviews.append(
+                AccessReview(
+                    verb="get",
+                    resource=f"nodes/{EXPECTED_NODE}",
+                    namespace=None,
+                    expected=True,
+                    failure=f"cannot get node {EXPECTED_NODE}",
                 )
             )
 
@@ -274,21 +329,69 @@ class ProductionGate:
         return f"  {review.failure}: {detail or default}"
 
     def _verify_access(self) -> bool:
-        self.lines.append("RBAC preflight:")
+        self._append("RBAC preflight:")
         reviews = self._access_reviews()
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=RBAC_MAX_WORKERS
         ) as executor:
             failures = tuple(executor.map(self._run_access_review, reviews))
-        self.lines.extend(failure for failure in failures if failure is not None)
+        self._append(*(failure for failure in failures if failure is not None))
         valid = not any(failure is not None for failure in failures)
         if valid:
-            self.lines.append(
+            self._append(
                 "  PASS: three named Application reads allowed; Secret reads and "
                 "representative mutations denied cluster-wide and in the Argo CD "
                 "and production namespaces"
             )
         return valid
+
+    def _verify_wiretrap(self) -> bool:
+        server = self._kubectl(
+            "config", "view", "--minify", "-o",
+            "jsonpath={.clusters[0].cluster.server}",
+        )
+        if server.returncode != 0 or server.stdout.strip() != EXPECTED_KUBERNETES_API:
+            self._append(
+                "Wiretrap preflight failed: Kubernetes API is "
+                + sanitize_diagnostic(server.stdout or server.stderr or "UNKNOWN")
+            )
+            return False
+        node = self._kubectl(
+            "get", "nodes", EXPECTED_NODE, "-o", "json",
+            f"--request-timeout={KUBECTL_REQUEST_TIMEOUT}",
+        )
+        if node.returncode != 0:
+            self._append(
+                "Wiretrap preflight failed: node query failed: "
+                + sanitize_diagnostic(node.stderr or node.stdout)
+            )
+            return False
+        try:
+            document = json.loads(node.stdout)
+        except json.JSONDecodeError as error:
+            self._append(f"Wiretrap preflight failed: invalid node JSON: {error}")
+            return False
+        addresses = {
+            str(item.get("address"))
+            for item in _list(_mapping(_mapping(document).get("status")).get("addresses"))
+            if _mapping(item).get("type") == "InternalIP"
+        }
+        ready = any(
+            _mapping(condition).get("type") == "Ready"
+            and _mapping(condition).get("status") == "True"
+            for condition in _list(_mapping(_mapping(document).get("status")).get("conditions"))
+        )
+        if EXPECTED_NODE_IP not in addresses or not ready:
+            self._append(
+                f"Wiretrap preflight failed: node={EXPECTED_NODE} "
+                f"internalIPs={sorted(addresses)} ready={ready}"
+            )
+            return False
+        self._append(
+            f"Wiretrap preflight: API={EXPECTED_KUBERNETES_API} "
+            f"node={EXPECTED_NODE} InternalIP={EXPECTED_NODE_IP} Ready=True"
+        )
+        return True
 
     def _query_application(self, name: str) -> ApplicationState:
         result = self._kubectl(
@@ -313,6 +416,9 @@ class ProductionGate:
         if not isinstance(document, Mapping):
             return ApplicationState(name=name, query_error="invalid response object")
         status = _mapping(document.get("status"))
+        spec = _mapping(document.get("spec"))
+        source = _mapping(spec.get("source"))
+        destination = _mapping(spec.get("destination"))
         sync = _mapping(status.get("sync"))
         health = _mapping(status.get("health"))
         operation = _mapping(status.get("operationState"))
@@ -333,10 +439,16 @@ class ProductionGate:
             health=str(health.get("status", "Unknown")),
             operation_phase=str(operation.get("phase", "Unknown")),
             messages=tuple(messages),
+            repo_url=str(source.get("repoURL", "")),
+            target_revision=str(source.get("targetRevision", "")),
+            path=str(source.get("path", "")),
+            destination_server=str(destination.get("server", "")),
+            destination_namespace=str(destination.get("namespace", "")),
+            images=tuple(str(image) for image in _list(_mapping(status.get("summary")).get("images"))),
         )
 
     def run(self) -> tuple[int, str]:
-        self.lines.extend(
+        self._append(
             (
                 "PRODUCTION REVISION GATE (READ ONLY)",
                 f"Expected revision: {self.revision}",
@@ -346,7 +458,10 @@ class ProductionGate:
             )
         )
         if self.verify_rbac and not self._verify_access():
-            self.lines.append("RESULT: FAILED (RBAC preflight)")
+            self._append("RESULT: FAILED (RBAC preflight)")
+            return 1, "\n".join(self.lines) + "\n"
+        if self.verify_wiretrap and not self._verify_wiretrap():
+            self._append("RESULT: FAILED (Wiretrap preflight)")
             return 1, "\n".join(self.lines) + "\n"
 
         deadline = self.clock() + self.timeout_seconds
@@ -357,17 +472,36 @@ class ProductionGate:
             attempt_started = self.clock()
             states = tuple(self._query_application(name) for name in APPLICATIONS)
             if states != previous_snapshot:
-                self.lines.append(f"Attempt {attempt}:")
-                self.lines.extend(f"  {state.diagnostic()}" for state in states)
+                self._append(f"Attempt {attempt}:")
+                self._append(*(f"  {state.diagnostic()}" for state in states))
                 previous_snapshot = states
-            if all(state.ready_for(self.revision) for state in states):
-                self.lines.append(
+            terminal = next(
+                (
+                    state
+                    for state in states
+                    if state.revision == self.revision
+                    and state.operation_phase in {"Error", "Failed"}
+                ),
+                None,
+            )
+            if terminal is not None:
+                self._append(f"RESULT: FAILED (terminal Argo operation: {terminal.diagnostic()})")
+                return 1, "\n".join(self.lines) + "\n"
+            if all(
+                state.ready_for(
+                    self.revision,
+                    self.expected_images.get(state.name, frozenset()),
+                    state.name in self.expected_images,
+                )
+                for state in states
+            ):
+                self._append(
                     f"RESULT: PASSED (all Applications Synced/Healthy at {self.revision})"
                 )
                 return 0, "\n".join(self.lines) + "\n"
             remaining = deadline - self.clock()
             if remaining <= 0:
-                self.lines.append(
+                self._append(
                     f"RESULT: FAILED (timed out waiting for exact revision {self.revision})"
                 )
                 return 1, "\n".join(self.lines) + "\n"
@@ -388,12 +522,30 @@ def build_parser() -> argparse.ArgumentParser:
         type=parse_duration,
         default=DEFAULT_POLL_INTERVAL_SECONDS,
     )
+    parser.add_argument(
+        "--repository-root",
+        type=Path,
+        default=Path(__file__).resolve().parents[1],
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
+        expected_images = {
+            "ssl-proxy-prod-bootstrap": frozenset(),
+            "ssl-proxy-prod-data-plane": frozenset(
+                contract.reference
+                for contract in load_image_contracts(arguments.repository_root, "prod")
+                if contract.slice_name == "data-plane"
+            ),
+            "ssl-proxy-prod-app-stack": frozenset(
+                contract.reference
+                for contract in load_image_contracts(arguments.repository_root, "prod")
+                if contract.slice_name == "app-stack"
+            ),
+        }
         gate = ProductionGate(
             arguments.revision,
             kubectl=arguments.kubectl,
@@ -401,12 +553,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             namespace=arguments.namespace,
             timeout_seconds=arguments.timeout,
             poll_interval_seconds=arguments.poll_interval,
+            expected_images=expected_images,
+            on_line=lambda line: print(line, flush=True),
+            verify_wiretrap=True,
         )
-    except ValueError as error:
+    except (ValueError, ImageContractError) as error:
         print(f"production-gate: {error}", file=sys.stderr)
         return 2
-    returncode, report = gate.run()
-    sys.stdout.write(report)
+    returncode, _report = gate.run()
     return returncode
 
 

@@ -78,6 +78,7 @@ class PlatformInputContract:
     namespace: str
     inputs: tuple[PlatformInput, ...]
     document: Mapping[str, Any]
+    readiness_config_map_name: str
 
     def by_identity(self) -> dict[tuple[str, str], PlatformInput]:
         return {(entry.kind, entry.name): entry for entry in self.inputs}
@@ -147,6 +148,12 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
     }:
         raise PlatformInputContractError(
             f"{CONTRACT_RELATIVE_PATH} must use the production Vault KV-v2 source"
+        )
+
+    readiness = _mapping(spec.get("readiness"))
+    if readiness != {"configMapName": "platform-ready"}:
+        raise PlatformInputContractError(
+            f"{CONTRACT_RELATIVE_PATH} readiness must target ConfigMap/platform-ready"
         )
 
     apply_policy = _mapping(spec.get("apply"))
@@ -255,6 +262,7 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
         namespace=str(namespace),
         inputs=tuple(sorted(inputs)),
         document=document,
+        readiness_config_map_name="platform-ready",
     )
 
 
@@ -467,6 +475,12 @@ def compare_contract_to_bootstrap(
             errors.append(
                 f"bootstrap Secret/{entry.name} must use type {expected_type}"
             )
+    readiness_identity = ("ConfigMap", contract.readiness_config_map_name)
+    if len(rendered.get(readiness_identity, [])) != 1:
+        errors.append(
+            "bootstrap must render exactly one platform readiness target: "
+            f"ConfigMap/{contract.readiness_config_map_name}"
+        )
     return errors
 
 

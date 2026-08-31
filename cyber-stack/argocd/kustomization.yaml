@@ -1,6 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - argocd-cmd-params-cm.yaml
   - appproject-ssl-proxy.yaml
   - applicationset-workloads.yaml
   - jenkins-production-gate-rbac.yaml

@@ -72,6 +72,7 @@ def settings() -> PublishSettings:
         atheros_search_ui_keycloak_url="https://identity.test",
         atheros_search_ui_keycloak_realm="test-realm",
         atheros_search_ui_keycloak_client_id="search-ui",
+        source_revision="c" * 40,
         make_command=("gmake",),
     )
 

@@ -104,6 +104,7 @@ class PlatformInputContractTest(unittest.TestCase):
         self.assertEqual(PLATFORM_BOOTSTRAP, contract.document["spec"]["bootstrap"])
         self.assertEqual(16, PLATFORM_BOOTSTRAP["postgres"]["majorVersion"])
         self.assertEqual("1Gi", PLATFORM_BOOTSTRAP["postgres"]["sharedMemorySize"])
+        self.assertEqual("platform-ready", contract.readiness_config_map_name)
         self.assertEqual(
             ["pgcrypto", "vector", "pg_stat_statements"],
             PLATFORM_BOOTSTRAP["postgres"]["requiredExtensions"],

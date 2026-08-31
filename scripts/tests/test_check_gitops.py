@@ -931,6 +931,22 @@ metadata: {{name: ssl-proxy-production-gate, namespace: argocd}}
 roleRef: {{apiGroup: rbac.authorization.k8s.io, kind: Role, name: ssl-proxy-production-gate}}
 subjects:
   - {{kind: ServiceAccount, name: ssl-proxy-production-gate, namespace: argocd}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {{name: ssl-proxy-production-gate-wiretrap}}
+rules:
+  - apiGroups: ['']
+    resources: [nodes]
+    resourceNames: [wiretrap]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {{name: ssl-proxy-production-gate-wiretrap}}
+roleRef: {{apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ssl-proxy-production-gate-wiretrap}}
+subjects:
+  - {{kind: ServiceAccount, name: ssl-proxy-production-gate, namespace: argocd}}
 """
         )
 

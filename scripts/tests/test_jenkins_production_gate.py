@@ -9,46 +9,35 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class JenkinsProductionGateTest(unittest.TestCase):
-    def test_pipeline_has_global_timeout_and_bounded_service_discovery(self) -> None:
+    def test_pipeline_validates_before_bounded_publication(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
 
-        self.assertIn("timeout(time: 135, unit: 'MINUTES')", pipeline)
-        discovery = pipeline[
-            pipeline.index("def serviceOutput") : pipeline.index(
-                "if (services.isEmpty())"
-            )
-        ]
-        self.assertIn("timeout(time: 2, unit: 'MINUTES')", discovery)
-        self.assertIn("ci-publish-services", discovery)
+        self.assertIn("timeout(time: 180, unit: 'MINUTES')", pipeline)
+        validation = pipeline.index("stage('Validate and test')")
+        publication = pipeline.index("stage('Publish immutable images')")
+        self.assertLess(validation, publication)
+        self.assertIn("--max-workers 3", pipeline[publication:])
+        self.assertIn("--manifest-out", pipeline[publication:])
 
-    def test_each_publish_retry_receives_a_fresh_timeout(self) -> None:
+    def test_pipeline_opens_reviewed_digest_pr_after_publication(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
-        publish_branch = pipeline[
-            pipeline.index('publishBranches["Publish ${serviceName}"]') : pipeline.index(
-                "publishBranches.failFast"
-            )
-        ]
+        publication = pipeline.index("stage('Publish immutable images')")
+        promotion = pipeline.index("stage('Open digest promotion PR')")
+        self.assertLess(publication, promotion)
+        self.assertIn("ssl-proxy-github-promotion-token", pipeline[promotion:])
+        self.assertIn("scripts/promote_release.py", pipeline[promotion:])
 
-        retry = publish_branch.index("retry(2)")
-        timeout = publish_branch.index("timeout(time: 30, unit: 'MINUTES')")
-        shell = publish_branch.index('sh """')
-        self.assertLess(retry, timeout)
-        self.assertLess(timeout, shell)
-
-    def test_plugin_audit_is_a_bounded_delivery_validation(self) -> None:
+    def test_delivery_validation_is_fail_closed(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
         validation = pipeline[
-            pipeline.index("stage('Validate delivery configuration')") : pipeline.index(
-                "stage('Publish images')"
+            pipeline.index("stage('Validate and test')") : pipeline.index(
+                "stage('Registry and Buildx preflight')"
             )
         ]
 
-        audit = validation.index("make jenkins-plugin-audit")
-        self.assertIn("timeout(time: 5, unit: 'MINUTES')", validation[:audit])
-        self.assertIn(
-            "catchError(buildResult: 'FAILURE', stageResult: 'FAILURE')",
-            validation[:audit],
-        )
+        self.assertIn("failFast true", validation)
+        self.assertIn("make jenkins-plugin-audit", validation)
+        self.assertNotIn("catchError", validation)
 
     def test_pipeline_aborts_superseded_builds(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
@@ -83,12 +72,12 @@ class JenkinsProductionGateTest(unittest.TestCase):
 
     def test_pipeline_binds_readonly_kubeconfig_to_final_gate(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
-        validation_index = pipeline.index("stage('Validate and publish')")
-        gate_index = pipeline.index("stage('Production revision gate')")
+        validation_index = pipeline.index("stage('Validate and test')")
+        gate_index = pipeline.index("stage('Observe Wiretrap production')")
 
         self.assertGreater(gate_index, validation_index)
         gate = pipeline[gate_index:]
-        self.assertIn("currentBuild.currentResult == 'SUCCESS'", gate)
+        self.assertIn("env.IS_PROMOTION_COMMIT == 'true'", gate)
         self.assertIn("ssl-proxy-prod-readonly-kubeconfig", gate)
         self.assertIn("variable: 'PROD_KUBECONFIG'", gate)
         self.assertIn('expected_revision="$(git rev-parse HEAD)"', gate)
@@ -99,8 +88,8 @@ class JenkinsProductionGateTest(unittest.TestCase):
     def test_pipeline_refreshes_dind_tls_context_before_preflight(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
         preflight_start = pipeline.index("stage('Registry and Buildx preflight')")
-        validation_start = pipeline.index("stage('Validate and publish')")
-        preflight = pipeline[preflight_start:validation_start]
+        publication_start = pipeline.index("stage('Publish immutable images')")
+        preflight = pipeline[preflight_start:publication_start]
 
         inspect = 'docker context inspect "$DOCKER_CONTEXT_NAME"'
         remove = 'docker context rm --force "$DOCKER_CONTEXT_NAME"'
@@ -118,15 +107,14 @@ class JenkinsProductionGateTest(unittest.TestCase):
     ) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
         preflight_start = pipeline.index("stage('Registry and Buildx preflight')")
-        validation_start = pipeline.index("stage('Validate and publish')")
-        preflight = pipeline[preflight_start:validation_start]
+        publication_start = pipeline.index("stage('Publish immutable images')")
+        preflight = pipeline[preflight_start:publication_start]
 
         capacity_path = "/proc/sys/fs/inotify/max_user_instances"
         threshold = "required_inotify_instances=1024"
         invalid_value_guard = "''|*[!0-9]*)"
         insufficient_capacity_guard = (
-            'if [ "$current_inotify_instances" '
-            '-lt "$required_inotify_instances" ]; then'
+            '[ "$current_inotify_instances" -ge "$required_inotify_instances" ]'
         )
         recovery_command = (
             "docker compose -f docker-compose.ci.yaml up -d --no-deps "

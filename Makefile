@@ -62,6 +62,7 @@ publish: octopus-source-integrity
 		--atheros-search-ui-keycloak-url "$(ATHEROS_SEARCH_UI_KEYCLOAK_URL)" \
 		--atheros-search-ui-keycloak-realm "$(ATHEROS_SEARCH_UI_KEYCLOAK_REALM)" \
 		--atheros-search-ui-keycloak-client-id "$(ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID)" \
+		--source-revision "$(PARENT_COMMIT)" \
 		--make-command "$(MAKE)"
 
 build-all: $(BUILD_TARGETS)

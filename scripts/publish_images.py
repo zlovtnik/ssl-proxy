@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import json
 import shlex
 import subprocess
 import sys
@@ -38,6 +40,7 @@ class PublishSettings:
     atheros_search_ui_keycloak_url: str
     atheros_search_ui_keycloak_realm: str
     atheros_search_ui_keycloak_client_id: str
+    source_revision: str
     make_command: tuple[str, ...] = ("make",)
 
 
@@ -95,7 +98,11 @@ def publish_environment(
     *,
     run_command: RunCommand = _run_command,
     output: Callable[[str], None] = print,
+    max_workers: int = 1,
+    manifest_out: Path | None = None,
 ) -> int:
+    if max_workers < 1 or max_workers > 3:
+        raise ImageContractError("max workers must be between 1 and 3")
     contracts = load_image_contracts(repository_root, settings.environment)
     output(
         f"Publishing {len(contracts)} Kubernetes images for ENV={settings.environment}; "
@@ -103,22 +110,53 @@ def publish_environment(
     )
     with tempfile.TemporaryDirectory(prefix="ssl-proxy-buildx-metadata-") as directory:
         metadata_root = Path(directory)
-        for contract in contracts:
+        def publish_one(contract: ImageContract) -> tuple[int, str, dict[str, str] | None]:
             metadata_path = metadata_root / f"{contract.service}.json"
             command = make_publish_command(contract, metadata_path, settings)
-            output(f"\nPublishing {contract.service} -> {contract.repository}")
             returncode = run_command(command, repository_root)
             if returncode != 0:
-                output(
-                    f"{contract.service}: publication failed with exit status {returncode}"
+                return (
+                    returncode or 1,
+                    f"{contract.service}: publication failed with exit status {returncode}",
+                    None,
                 )
-                return returncode or 1
             try:
                 pushed_digest = load_buildx_digest(metadata_path)
             except ImageContractError as error:
-                output(f"{contract.service}: cannot verify pushed digest: {error}")
-                return 1
-            output(publication_report(contract, pushed_digest, settings.environment))
+                return 1, f"{contract.service}: cannot verify pushed digest: {error}", None
+            return (
+                0,
+                publication_report(contract, pushed_digest, settings.environment),
+                {
+                    "service": contract.service,
+                    "slice": contract.slice_name,
+                    "repository": contract.repository,
+                    "digest": pushed_digest,
+                    "sourceRevision": settings.source_revision,
+                },
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(publish_one, contracts))
+        for _returncode, report, _entry in results:
+            output(report)
+        failures = [returncode for returncode, _report, _entry in results if returncode]
+        if failures:
+            return failures[0]
+        entries = [entry for _returncode, _report, entry in results if entry is not None]
+        if manifest_out is not None:
+            manifest_out.parent.mkdir(parents=True, exist_ok=True)
+            document = {
+                "schemaVersion": 1,
+                "environment": settings.environment,
+                "sourceRevision": settings.source_revision,
+                "generatedAt": settings.build_date,
+                "images": entries,
+            }
+            manifest_out.write_text(
+                json.dumps(document, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
     return 0
 
 
@@ -143,6 +181,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--atheros-search-ui-keycloak-client-id", default="atheros-search-ui"
     )
     parser.add_argument("--make-command", default="make")
+    parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--max-workers", type=int, default=1)
+    parser.add_argument("--manifest-out", type=Path)
     return parser
 
 
@@ -162,10 +203,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         atheros_search_ui_keycloak_client_id=(
             arguments.atheros_search_ui_keycloak_client_id
         ),
+        source_revision=arguments.source_revision,
         make_command=tuple(shlex.split(arguments.make_command)),
     )
     try:
-        return publish_environment(arguments.repository_root.resolve(), settings)
+        return publish_environment(
+            arguments.repository_root.resolve(),
+            settings,
+            max_workers=arguments.max_workers,
+            manifest_out=arguments.manifest_out,
+        )
     except ImageContractError as error:
         print(f"image contract error: {error}", file=sys.stderr)
         return 2

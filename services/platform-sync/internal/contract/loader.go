@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"strconv"
@@ -54,12 +55,18 @@ type Validation struct {
 	Postgres            PostgresValidation            `yaml:"postgres"`
 }
 
+type Readiness struct {
+	ConfigMapName string `yaml:"configMapName"`
+}
+
 type Contract struct {
 	Environment string                 `yaml:"environment"`
 	Namespace   string                 `yaml:"namespace"`
+	Readiness   Readiness              `yaml:"readiness"`
 	Inputs      []Input                `yaml:"inputs"`
 	Validation  Validation             `yaml:"validation"`
 	Raw         map[string]interface{} `yaml:"-"`
+	SHA256      string                 `yaml:"-"`
 }
 
 func Load(path string) (*Contract, error) {
@@ -155,9 +162,13 @@ func Load(path string) (*Contract, error) {
 	c := &Contract{
 		Environment: getString(spec, "environment"),
 		Namespace:   getString(spec, "namespace"),
+		Readiness: Readiness{
+			ConfigMapName: getStringMap(spec, "readiness", "configMapName"),
+		},
 		Inputs:      inputs,
 		Validation:  v,
 		Raw:         raw,
+		SHA256:      fmt.Sprintf("%x", sha256.Sum256(data)),
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -172,6 +183,9 @@ func (c *Contract) Validate() error {
 	}
 	if strings.TrimSpace(c.Namespace) == "" {
 		return fmt.Errorf("contract namespace is required")
+	}
+	if strings.TrimSpace(c.Readiness.ConfigMapName) == "" {
+		return fmt.Errorf("contract readiness ConfigMap name is required")
 	}
 	if len(c.Inputs) == 0 {
 		return fmt.Errorf("contract must declare at least one input")
@@ -215,6 +229,14 @@ func (c *Contract) Validate() error {
 		return fmt.Errorf("contract PostgreSQL bootstrap endpoint is incomplete")
 	}
 	return nil
+}
+
+func getStringMap(m map[string]interface{}, outer, inner string) string {
+	value, ok := m[outer].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	return getString(value, inner)
 }
 
 func (c *Contract) ByIdentity() map[string]Input {

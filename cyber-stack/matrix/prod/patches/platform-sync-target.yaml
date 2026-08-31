@@ -30,5 +30,6 @@ rules:
     resources: ["configmaps"]
     resourceNames:
       - platform-sync-lock
+      - platform-ready
       - ssl-proxy-prod-postgres-endpoint
     verbs: ["get", "update"]

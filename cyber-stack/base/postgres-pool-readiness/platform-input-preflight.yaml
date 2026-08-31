@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-platform-input-preflight
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: platform-input-preflight
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: platform-input-preflight
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: verify
+          image: busybox@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ceu"]
+          args:
+            - |
+              [ "$PLATFORM_READY" = "true" ]
+              [ "$PLATFORM_CONTRACT_SHA256" = "$EXPECTED_CONTRACT_SHA256" ]
+              case "$PLATFORM_LAST_SUCCESS_UNIX" in ''|*[!0-9]*) exit 1 ;; esac
+              echo "validated platform inputs are ready"
+          env:
+            - name: EXPECTED_CONTRACT_SHA256
+              value: "24c6c69843f89b8005f9c8792134733f3ca88bc679f06693e9cccbc3ea591f3a"
+            - name: PLATFORM_READY
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-ready
+                  key: ready
+            - name: PLATFORM_CONTRACT_SHA256
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-ready
+                  key: contract-sha256
+            - name: PLATFORM_LAST_SUCCESS_UNIX
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-ready
+                  key: last-success-unix
+          resources:
+            requests:
+              cpu: 5m
+              memory: 4Mi
+            limits:
+              cpu: 50m
+              memory: 16Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532

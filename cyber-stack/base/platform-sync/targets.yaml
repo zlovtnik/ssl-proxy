@@ -128,6 +128,15 @@ metadata:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: platform-ready
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: platform-ready
+    app.kubernetes.io/managed-by: platform-sync
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: platform-sync-lock
   labels:
     app.kubernetes.io/name: ssl-proxy
