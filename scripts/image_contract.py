@@ -182,6 +182,26 @@ def load_image_contracts(repository_root: Path, environment: str) -> tuple[Image
     return tuple(contracts)
 
 
+def registry_authority(contracts: Sequence[ImageContract]) -> str:
+    """Return the one registry authority shared by deployable image contracts."""
+
+    authorities = {
+        split_registry_repository(contract.repository)[0] for contract in contracts
+    }
+    if len(authorities) != 1:
+        raise ImageContractError(
+            "deployable image contracts must use one registry authority; found "
+            + ", ".join(sorted(authorities))
+        )
+    return next(iter(authorities))
+
+
+def load_registry_authority(repository_root: Path, environment: str) -> str:
+    """Load and validate the registry authority for one environment."""
+
+    return registry_authority(load_image_contracts(repository_root, environment))
+
+
 def repository_from_kustomization(path: Path, service: str) -> str:
     entries = _image_entries(path)
     matches = entries.get(service, [])
@@ -271,6 +291,11 @@ def _metadata_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _registry_authority_command(arguments: argparse.Namespace) -> int:
+    print(load_registry_authority(arguments.repository_root, arguments.environment))
+    return 0
+
+
 def _repository_command(arguments: argparse.Namespace) -> int:
     print(repository_from_kustomization(arguments.kustomization, arguments.service))
     return 0
@@ -287,6 +312,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract.add_argument("--format", choices=("tsv", "json"), default="tsv")
     contract.set_defaults(handler=_contract_command)
+
+    authority = subparsers.add_parser(
+        "registry-authority",
+        help="print the shared registry authority for the selected image contract",
+    )
+    authority.add_argument("--environment", choices=ENVIRONMENTS, default="prod")
+    authority.add_argument(
+        "--repository-root", type=Path, default=Path(__file__).resolve().parents[1]
+    )
+    authority.set_defaults(handler=_registry_authority_command)
 
     metadata = subparsers.add_parser(
         "buildx-digest", help="extract the pushed manifest digest from Buildx metadata"

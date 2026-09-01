@@ -32,6 +32,28 @@ dedicated privileged Docker-in-Docker engine. Treat that engine as a
 root-equivalent build boundary and never expose its network or Jenkins to the
 public internet.
 
+Jenkins publication and production Kubernetes use the same externally
+reachable registry authority, `192.168.1.242:5000`. The pipeline compares the
+controller's `CI_REGISTRY` with the production Kustomize image contract before
+running the test matrix and fails closed if the value is absent or stale.
+Compose derives `CI_REGISTRY` from `SERVER_IP`; changing `.env` or the Compose
+environment does not update an existing controller container. With no build
+running, confirm the rendered Jenkins environment and recreate only the
+controller:
+
+```bash
+docker compose -f docker-compose.ci.yaml config
+docker compose -f docker-compose.ci.yaml up -d --no-deps --force-recreate jenkins
+docker compose -f docker-compose.ci.yaml ps jenkins
+docker compose -f docker-compose.ci.yaml exec jenkins printenv CI_REGISTRY
+```
+
+The final command must print `192.168.1.242:5000`. This recreation preserves
+the registry, Docker-in-Docker engine, `jenkins-home` volume, and Kubernetes
+desired state. After the controller is healthy, retry the failed pipeline; its
+Buildx preflight will replace a builder whose insecure-registry configuration
+does not match the external authority.
+
 If the registry uses plain HTTP, configure every Kubernetes node runtime to
 trust the exact `SERVER_IP:5000` authority, then verify a CRI pull. Keep port
 `5000` behind a host firewall. Use TLS and authentication when the network is
@@ -137,9 +159,8 @@ Documentation and GitOps validation run alongside publication and still fail
 the overall build without cancelling successful image pushes. After all those
 branches succeed, the Vault-provisioned read-only production kubeconfig gates
 the build on all three Argo CD Applications reaching the triggering full Git
-SHA as `Synced/Healthy`. Jenkins uses the registry's internal Compose name while
-Kubernetes uses the private server address; both names reach the same registry
-storage.
+SHA as `Synced/Healthy`. Jenkins publication and Kubernetes pulls both use the
+private server authority declared by the production image contract.
 
 ## Retention and garbage collection
 

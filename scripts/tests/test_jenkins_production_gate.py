@@ -11,6 +11,37 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class JenkinsProductionGateTest(unittest.TestCase):
+    def test_registry_authority_is_fail_closed_before_validation(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        checkout = pipeline.index("checkout scm")
+        authority = pipeline.index(
+            "scripts/image_contract.py registry-authority --environment prod"
+        )
+        validation = pipeline.index("stage('Validate and test')")
+        registry_guard = pipeline[checkout:validation]
+
+        self.assertLess(checkout, authority)
+        self.assertLess(authority, validation)
+        self.assertIn('${CI_REGISTRY:-}', registry_guard)
+        self.assertIn('[ "$CI_REGISTRY" != "$expected_registry" ]', registry_guard)
+        self.assertIn("controller environment drift", registry_guard)
+        self.assertIn(
+            "docker compose -f docker-compose.ci.yaml up -d --no-deps "
+            "--force-recreate jenkins",
+            registry_guard,
+        )
+        self.assertNotIn("?: 'registry:5000'", pipeline)
+
+    def test_compose_derives_ci_registry_from_server_ip(self) -> None:
+        compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
+            encoding="utf-8"
+        )
+        jenkins_service = compose[
+            compose.index("  jenkins:\n") : compose.index("\nnetworks:")
+        ]
+
+        self.assertIn('CI_REGISTRY: "${SERVER_IP}:5000"', jenkins_service)
+
     def test_docker_context_is_ready_before_containerized_validation(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
         preflight = pipeline.index("stage('Docker test preflight')")

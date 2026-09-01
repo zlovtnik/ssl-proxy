@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import sys
@@ -17,6 +19,8 @@ from image_contract import (  # noqa: E402
     extract_buildx_digest,
     load_buildx_digest,
     load_image_contracts,
+    load_registry_authority,
+    main,
 )
 
 
@@ -63,6 +67,53 @@ class ImageContractTest(unittest.TestCase):
         self.assertTrue(all(contract.repository.startswith("prod.registry.test/release/prod/") for contract in prod))
         self.assertEqual("data-plane", dev[-1].slice_name)
         self.assertEqual("app-stack", dev[0].slice_name)
+
+    def test_registry_authority_prints_shared_environment_authority(self) -> None:
+        self.assertEqual(
+            "prod.registry.test",
+            load_registry_authority(self.root, "prod"),
+        )
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = main(
+                [
+                    "registry-authority",
+                    "--environment",
+                    "prod",
+                    "--repository-root",
+                    str(self.root),
+                ]
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("prod.registry.test\n", output.getvalue())
+
+    def test_registry_authority_rejects_conflicting_authorities_with_exit_two(self) -> None:
+        app = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
+        content = app.read_text(encoding="utf-8").replace(
+            "prod.registry.test/release/prod/ssl-proxy",
+            "other.registry.test/release/prod/ssl-proxy",
+            1,
+        )
+        app.write_text(content, encoding="utf-8")
+
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            exit_code = main(
+                [
+                    "registry-authority",
+                    "--environment",
+                    "prod",
+                    "--repository-root",
+                    str(self.root),
+                ]
+            )
+
+        self.assertEqual(2, exit_code)
+        self.assertIn("must use one registry authority", errors.getvalue())
+        self.assertIn("other.registry.test", errors.getvalue())
+        self.assertIn("prod.registry.test", errors.getvalue())
 
     def test_rejects_missing_duplicate_tagged_and_invalid_digest_mappings(self) -> None:
         app = self.root / "cyber-stack/matrix/dev/app-stack/kustomization.yaml"
