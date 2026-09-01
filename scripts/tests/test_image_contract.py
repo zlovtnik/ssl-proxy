@@ -21,6 +21,7 @@ from image_contract import (  # noqa: E402
     load_image_contracts,
     load_registry_authority,
     main,
+    update_image_digest,
 )
 
 
@@ -164,6 +165,18 @@ class ImageContractTest(unittest.TestCase):
             )
         with self.assertRaises(ImageContractError):
             extract_buildx_digest({"containerimage.config.digest": PIN})
+
+    def test_updates_only_digest_and_accepts_kustomize_bare_equals(self) -> None:
+        path = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
+        original = path.read_text(encoding="utf-8") + "delimiter: =\n"
+        path.write_text(original, encoding="utf-8")
+        replacement = "sha256:" + "c" * 64
+
+        update_image_digest(path, "ssl-proxy", replacement)
+
+        updated = path.read_text(encoding="utf-8")
+        self.assertEqual(original.replace(PIN, replacement, 1), updated)
+        self.assertTrue(updated.endswith("delimiter: =\n"))
 
 
 if __name__ == "__main__":

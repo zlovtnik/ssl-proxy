@@ -73,26 +73,27 @@ validate_overlay() {
     exit 1
   fi
 
-  # Kustomize may reorder mapping keys. Resolve the existing repository
-  # structurally instead of depending on name/newName line order.
+  # Resolve the existing repository structurally instead of depending on
+  # name/newName line order.
   python3 "$repository_root/scripts/image_contract.py" repository \
     --kustomization "$kustomization" --service "$service"
 }
 
 update_overlay() {
   local overlay="$1"
-  local new_name="$2"
 
-  (
-    cd "$overlay"
-    "$kustomize" edit set image "$service=$new_name@$digest"
-  )
+  # Update only the digest scalar. `kustomize edit set image` rewrites the
+  # entire file and can emit YAML 1.2 scalars that PyYAML 1.1 cannot load.
+  python3 "$repository_root/scripts/image_contract.py" set-digest \
+    --kustomization "$overlay/kustomization.yaml" \
+    --service "$service" \
+    --digest "$digest"
   "$kustomize" build --load-restrictor LoadRestrictionsNone "$overlay" >/dev/null
 }
 
 slice_overlay="$repository_root/cyber-stack/matrix/$environment/$slice"
-slice_new_name="$(validate_overlay "$slice_overlay")"
+validate_overlay "$slice_overlay" >/dev/null
 
-update_overlay "$slice_overlay" "$slice_new_name"
+update_overlay "$slice_overlay"
 
 echo "Updated $environment/$slice $service to $digest"

@@ -1,7 +1,7 @@
 # Jenkins Image CI
 
-Jenkins provides the private build-and-publish loop for the repository's nine
-first-party image targets. The checked-in controller configuration creates one
+Jenkins provides the private build-and-publish loop for the repository's eight
+Kubernetes image contracts. The checked-in controller configuration creates one
 `ssl-proxy-images` pipeline from the root `Jenkinsfile`; the root Makefile
 remains the authoritative image inventory and build contract.
 
@@ -131,9 +131,8 @@ the responsible direct requirement where a newer compatible version exists,
 regenerate the lock, rebuild the controller and rerun the audit before merging.
 
 The target set covers the proxy, Octopus coordinator, Atheros Sensor, Atheros
-Search, key rotator, Search UI, both Schema Migrator images and the PostgreSQL runtime
-schema. The key rotator remains Compose-only because it controls the staged
-local rotation harness via the Docker API.
+Search, Search UI, both Schema Migrator images and the PostgreSQL runtime
+schema. The key rotator remains Compose-only and is not published by Jenkins.
 
 The Octopus branch also assembles and inspects the JAR. Publication performs
 the same artifact check inside the image build and embeds the exact parent and

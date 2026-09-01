@@ -5,13 +5,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import yaml
+from yaml.nodes import MappingNode, ScalarNode, SequenceNode
 
 
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -31,6 +34,21 @@ FIRST_PARTY_SERVICES = tuple(service for service, _slice in SERVICE_SLICES)
 
 class ImageContractError(ValueError):
     """The canonical Kustomize image contract is invalid."""
+
+
+class KustomizationLoader(yaml.SafeLoader):
+    """Load Kustomize's YAML 1.2 output with PyYAML's YAML 1.1 parser."""
+
+
+def _construct_value_as_string(
+    loader: KustomizationLoader, node: ScalarNode
+) -> str:
+    return loader.construct_scalar(node)
+
+
+KustomizationLoader.add_constructor(
+    "tag:yaml.org,2002:value", _construct_value_as_string
+)
 
 
 @dataclass(frozen=True)
@@ -77,7 +95,9 @@ def split_registry_repository(repository: str) -> tuple[str, str]:
 
 def _load_kustomization(path: Path) -> Mapping[str, Any]:
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document = yaml.load(
+            path.read_text(encoding="utf-8"), Loader=KustomizationLoader
+        )
     except FileNotFoundError as error:
         raise ImageContractError(f"canonical Kustomization is missing: {path}") from error
     except yaml.YAMLError as error:
@@ -212,6 +232,76 @@ def repository_from_kustomization(path: Path, service: str) -> str:
     return _validate_repository(matches[0].get("newName"), service=service, path=path)
 
 
+def _mapping_value(node: MappingNode, field: str) -> ScalarNode | SequenceNode | MappingNode | None:
+    for key_node, value_node in node.value:
+        if isinstance(key_node, ScalarNode) and key_node.value == field:
+            return value_node
+    return None
+
+
+def update_image_digest(path: Path, service: str, digest: str) -> None:
+    """Update one validated image digest without reformatting the Kustomization."""
+
+    digest = validate_digest(digest)
+    repository_from_kustomization(path, service)
+    content = path.read_text(encoding="utf-8")
+    try:
+        document_node = yaml.compose(content, Loader=KustomizationLoader)
+    except yaml.YAMLError as error:
+        raise ImageContractError(f"cannot parse {path}: {error}") from error
+    if not isinstance(document_node, MappingNode):
+        raise ImageContractError(f"expected a Kustomization document: {path}")
+    images_node = _mapping_value(document_node, "images")
+    if not isinstance(images_node, SequenceNode):
+        raise ImageContractError(f"images must be a list in {path}")
+
+    digest_nodes: list[ScalarNode] = []
+    for image_node in images_node.value:
+        if not isinstance(image_node, MappingNode):
+            continue
+        name_node = _mapping_value(image_node, "name")
+        if not isinstance(name_node, ScalarNode) or name_node.value != service:
+            continue
+        digest_node = _mapping_value(image_node, "digest")
+        if not isinstance(digest_node, ScalarNode):
+            raise ImageContractError(f"{path}: {service} must define a digest")
+        digest_nodes.append(digest_node)
+    if len(digest_nodes) != 1:
+        raise ImageContractError(
+            f"{path} must contain exactly one image mapping for {service}; "
+            f"found {len(digest_nodes)}"
+        )
+
+    digest_node = digest_nodes[0]
+    updated = (
+        content[: digest_node.start_mark.index]
+        + digest
+        + content[digest_node.end_mark.index :]
+    )
+    if updated == content:
+        return
+    mode = path.stat().st_mode
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as temporary:
+            temporary.write(updated)
+            temporary_name = temporary.name
+        os.chmod(temporary_name, mode)
+        os.replace(temporary_name, path)
+    finally:
+        if temporary_name is not None:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+
+
 def extract_buildx_digest(metadata: Mapping[str, Any]) -> str:
     """Extract the pushed manifest digest from Docker Buildx metadata."""
 
@@ -301,6 +391,11 @@ def _repository_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _set_digest_command(arguments: argparse.Namespace) -> int:
+    update_image_digest(arguments.kustomization, arguments.service, arguments.digest)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -335,6 +430,14 @@ def build_parser() -> argparse.ArgumentParser:
     repository.add_argument("--kustomization", type=Path, required=True)
     repository.add_argument("--service", required=True)
     repository.set_defaults(handler=_repository_command)
+
+    set_digest = subparsers.add_parser(
+        "set-digest", help="update one image digest without reformatting the file"
+    )
+    set_digest.add_argument("--kustomization", type=Path, required=True)
+    set_digest.add_argument("--service", required=True)
+    set_digest.add_argument("--digest", required=True)
+    set_digest.set_defaults(handler=_set_digest_command)
     return parser
 
 

@@ -93,8 +93,8 @@ class BumpImageDigestTest(unittest.TestCase):
         untouched = (self.root / "cyber-stack/matrix/prod/data-plane/kustomization.yaml").read_text()
         self.assertIn(f"digest: {DIGEST}", changed)
         self.assertIn("digest: sha256:" + "b" * 64, untouched)
-        self.assertIn("edit set image ssl-proxy=registry/ssl-proxy@" + DIGEST, self.log.read_text())
         self.assertIn("build --load-restrictor LoadRestrictionsNone", self.log.read_text())
+        self.assertNotIn("edit set image", self.log.read_text())
 
     def test_maps_schema_image_to_data_plane(self) -> None:
         result = self.run_helper("postgres-runtime-schema", "prod", DIGEST)
@@ -127,6 +127,25 @@ class BumpImageDigestTest(unittest.TestCase):
             f"digest: {DIGEST}",
             (self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml").read_text(),
         )
+
+    def test_preserves_other_kustomization_content(self) -> None:
+        path = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
+        content = path.read_text(encoding="utf-8")
+        path.write_text(
+            content
+            + "replacements:\n"
+            + "  - source:\n"
+            + "      kind: ConfigMap\n"
+            + "    targets:\n"
+            + "      - options:\n"
+            + '          delimiter: "="\n',
+            encoding="utf-8",
+        )
+
+        result = self.run_helper("ssl-proxy", "prod", DIGEST)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn('          delimiter: "="\n', path.read_text(encoding="utf-8"))
 
     def test_rejects_invalid_arguments_without_editing(self) -> None:
         for arguments in (

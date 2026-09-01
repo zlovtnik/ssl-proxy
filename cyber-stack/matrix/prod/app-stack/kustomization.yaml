@@ -15,25 +15,25 @@ resources:
 - ../../../base/cloudflared
 - ../../../base/public-gateway
 images:
-- digest: sha256:7313414747940780243b966483e50dd25dc4d25aea78707c9dab622e6257a7bb
+- digest: sha256:c72f94da5ca2de082f8a678bb563ede5709a2e171b1073ee5b26fb5929664d36
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
-- digest: sha256:6dc839a84ea9aa80b0cae52b4158dd79abff6364827e7689b257411dea130618
+- digest: sha256:b519f6ac6f995ae554978f982b96e2897df0f91c32043fcc45d7f86fb6d053b0
   name: atheros-search-ui
   newName: 192.168.1.242:5000/atheros-search-ui
-- digest: sha256:d3bf1e3a262a9520407a15689b0c7a0242ceb3f07b898d17f9fc09db6ec0ec9e
+- digest: sha256:0680eab95e6ce5a3efb6c68a2490e48bf42791f18dfb47c3c80b832525e64f69
   name: atheros-sensor
   newName: 192.168.1.242:5000/atheros-sensor
 - digest: sha256:12b0bfa2187c1db04ff6f76b61f966fb6651f2e5c4f72daffd8fb7d927ae24f7
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
-- digest: sha256:9eda68bc458ae4532d00e4c6ec7fa1014f0f192862c3e1c3e70160dd258f33ba
+- digest: sha256:f545285150b2bcf4c6aa255ab8d8b46fcc7e36636728fc1a795ade81953133f1
   name: schema-migrator-backend
   newName: 192.168.1.242:5000/schema-migrator-backend
-- digest: sha256:1dc8ff2dd1868dfc2c98997ca5b538f0ddc39088ac18b6f24f96ed70f3b87443
+- digest: sha256:d6b37902155f169607ed527caa03aaafb3bff8ad3a8c825aee0cf14007c1fbf0
   name: schema-migrator-ui
   newName: 192.168.1.242:5000/schema-migrator-ui
-- digest: sha256:a8b00eea911c67a4b4da509bd3516bcb0478c01eebeb4c9e24b08d9e2faa6797
+- digest: sha256:2fe6295a9a487486937cf1ecd5998bceaa0cbc7113578f75f1f20529b0585bbb
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
 patches:
@@ -53,15 +53,15 @@ patches:
 - path: ../patches/keycloak-direct-postgres.yaml
 replacements:
 - source:
+    fieldPath: data.IDENTITY_PUBLIC_ORIGIN
     kind: ConfigMap
     name: ssl-proxy-platform-config
-    fieldPath: data.IDENTITY_PUBLIC_ORIGIN
   targets:
-  - select:
-      kind: Deployment
-      name: ssl-proxy-schema-migrator-keycloak
-    fieldPaths:
+  - fieldPaths:
     - spec.template.spec.containers.[name=keycloak].args.2
     options:
       delimiter: "="
       index: 1
+    select:
+      kind: Deployment
+      name: ssl-proxy-schema-migrator-keycloak
