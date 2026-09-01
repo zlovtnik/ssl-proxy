@@ -30,7 +30,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
             "--force-recreate jenkins",
             registry_guard,
         )
-        self.assertNotIn("?: 'registry:5000'", pipeline)
+        self.assertNotIn("registry:5000", pipeline)
 
     def test_compose_derives_ci_registry_from_server_ip(self) -> None:
         compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
