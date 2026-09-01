@@ -10,6 +10,11 @@ resources:
   - ../../../base/platform-sync/role.yaml
   - ../../../base/platform-sync/rolebinding.yaml
   - ../../../base/platform-sync/targets.yaml
+  - ../../../base/reloader/serviceaccount.yaml
+  - ../../../base/reloader/role.yaml
+  - ../../../base/reloader/rolebinding.yaml
+  - ../../../base/reloader/deployment.yaml
+  - ../../../base/reloader/networkpolicy.yaml
 patches:
   - path: ../patches/identity-hostname.yaml
   - patch: |-

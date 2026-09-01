@@ -119,6 +119,10 @@ Key metrics:
 - `platform_sync_runs_total{result}` - Completed runs by result
 - `platform_sync_last_run_duration_seconds` - Most recent run duration
 - `platform_sync_last_inputs_written` - Inputs written by the most recent run
+- `platform_sync_objects_changed_total` - Platform input objects whose data changed
+
+Each write event includes `changed` and `contract_input_index`. Object names
+remain redacted by policy; the stable index follows the contract input order.
 - `platform_sync_last_run_timestamp_seconds` - Most recent completion time
 
 ### Systemd Timers
@@ -148,7 +152,7 @@ If the credential generator fails:
 If the sync fails:
 
 1. Check logs: `journalctl -u vault-k8s-sync -f`
-2. Verify all 18 Secrets exist: `kubectl get secrets -n prod-ssl-proxy`
+2. Verify all 19 declared Secrets exist: `kubectl get secrets -n prod-ssl-proxy`
 3. Check the health file: `jq . /run/platform-sync/health.json`
 4. Run a dry run: `SYNC_DRY_RUN=true /opt/platform-sync/bin/platform-sync`
 

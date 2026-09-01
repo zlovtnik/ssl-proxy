@@ -168,6 +168,8 @@ docs-check:
 
 gitops-check:
 	python3 scripts/image_contract.py contract --environment prod >/dev/null
+	python3 scripts/gen_contract_digest.py --check
+	python3 scripts/gen_platform_sync_rbac.py --check
 	python3 scripts/check-gitops.py --kustomize "$(KUSTOMIZE_EDITOR)"
 
 test:

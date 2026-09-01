@@ -44,7 +44,7 @@ been exposed:
    jq . /run/platform-sync/health.json
    ```
 
-2. Verify all 18 Secrets exist:
+2. Verify all 19 declared Secrets exist:
    ```bash
    kubectl get secrets -n prod-ssl-proxy -o name | wc -l
    ```
@@ -130,6 +130,48 @@ If the sync fails to write secrets:
    ```bash
    kubectl get configmap platform-sync-lock -n prod-ssl-proxy -o yaml
    ```
+
+## Credential Updated but Workload Is Stale
+
+If `platform-ready` reports success but a workload still behaves as though it
+has an old credential or PostgreSQL endpoint, verify the Reloader path without
+printing any Secret values:
+
+1. Confirm platform-sync published the current contract and inspect the
+   changed-object events:
+
+   ```bash
+   kubectl get configmap platform-ready -n prod-ssl-proxy \
+     -o jsonpath='{.data.ready}{" "}{.data.contract-sha256}{"\n"}'
+   journalctl -u vault-k8s-sync --since '-15 minutes' \
+     | rg '"changed":true'
+   ```
+
+2. Confirm Reloader is ready and observed the update:
+
+   ```bash
+   kubectl get deployment ssl-proxy-reloader -n prod-ssl-proxy
+   kubectl logs deployment/ssl-proxy-reloader -n prod-ssl-proxy --since=15m
+   ```
+
+3. Compare object and rollout metadata, not credential contents:
+
+   ```bash
+   kubectl get secret postgres-atheros-search -n prod-ssl-proxy \
+     -o jsonpath='{.metadata.resourceVersion}{"\n"}'
+   kubectl get deployment ssl-proxy-atheros-search -n prod-ssl-proxy \
+     -o jsonpath='{.metadata.generation}{" "}{.status.observedGeneration}{"\n"}'
+   kubectl get pods -n prod-ssl-proxy \
+     -l app.kubernetes.io/component=atheros-search \
+     -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp
+   kubectl get deployment ssl-proxy-atheros-search -n prod-ssl-proxy \
+     -w -o custom-columns=GENERATION:.metadata.generation,OBSERVED:.status.observedGeneration,AVAILABLE:.status.availableReplicas
+   ```
+
+Do not perform an imperative restart or mutate the Deployment. A missing
+generation change is a Reloader failure to diagnose; an incomplete replacement
+is a workload startup/readiness failure. Correct Git desired state or the
+platform input and let Argo CD reconcile it.
 
 ## Rollback
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/zlovtnik/ssl-proxy/services/platform-sync/internal/contract"
@@ -42,18 +43,18 @@ func (c dynamicObjectClient) Update(ctx context.Context, resource schema.GroupVe
 // fetched and accepted by server-side dry-run before any real object update.
 // If a later update still fails because cluster state changed, already-applied
 // objects are restored from the in-memory preflight snapshot.
-func WriteAll(ctx context.Context, logger *log.Logger, c *contract.Contract, secretData map[string]map[string][]byte, lockTTL int, dryRun bool) error {
+func WriteAll(ctx context.Context, logger *log.Logger, c *contract.Contract, secretData map[string]map[string][]byte, lockTTL int, dryRun bool) (int, error) {
 	client, err := newObjectClient()
 	if err != nil {
-		return fmt.Errorf("kubernetes client: %w", err)
+		return 0, fmt.Errorf("kubernetes client: %w", err)
 	}
 	return writeAllWithClient(ctx, logger, client, c, secretData, lockTTL, dryRun)
 }
 
-func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectClient, c *contract.Contract, secretData map[string]map[string][]byte, lockTTL int, dryRun bool) error {
+func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectClient, c *contract.Contract, secretData map[string]map[string][]byte, lockTTL int, dryRun bool) (int, error) {
 	lock, err := acquireLock(ctx, logger, client, c.Namespace, lockTTL, dryRun)
 	if err != nil {
-		return fmt.Errorf("acquire lock: %w", err)
+		return 0, fmt.Errorf("acquire lock: %w", err)
 	}
 	if lock != nil {
 		defer releaseLock(ctx, logger, client, lock)
@@ -64,7 +65,11 @@ func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectCl
 	})
 	desired, previous, err := prepareObjects(ctx, client, c, secretData)
 	if err != nil {
-		return err
+		return 0, err
+	}
+	changed := make([]bool, len(c.Inputs))
+	for i := range c.Inputs {
+		changed[i] = objectDataChanged(previous[i], desired[i])
 	}
 
 	for i, input := range inputs {
@@ -72,16 +77,16 @@ func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectCl
 			DryRun:       []string{metav1.DryRunAll},
 			FieldManager: fieldManager,
 		}); err != nil {
-			return fmt.Errorf("server-side dry-run %s/%s: %w", input.Kind, input.Name, err)
+			return 0, fmt.Errorf("server-side dry-run %s/%s: %w", input.Kind, input.Name, err)
 		}
 		logger.Info("server-side dry-run accepted", "kind", input.Kind, "name", input.Name)
 	}
 	if dryRun {
-		return nil
+		return 0, nil
 	}
 
 	if err := saveSnapshot(logger, inputs, previous); err != nil {
-		return fmt.Errorf("save pre-write snapshot: %w", err)
+		return 0, fmt.Errorf("save pre-write snapshot: %w", err)
 	}
 
 	applied := make([]int, 0, len(desired))
@@ -91,11 +96,17 @@ func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectCl
 		})
 		if updateErr != nil {
 			rollbackErr := rollbackObjects(ctx, logger, client, c.Namespace, inputs, previous, applied)
-			return errors.Join(fmt.Errorf("write %s/%s: %w", input.Kind, input.Name, updateErr), rollbackErr)
+			return 0, errors.Join(fmt.Errorf("write %s/%s: %w", input.Kind, input.Name, updateErr), rollbackErr)
 		}
 		desired[i] = updated
 		applied = append(applied, i)
-		logger.Info("wrote object", "kind", input.Kind, "name", input.Name)
+		logger.Info(
+			"wrote object",
+			"kind", input.Kind,
+			"name", input.Name,
+			"contract_input_index", i,
+			"changed", changed[i],
+		)
 	}
 
 	readinessIndex := len(c.Inputs)
@@ -103,17 +114,32 @@ func writeAllWithClient(ctx context.Context, logger *log.Logger, client objectCl
 	readiness, err := readinessObject(desired[readinessIndex], readinessInput, c.SHA256)
 	if err != nil {
 		rollbackErr := rollbackObjects(ctx, logger, client, c.Namespace, inputs, previous, applied)
-		return errors.Join(err, rollbackErr)
+		return 0, errors.Join(err, rollbackErr)
 	}
 	updated, updateErr := client.Update(ctx, configMapResource, c.Namespace, readiness, metav1.UpdateOptions{FieldManager: fieldManager})
 	if updateErr != nil {
 		rollbackErr := rollbackObjects(ctx, logger, client, c.Namespace, inputs, previous, applied)
-		return errors.Join(fmt.Errorf("write ConfigMap/%s: %w", readinessInput.Name, updateErr), rollbackErr)
+		return 0, errors.Join(fmt.Errorf("write ConfigMap/%s: %w", readinessInput.Name, updateErr), rollbackErr)
 	}
 	desired[readinessIndex] = updated
-	logger.Info("wrote object", "kind", readinessInput.Kind, "name", readinessInput.Name)
+	logger.Info("wrote object", "kind", readinessInput.Kind, "name", readinessInput.Name, "changed", true)
 
-	return nil
+	changedCount := 0
+	for _, value := range changed {
+		if value {
+			changedCount++
+		}
+	}
+	return changedCount, nil
+}
+
+func objectDataChanged(previous, desired *unstructured.Unstructured) bool {
+	previousData, previousFound, previousErr := unstructured.NestedMap(previous.Object, "data")
+	desiredData, desiredFound, desiredErr := unstructured.NestedMap(desired.Object, "data")
+	return previousErr != nil ||
+		desiredErr != nil ||
+		previousFound != desiredFound ||
+		!reflect.DeepEqual(previousData, desiredData)
 }
 
 func prepareObjects(ctx context.Context, client objectClient, c *contract.Contract, secretData map[string]map[string][]byte) ([]*unstructured.Unstructured, []*unstructured.Unstructured, error) {

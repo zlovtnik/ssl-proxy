@@ -36,6 +36,7 @@ DEFAULT_SECRET_VOLUME = "ssl-proxy-platform-postgres-secrets"
 DEFAULT_TLS_VOLUME = "ssl-proxy-platform-postgres-tls"
 DEFAULT_VAULT_MOUNT = "secret"
 DEFAULT_VAULT_PREFIX = "ssl-proxy/prod"
+DEFAULT_KUBERNETES_NAMESPACE = "prod-ssl-proxy"
 HELPER_IMAGE = "alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
 
 
@@ -69,6 +70,19 @@ ACCOUNTS = (
     Account("postgres-keycloak", "keycloak_runtime", "keycloak_runtime.password", False),
 )
 ACCOUNTS_BY_ROLE = {account.role: account for account in ACCOUNTS}
+ROLLOUT_TARGETS = {
+    "octopus_runtime": ("postgres-pgbouncer", "ssl-proxy-java-coordinator"),
+    "atheros_search_runtime": (
+        "postgres-pgbouncer",
+        "ssl-proxy-atheros-search",
+    ),
+    "schema_migrator_runtime": (
+        "postgres-pgbouncer",
+        "ssl-proxy-schema-migrator-backend",
+    ),
+    "keycloak_runtime": ("ssl-proxy-schema-migrator-keycloak",),
+    "schema_owner": (),
+}
 
 
 @dataclass(frozen=True)
@@ -93,6 +107,10 @@ class Runtime:
     vault_prefix: str
     repository_root: Path
     health_timeout: int
+    kubectl: str
+    kube_context: str | None
+    kubernetes_namespace: str
+    rollout_timeout: int
 
 
 class Runner:
@@ -619,6 +637,11 @@ def rotate_password(
     if account is None:
         raise MaintenanceError(f"unsupported PostgreSQL role: {role}")
     require_confirmation(confirmation, f"ROTATE-{role}")
+    rollout_targets = ROLLOUT_TARGETS[role]
+    rollout_generations = {
+        deployment: deployment_generation(runner, runtime, deployment)
+        for deployment in rollout_targets
+    }
     old_password = vault_read(
         runner, runtime, account.secret_name, "password", single_line=True
     )
@@ -689,7 +712,80 @@ def rotate_password(
         if detail:
             raise MaintenanceError(f"rotation failed: {primary_error}; {detail}") from primary_error
         raise MaintenanceError(f"rotation failed and was rolled back: {primary_error}") from primary_error
-    print(f"rotated {role}; run platform-sync, then verify consumers before revoking old Vault versions")
+    print(f"rotated {role}; waiting for platform-sync and Reloader")
+    try:
+        verify_deployment_rollouts(runner, runtime, rollout_generations)
+    except MaintenanceError as error:
+        raise MaintenanceError(
+            f"rotation completed, but consumer rollout verification failed: {error}; "
+            "do not revoke old Vault versions"
+        ) from error
+    if rollout_targets:
+        print(f"verified consumer rollout for {role}")
+    else:
+        print(f"{role} has no long-running consumer Deployment to roll")
+
+
+def kubectl_arguments(runtime: Runtime, *arguments: str) -> tuple[str, ...]:
+    command = [runtime.kubectl]
+    if runtime.kube_context:
+        command.extend(("--context", runtime.kube_context))
+    command.extend(("--namespace", runtime.kubernetes_namespace, *arguments))
+    return tuple(command)
+
+
+def deployment_generation(runner: Runner, runtime: Runtime, deployment: str) -> int:
+    result = runner.run(
+        kubectl_arguments(
+            runtime,
+            "get",
+            "deployment",
+            deployment,
+            "-o",
+            "jsonpath={.metadata.generation}",
+        )
+    )
+    try:
+        return int(result.stdout.strip())
+    except ValueError as error:
+        raise MaintenanceError(
+            f"could not read generation for Deployment/{deployment}"
+        ) from error
+
+
+def verify_deployment_rollouts(
+    runner: Runner,
+    runtime: Runtime,
+    previous_generations: Mapping[str, int],
+) -> None:
+    if not previous_generations:
+        return
+    deadline = time.monotonic() + runtime.rollout_timeout
+    pending = dict(previous_generations)
+    while pending and time.monotonic() < deadline:
+        for deployment, previous in tuple(pending.items()):
+            if deployment_generation(runner, runtime, deployment) > previous:
+                del pending[deployment]
+        if pending:
+            time.sleep(2)
+    if pending:
+        names = ", ".join(sorted(pending))
+        raise MaintenanceError(
+            f"Reloader did not advance Deployment generation for {names} "
+            f"within {runtime.rollout_timeout}s"
+        )
+    for deployment in previous_generations:
+        remaining = max(1, int(deadline - time.monotonic()))
+        runner.run(
+            kubectl_arguments(
+                runtime,
+                "rollout",
+                "status",
+                f"deployment/{deployment}",
+                f"--timeout={remaining}s",
+            ),
+            capture=False,
+        )
 
 
 def validate_private_file(path: Path, label: str) -> None:
@@ -776,6 +872,10 @@ def runtime_from_args(arguments: argparse.Namespace) -> Runtime:
         vault_prefix=arguments.vault_prefix.strip("/"),
         repository_root=arguments.repository_root.resolve(),
         health_timeout=arguments.health_timeout,
+        kubectl=arguments.kubectl,
+        kube_context=arguments.kube_context,
+        kubernetes_namespace=arguments.kubernetes_namespace,
+        rollout_timeout=arguments.rollout_timeout,
     )
 
 
@@ -791,6 +891,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--vault-prefix", default=DEFAULT_VAULT_PREFIX)
     result.add_argument("--repository-root", type=Path, default=REPOSITORY_ROOT)
     result.add_argument("--health-timeout", type=int, default=120)
+    result.add_argument("--kubectl", default=os.environ.get("KUBECTL", "kubectl"))
+    result.add_argument("--kube-context")
+    result.add_argument("--kubernetes-namespace", default=DEFAULT_KUBERNETES_NAMESPACE)
+    result.add_argument("--rollout-timeout", type=int, default=600)
     commands = result.add_subparsers(dest="command", required=True)
     commands.add_parser("check", help="run read-only prerequisite checks")
     commands.add_parser("stage-secrets", help="stage all five Vault passwords in the Docker secret volume")
@@ -823,7 +927,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             require_tools("docker", "vault")
             reset_database(runner, runtime, contract, arguments.confirm)
         elif arguments.command == "rotate-password":
-            require_tools("docker", "vault")
+            tools = ["docker", "vault"]
+            if ROLLOUT_TARGETS[arguments.role]:
+                tools.append(runtime.kubectl)
+            require_tools(*tools)
             rotate_password(
                 runner,
                 runtime,

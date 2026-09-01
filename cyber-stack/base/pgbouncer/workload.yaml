@@ -5,6 +5,7 @@ metadata:
   namespace: ssl-proxy
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+    reloader.stakater.com/auto: "true"
   labels:
     app.kubernetes.io/name: postgres-pgbouncer
     app.kubernetes.io/component: pgbouncer

@@ -14,10 +14,11 @@ import (
 const defaultMetricsPath = "/run/platform-sync/metrics.prom"
 
 type state struct {
-	Counts       map[string]uint64 `json:"counts"`
-	LastDuration float64           `json:"lastDurationSeconds"`
-	LastInputs   int               `json:"lastInputsWritten"`
-	LastRun      time.Time         `json:"lastRun"`
+	Counts         map[string]uint64 `json:"counts"`
+	LastDuration   float64           `json:"lastDurationSeconds"`
+	LastInputs     int               `json:"lastInputsWritten"`
+	ObjectsChanged uint64            `json:"objectsChangedTotal"`
+	LastRun        time.Time         `json:"lastRun"`
 }
 
 type Recorder struct {
@@ -57,11 +58,12 @@ func (r *Recorder) SetRunStart(start time.Time) {
 	r.start = start
 }
 
-func (r *Recorder) RecordRun(result string, inputsWritten int) error {
+func (r *Recorder) RecordRun(result string, inputsWritten, objectsChanged int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.state.Counts[result]++
 	r.state.LastInputs = inputsWritten
+	r.state.ObjectsChanged += uint64(objectsChanged)
 	r.state.LastRun = time.Now().UTC()
 	if !r.start.IsZero() {
 		r.state.LastDuration = time.Since(r.start).Seconds()
@@ -94,6 +96,9 @@ func (r *Recorder) persist() error {
 	output.WriteString("# HELP platform_sync_last_inputs_written Inputs written by the most recent run.\n")
 	output.WriteString("# TYPE platform_sync_last_inputs_written gauge\n")
 	fmt.Fprintf(&output, "platform_sync_last_inputs_written %d\n", r.state.LastInputs)
+	output.WriteString("# HELP platform_sync_objects_changed_total Platform input objects whose data changed.\n")
+	output.WriteString("# TYPE platform_sync_objects_changed_total counter\n")
+	fmt.Fprintf(&output, "platform_sync_objects_changed_total %d\n", r.state.ObjectsChanged)
 	output.WriteString("# HELP platform_sync_last_run_timestamp_seconds Unix timestamp of the most recent completed run.\n")
 	output.WriteString("# TYPE platform_sync_last_run_timestamp_seconds gauge\n")
 	fmt.Fprintf(&output, "platform_sync_last_run_timestamp_seconds %d\n", r.state.LastRun.Unix())

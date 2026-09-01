@@ -5,6 +5,7 @@ metadata:
   namespace: ssl-proxy
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+    reloader.stakater.com/auto: "true"
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: proxy
@@ -106,11 +107,8 @@ spec:
                 configMapKeyRef:
                   name: ssl-proxy-platform-config
                   key: SYNC_STREAM_NAMES
-            - name: ADMIN_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: proxy-admin-key
-                  key: api-key
+            - name: ADMIN_API_KEY_FILE
+              value: "/run/local-secrets/admin_api_key"
             - name: ADMIN_BIND_ADDR
               value: "127.0.0.1"
             - name: RUST_LOG
@@ -217,12 +215,19 @@ spec:
         - name: sync-outbox
           emptyDir: {}
         - name: runtime-secrets
-          secret:
-            secretName: proxy-runtime-secrets
+          projected:
             defaultMode: 0440
-            items:
-              - key: wg-obfuscation-key
-                path: wg_obfuscation_key
+            sources:
+              - secret:
+                  name: proxy-runtime-secrets
+                  items:
+                    - key: wg-obfuscation-key
+                      path: wg_obfuscation_key
+              - secret:
+                  name: proxy-admin-key
+                  items:
+                    - key: api-key
+                      path: admin_api_key
         - name: tun-device
           hostPath:
             path: /dev/net/tun

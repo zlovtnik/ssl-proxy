@@ -84,7 +84,15 @@ func (l *Logger) write(event *zerolog.Event, msg string, args ...interface{}) {
 		if !ok || key == "" {
 			key = fmt.Sprintf("field_%d", i/2)
 		}
-		event.Str(l.redact(key), l.redact(fmt.Sprint(args[i+1])))
+		key = l.redact(key)
+		switch value := args[i+1].(type) {
+		case bool:
+			event.Bool(key, value)
+		case int:
+			event.Int(key, value)
+		default:
+			event.Str(key, l.redact(fmt.Sprint(value)))
+		}
 	}
 	if len(args)%2 != 0 {
 		event.Str("unpaired_field", l.redact(fmt.Sprint(args[len(args)-1])))

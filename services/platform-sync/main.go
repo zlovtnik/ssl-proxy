@@ -121,32 +121,33 @@ func run(ctx context.Context, logger *log.Logger, configured options, recorder *
 	}
 	logger.Info("all validations passed")
 
-	if err := sync.WriteAll(ctx, logger, c, secretData, configured.lockTTL, configured.dryRun); err != nil {
+	objectsChanged, err := sync.WriteAll(ctx, logger, c, secretData, configured.lockTTL, configured.dryRun)
+	if err != nil {
 		return fail(logger, recorder, healthRecorder, "sync_error", "Kubernetes sync failed", err)
 	}
 	if configured.dryRun {
 		logger.Info("dry run complete", "duration", time.Since(start))
-		recordRun(logger, recorder, "dry_run", 0)
+		recordRun(logger, recorder, "dry_run", 0, 0)
 		recordHealth(logger, healthRecorder, "ok", "validation and Kubernetes server-side dry-run complete")
 		return 0
 	}
 
 	duration := time.Since(start)
 	logger.Info("sync complete", "duration", duration)
-	recordRun(logger, recorder, "success", len(c.Inputs))
+	recordRun(logger, recorder, "success", len(c.Inputs), objectsChanged)
 	recordHealth(logger, healthRecorder, "ok", fmt.Sprintf("sync complete at %s", time.Now().UTC().Format(time.RFC3339)))
 	return 0
 }
 
 func fail(logger *log.Logger, recorder *metrics.Recorder, healthRecorder *health.Recorder, result, message string, err error) int {
 	logger.Error(message, "error", err)
-	recordRun(logger, recorder, result, 0)
+	recordRun(logger, recorder, result, 0, 0)
 	recordHealth(logger, healthRecorder, "error", message)
 	return 1
 }
 
-func recordRun(logger *log.Logger, recorder *metrics.Recorder, result string, inputs int) {
-	if err := recorder.RecordRun(result, inputs); err != nil {
+func recordRun(logger *log.Logger, recorder *metrics.Recorder, result string, inputs, objectsChanged int) {
+	if err := recorder.RecordRun(result, inputs, objectsChanged); err != nil {
 		logger.Error("failed to persist metrics", "error", err)
 	}
 }

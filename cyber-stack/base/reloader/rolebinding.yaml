@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ssl-proxy-reloader
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: reloader
+    app.kubernetes.io/managed-by: kustomize
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ssl-proxy-reloader
+subjects:
+  - kind: ServiceAccount
+    name: ssl-proxy-reloader

@@ -6,7 +6,7 @@
 Production credentials have one source of truth: HashiCorp Vault KV-v2 under
 `secret/ssl-proxy/prod`. The value-free
 [`platform-input-contract.yaml`](../cyber-stack/platform-input-contract.yaml)
-defines the 18 Kubernetes Secrets and one ConfigMap that platform-sync may
+defines the 19 Kubernetes Secrets and one ConfigMap that platform-sync may
 materialize. Local-development generators are not production provisioning
 tools.
 
@@ -35,7 +35,7 @@ tools.
 | `services/platform-sync/cmd/cred-gen` | Requests a short-lived Kubernetes token and writes an ephemeral kubeconfig | Active host helper | Keep; never turn it into a workload-secret generator |
 | `scripts/bootstrap-vault-platform-sync.sh` | Creates the renewable read-only Vault service token | Active one-time bootstrap | Keep; require administrator capability preflight and immediate removal of temporary root access |
 | `scripts/bootstrap-postgres-rotation-token.sh` | Creates a short-lived writer limited to five PostgreSQL accounts and the PgBouncer user list | Active operator helper | Keep separate from platform-sync and revoke after each rotation window |
-| `scripts/platform_postgres.py` | Preflights/resets the external PostgreSQL volume, rotates one account with rollback, and validates TLS candidates | Active operator helper | Keep Kubernetes-write-free; require exact destructive confirmations |
+| `scripts/platform_postgres.py` | Preflights/resets PostgreSQL, rotates one account with rollback, verifies Reloader-driven consumer replacement, and validates TLS candidates | Active operator helper | Keep Kubernetes-write-free; require exact destructive confirmations |
 | `scripts/gen-secrets` | Generates local files and a local environment by loading `WgKeyRotator.Secrets` | Local compatibility | Extract into a dedicated local-only tool, preserving output and permission tests |
 | `apps/wg-key-rotator/lib/.../secrets.ex` | Implements the local generator used by `scripts/gen-secrets` | Coupling only | Remove the coupling before retiring the application |
 | `apps/wg-key-rotator` staged rotation | Generates keys, writes checkout-local files and controls local compatibility services | Not production-capable | Retire after local generator extraction unless a separately approved local harness still needs it |

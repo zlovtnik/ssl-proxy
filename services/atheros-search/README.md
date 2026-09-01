@@ -42,7 +42,8 @@ In particular, `DATABASE_URL` and `SYNC_DATABASE_URL` are not fallbacks for
 | `ATHSEARCH_POSTGRES_PORT` | `5432` | Postgres SQL port |
 | `ATHSEARCH_POSTGRES_DATABASE` | `sync` | Required canonical database |
 | `ATHSEARCH_POSTGRES_USER` | `atheros_search_runtime` | Dedicated non-root account |
-| `ATHSEARCH_POSTGRES_PASSWORD` | None | Required password when the compatibility DSN is absent |
+| `ATHSEARCH_POSTGRES_PASSWORD` | None | Compatibility password when the DSN is absent; mutually exclusive with the file setting |
+| `ATHSEARCH_POSTGRES_PASSWORD_FILE` | None | Preferred file containing the password when the DSN is absent |
 | `ATHSEARCH_POSTGRES_TLS_CA_FILE` | None | PEM CA for verified TLS; when set the DSN must use `sslmode=verify-full` |
 | `ATHSEARCH_POSTGRES_TLS_CERT_FILE` | None | Optional PEM client certificate; must be supplied with the key |
 | `ATHSEARCH_POSTGRES_TLS_KEY_FILE` | None | Optional PEM client private key; must be supplied with the certificate |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -98,6 +99,78 @@ def render_production() -> list[dict[str, object]]:
 
 
 class PlatformInputContractTest(unittest.TestCase):
+    def test_checked_in_contract_digest_matches_preflight(self) -> None:
+        subprocess.run(
+            [sys.executable, "scripts/gen_contract_digest.py", "--check"],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+        )
+
+    def test_contract_digest_write_and_check_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            contract = root / CONTRACT_RELATIVE_PATH
+            preflight = root / (
+                "cyber-stack/base/postgres-pool-readiness/"
+                "platform-input-preflight.yaml"
+            )
+            contract.parent.mkdir(parents=True)
+            preflight.parent.mkdir(parents=True)
+            shutil.copyfile(REPOSITORY_ROOT / CONTRACT_RELATIVE_PATH, contract)
+            shutil.copyfile(
+                REPOSITORY_ROOT
+                / "cyber-stack/base/postgres-pool-readiness/platform-input-preflight.yaml",
+                preflight,
+            )
+            preflight.write_text(
+                re.sub(
+                    r'(?<=value: ")[0-9a-f]{64}(?=")',
+                    "0" * 64,
+                    preflight.read_text(encoding="utf-8"),
+                    count=1,
+                ),
+                encoding="utf-8",
+            )
+            stale = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/gen_contract_digest.py",
+                    "--check",
+                    "--root",
+                    str(root),
+                ],
+                cwd=REPOSITORY_ROOT,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            self.assertNotEqual(0, stale.returncode)
+            self.assertIn("expected:", stale.stderr)
+            self.assertIn("actual:", stale.stderr)
+            subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/gen_contract_digest.py",
+                    "--write",
+                    "--root",
+                    str(root),
+                ],
+                cwd=REPOSITORY_ROOT,
+                check=True,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/gen_contract_digest.py",
+                    "--check",
+                    "--root",
+                    str(root),
+                ],
+                cwd=REPOSITORY_ROOT,
+                check=True,
+            )
+
     def test_bootstrap_contract_pins_postgres_pgvector_and_vault(self) -> None:
         contract = load_platform_input_contract(REPOSITORY_ROOT)
 

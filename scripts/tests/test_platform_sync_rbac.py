@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -29,6 +30,13 @@ def load_yaml(path: Path) -> list[dict]:
 
 
 class PlatformSyncRbacTest(unittest.TestCase):
+    def test_generated_rbac_matches_platform_input_contract(self) -> None:
+        subprocess.run(
+            [sys.executable, "scripts/gen_platform_sync_rbac.py", "--check"],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+        )
+
     def test_host_scripts_have_valid_bash_syntax(self) -> None:
         for script in (INSTALLER, VAULT_BOOTSTRAP, POSTGRES_ROTATION_BOOTSTRAP):
             subprocess.run(["bash", "-n", str(script)], check=True)

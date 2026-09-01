@@ -64,9 +64,11 @@ unset VAULT_TOKEN
 export VAULT_TOKEN="$(<"$POSTGRES_ROTATION_TOKEN_FILE")"
 ```
 
-Rotate one role at a time in a maintenance window:
+Ensure the platform-sync timer is active, then rotate one role at a time in a
+maintenance window:
 
 ```bash
+systemctl is-active vault-k8s-sync.timer
 python3 scripts/platform_postgres.py rotate-password \
   --role octopus_runtime \
   --confirm ROTATE-octopus_runtime
@@ -76,11 +78,12 @@ The command preflights role existence and PgBouncer/Vault parity, generates a
 256-bit password, updates PostgreSQL, verifies a `verify-full` login, updates
 the narrow Vault paths and refreshes the host secret file. Failures trigger a
 best-effort rollback to the prior database and Vault values. It never writes
-Kubernetes; run the supported platform-sync service immediately, verify all
-consumers, then revoke the short-lived token:
+Kubernetes. After the Vault update, it waits for Reloader to advance each
+affected Deployment generation and then observes rollout completion. The
+default timeout is 600 seconds and can be changed with `--rollout-timeout`.
+Only revoke the short-lived token after this verification succeeds:
 
 ```bash
-sudo systemctl start vault-k8s-sync.service
 vault token revoke -self
 unset VAULT_TOKEN
 rm -f "$POSTGRES_ROTATION_TOKEN_FILE"

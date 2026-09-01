@@ -55,7 +55,7 @@ func (f *fakeObjectClient) Update(_ context.Context, resource schema.GroupVersio
 
 func TestWriteAllDryRunPreflightsEveryObjectWithoutMutation(t *testing.T) {
 	client, c, data := writerFixture()
-	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, true); err != nil {
+	if _, err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, update := range client.updates {
@@ -76,7 +76,7 @@ func TestWriteAllRollsBackEarlierUpdatesAfterApplyFailure(t *testing.T) {
 	client, c, data := writerFixture()
 	client.failName = "two"
 	t.Setenv("SYNC_SNAPSHOT_PATH", filepath.Join(t.TempDir(), "snapshot.json"))
-	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, false); err == nil {
+	if _, err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, false); err == nil {
 		t.Fatal("injected apply failure was not returned")
 	}
 	firstData, found, nestedErr := unstructured.NestedStringMap(client.objects["secrets/one"].Object, "data")
@@ -105,12 +105,29 @@ func TestDesiredObjectCopiesOnlyDeclaredKeys(t *testing.T) {
 	}
 }
 
+func TestObjectDataChangedComparesOnlyObjectData(t *testing.T) {
+	previous := object("Secret", "target", map[string]interface{}{"password": "c2VjcmV0"})
+	desired := previous.DeepCopy()
+	desired.SetResourceVersion("2")
+	if objectDataChanged(previous, desired) {
+		t.Fatal("resource metadata change was reported as a data change")
+	}
+	desired.Object["data"] = map[string]interface{}{"password": "bmV3"}
+	if !objectDataChanged(previous, desired) {
+		t.Fatal("Secret data change was not reported")
+	}
+}
+
 func TestWriteAllPublishesReadinessLast(t *testing.T) {
 	client, c, data := writerFixture()
 	t.Setenv("SYNC_SNAPSHOT_PATH", filepath.Join(t.TempDir(), "snapshot.json"))
 	before := time.Now().UTC().Unix()
-	if err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, false); err != nil {
+	changed, err := writeAllWithClient(context.Background(), log.New(), client, c, data, 600, false)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if changed != 2 {
+		t.Fatalf("changed object count = %d, want 2", changed)
 	}
 	after := time.Now().UTC().Unix()
 	if got := client.updates[len(client.updates)-2]; got.name != "platform-ready" || got.dryRun {

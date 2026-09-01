@@ -15,7 +15,7 @@ This file governs `services/platform-sync` relative to the repository root.
 - `internal/health/` exposes health status on localhost:9106.
 
 ## Guardrails
-- Never log secret values. The redacting logger replaces all 18 secret names with `[REDACTED]`.
+- Never log secret values. The redacting logger replaces every declared platform input name with `[REDACTED]`.
 - Read every Vault path before writing anything to Kubernetes.
 - Perform server-side dry runs before real writes.
 - Use optimistic concurrency (resourceVersion) for distributed locking.

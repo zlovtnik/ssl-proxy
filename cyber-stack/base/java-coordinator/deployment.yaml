@@ -5,6 +5,7 @@ metadata:
   namespace: ssl-proxy
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+    reloader.stakater.com/auto: "true"
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: java-coordinator
@@ -302,11 +303,8 @@ spec:
               value: "sync"
             - name: POSTGRES_USER
               value: "octopus_runtime"
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-octopus
-                  key: password
+            - name: POSTGRES_PASSWORD_FILE
+              value: "/var/run/postgres-password/password"
             - name: POSTGRES_POOL_SIZE
               value: "20"
             - name: POSTGRES_HEALTHCHECK_RESERVE
@@ -413,6 +411,9 @@ spec:
             - name: pgbouncer-ca
               mountPath: /var/run/pgbouncer-tls
               readOnly: true
+            - name: postgres-password
+              mountPath: /var/run/postgres-password
+              readOnly: true
       volumes:
         - name: topics-manifest
           configMap:
@@ -427,6 +428,13 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+        - name: postgres-password
+          secret:
+            secretName: postgres-octopus
+            defaultMode: 0440
+            items:
+              - key: password
+                path: password
 ---
 apiVersion: v1
 kind: Service

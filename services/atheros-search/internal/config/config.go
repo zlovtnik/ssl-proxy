@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -70,7 +71,14 @@ func Load() (Config, error) {
 		postgresPort := envInt("ATHSEARCH_POSTGRES_PORT", 5432)
 		postgresDatabase := envString("ATHSEARCH_POSTGRES_DATABASE", "sync")
 		postgresUser := envString("ATHSEARCH_POSTGRES_USER", "atheros_search_runtime")
-		postgresPassword := os.Getenv("ATHSEARCH_POSTGRES_PASSWORD")
+		postgresPassword, err := secretValue(
+			"ATHSEARCH_POSTGRES_PASSWORD",
+			"ATHSEARCH_POSTGRES_PASSWORD_FILE",
+			os.ReadFile,
+		)
+		if err != nil {
+			return Config{}, err
+		}
 		if postgresHost == "" {
 			return Config{}, errors.New("ATHSEARCH_POSTGRES_HOST is required when ATHSEARCH_POSTGRES_DSN is not set")
 		}
@@ -234,6 +242,27 @@ func Load() (Config, error) {
 		return cfg, errors.New("ATHSEARCH_DENSE_OVERFETCH_FACTOR must be between 1 and 100")
 	}
 	return cfg, nil
+}
+
+func secretValue(name, fileName string, readFile func(string) ([]byte, error)) (string, error) {
+	value := os.Getenv(name)
+	path := strings.TrimSpace(os.Getenv(fileName))
+	if value != "" && path != "" {
+		return "", fmt.Errorf("%s and %s cannot both be configured", name, fileName)
+	}
+	if path == "" {
+		return value, nil
+	}
+	contents, err := readFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", fileName, err)
+	}
+	contents = bytes.TrimSuffix(contents, []byte("\n"))
+	contents = bytes.TrimSuffix(contents, []byte("\r"))
+	if len(contents) == 0 || bytes.ContainsAny(contents, "\r\n\x00") {
+		return "", fmt.Errorf("%s must contain one non-empty line", fileName)
+	}
+	return string(contents), nil
 }
 
 func ClampTopK(v int32) int {

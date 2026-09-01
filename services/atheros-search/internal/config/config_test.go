@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ func setRequiredPostgresEnv(t *testing.T) {
 	for _, key := range []string{
 		"ATHSEARCH_POSTGRES_HOST",
 		"ATHSEARCH_POSTGRES_PASSWORD",
+		"ATHSEARCH_POSTGRES_PASSWORD_FILE",
 		"ATHSEARCH_POSTGRES_TLS_CERT_FILE",
 		"ATHSEARCH_POSTGRES_TLS_KEY_FILE",
 		"ATHSEARCH_POSTGRES_MAX_OPEN_CONNS",
@@ -30,6 +33,29 @@ func setRequiredPostgresEnv(t *testing.T) {
 	for _, key := range []string{"ATHSEARCH_API_TOKEN_SHA256", "ATHSEARCH_JWT_ISSUER", "ATHSEARCH_JWT_JWKS_URI", "ATHSEARCH_JWT_AUDIENCE", "ATHSEARCH_JWT_CLIENT_ID"} {
 		t.Setenv(key, "")
 	}
+}
+
+func TestLoadReadsPostgresPasswordFromFile(t *testing.T) {
+	setRequiredPostgresEnv(t)
+	t.Setenv("ATHSEARCH_POSTGRES_DSN", "")
+	t.Setenv("ATHSEARCH_POSTGRES_HOST", "postgres.example.test")
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_CA_FILE", "")
+	t.Setenv("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", "")
+	path := filepath.Join(t.TempDir(), "password")
+	require.NoError(t, os.WriteFile(path, []byte("file secret\n"), 0o600))
+	t.Setenv("ATHSEARCH_POSTGRES_PASSWORD_FILE", path)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	parsed, err := url.Parse(cfg.PostgresDSN)
+	require.NoError(t, err)
+	password, present := parsed.User.Password()
+	require.True(t, present)
+	require.Equal(t, "file secret", password)
+
+	t.Setenv("ATHSEARCH_POSTGRES_PASSWORD", "ambiguous")
+	_, err = Load()
+	require.ErrorContains(t, err, "cannot both be configured")
 }
 
 func TestLoadValidatesJWTConfiguration(t *testing.T) {

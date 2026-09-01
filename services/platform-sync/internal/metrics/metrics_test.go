@@ -13,11 +13,11 @@ func TestRecorderPersistsCountersAcrossProcesses(t *testing.T) {
 	t.Setenv("SYNC_METRICS_PATH", path)
 	first := NewRecorder()
 	first.SetRunStart(time.Now().Add(-time.Second))
-	if err := first.RecordRun("success", 19); err != nil {
+	if err := first.RecordRun("success", 19, 2); err != nil {
 		t.Fatal(err)
 	}
 	second := NewRecorder()
-	if err := second.RecordRun("success", 19); err != nil {
+	if err := second.RecordRun("success", 19, 3); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -26,5 +26,8 @@ func TestRecorderPersistsCountersAcrossProcesses(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `platform_sync_runs_total{result="success"} 2`) {
 		t.Fatalf("counter was not persisted: %s", data)
+	}
+	if !strings.Contains(string(data), "platform_sync_objects_changed_total 5") {
+		t.Fatalf("changed-object counter was not persisted: %s", data)
 	}
 }

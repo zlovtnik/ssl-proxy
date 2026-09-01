@@ -37,6 +37,11 @@ lives under `matrix/prod/` and `matrix/staging/`.
 | `data-plane` | `ssl-proxy-prod-data-plane` | PostgreSQL integration, Redpanda, MinIO, Redis, schema execution and telemetry |
 | `app-stack` | `ssl-proxy-prod-app-stack` | Proxy, Octopus, Search/UI, sensor and Schema Migrator |
 
+The production bootstrap slice also runs a namespace-scoped Reloader controller.
+It watches only `prod-ssl-proxy` and rolls opted-in Deployments when referenced
+platform Secrets or ConfigMaps change. The controller-owned pod-template reload
+annotation is the only Reloader field excluded from Argo CD reconciliation.
+
 `applicationset-workloads.yaml` creates the three slice Applications for each
 environment. They track `main`, use automated sync with pruning and
 self-healing, and refuse empty desired state. The data-plane entry retains the

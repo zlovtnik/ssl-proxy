@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-reloader
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: reloader
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: reloader
+  policyTypes:
+    - Ingress
+  ingress: []

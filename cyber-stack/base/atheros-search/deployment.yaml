@@ -5,6 +5,7 @@ metadata:
   namespace: ssl-proxy
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+    reloader.stakater.com/auto: "true"
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: atheros-search
@@ -51,11 +52,8 @@ spec:
               value: "sync"
             - name: ATHSEARCH_POSTGRES_USER
               value: "atheros_search_runtime"
-            - name: ATHSEARCH_POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-atheros-search
-                  key: password
+            - name: ATHSEARCH_POSTGRES_PASSWORD_FILE
+              value: "/var/run/postgres-password/password"
             - name: ATHSEARCH_POSTGRES_TLS_CA_FILE
               value: "/var/run/pgbouncer-tls/ca.crt"
             - name: ATHSEARCH_POSTGRES_TLS_SERVER_NAME
@@ -118,6 +116,9 @@ spec:
             - name: pgbouncer-ca
               mountPath: /var/run/pgbouncer-tls
               readOnly: true
+            - name: postgres-password
+              mountPath: /var/run/postgres-password
+              readOnly: true
           startupProbe:
             httpGet:
               path: /healthz
@@ -163,6 +164,13 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+        - name: postgres-password
+          secret:
+            secretName: postgres-atheros-search
+            defaultMode: 0440
+            items:
+              - key: password
+                path: password
 ---
 apiVersion: v1
 kind: Service
