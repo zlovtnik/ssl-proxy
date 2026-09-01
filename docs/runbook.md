@@ -18,7 +18,7 @@ local Kustomize context.
 6. Record PostgreSQL schema manifest hashes, runtime grants and Redpanda consumer
    group offsets when those contracts change.
 
-## Release and promotion
+## Release and manual production updates
 
 The private Jenkins `ssl-proxy-images` pipeline publishes `main` after its
 delivery checks pass through the unchanged registry-directed `publish-all`
@@ -38,10 +38,12 @@ pass, then apply the relevant dev slice to an explicit local context and complet
 its acceptance checks. Jenkins and the Compose-only key rotator continue to use
 `make publish-all REGISTRY=192.168.1.242:5000 REGISTRY_PLAIN_HTTP=1`.
 
-Production promotion is a separate pull request that copies the accepted dev
-digests into the matching prod Kustomizations. After merge, Argo CD reconciles
-the change automatically. Kubernetes uses the committed digest references, not
-the mutable commit or `latest` registry tags.
+Jenkins archives the release manifest and a manual bump-command report. Run
+only the desired `make bump-digest-<service> ENV=prod DIGEST=<digest>` commands,
+inspect the rendered diff, and commit the resulting production Kustomization
+changes directly to `main` when ready. Argo CD reconciles the committed change.
+Kubernetes uses the committed digest references, not the mutable commit or
+`latest` registry tags.
 
 For an Octopus recovery rebuild, start from a new recursive checkout of `main`,
 run `make octopus-source-integrity`, and use a cache-free Buildx build. Load the

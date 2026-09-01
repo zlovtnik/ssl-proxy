@@ -92,14 +92,6 @@ corresponds to the declared Loki username and password. Only after every check
 passes may the platform workflow materialize all objects idempotently in
 `prod-ssl-proxy`. A partial write is a failed sync.
 
-The Jenkins file credential `ssl-proxy-prod-readonly-kubeconfig` is a separate
-platform input sourced from Vault. It authenticates the
-`argocd/ssl-proxy-production-gate` ServiceAccount. The platform workflow writes
-it to a restrictive host file outside the checkout; the local CI Compose
-harness mounts that file as a Docker secret and Jenkins Configuration as Code
-imports it as a secret-file credential. It is never copied into this repository
-or placed under the ignored local `secrets/` directory.
-
 ## Rotation
 
 1. Identify all consumers and the overlap window.

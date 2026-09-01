@@ -15,6 +15,7 @@ pipeline {
     DOCKER_CONTEXT_NAME = 'ssl-proxy-ci-docker'
     REGISTRY_PLAIN_HTTP = '1'
     RELEASE_MANIFEST = 'artifacts/release-manifest.json'
+    BUMP_COMMANDS_REPORT = 'artifacts/bump-digest-commands.txt'
   }
 
   stages {
@@ -50,32 +51,8 @@ pipeline {
             script: 'test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)" && printf true || printf false',
             returnStdout: true
           ).trim()
-          env.IS_PROMOTION_COMMIT = sh(
-            script: '''
-              set -eu
-              case "$(git log -1 --pretty=%B)" in
-                *'[digest-promotion]'*) ;;
-                *) printf false; exit 0 ;;
-              esac
-              git rev-parse HEAD^ >/dev/null 2>&1 || {
-                echo 'marked digest promotion commit has no parent' >&2
-                exit 1
-              }
-              changed_paths="$(git diff --name-only HEAD^ HEAD)"
-              [ -n "$changed_paths" ] || { printf false; exit 0; }
-              unexpected_paths="$(printf '%s\n' "$changed_paths" | grep -Ev \
-                '^(cyber-stack/matrix/prod/app-stack/kustomization.yaml|cyber-stack/matrix/prod/data-plane/kustomization.yaml)$' || true)"
-              [ -z "$unexpected_paths" ] || {
-                echo "marked digest promotion changed unexpected paths:" >&2
-                printf '%s\n' "$unexpected_paths" >&2
-                exit 1
-              }
-              printf true
-            ''',
-            returnStdout: true
-          ).trim()
           if (env.IS_MAIN != 'true') {
-            error('Image publication and production observation are restricted to origin/main')
+            error('Image publication is restricted to origin/main')
           }
         }
       }
@@ -169,7 +146,6 @@ pipeline {
     }
 
     stage('Registry and Buildx preflight') {
-      when { expression { env.IS_PROMOTION_COMMIT != 'true' } }
       options { timeout(time: 10, unit: 'MINUTES') }
       steps {
         sh '''
@@ -204,7 +180,6 @@ pipeline {
     }
 
     stage('Publish immutable images') {
-      when { expression { env.IS_PROMOTION_COMMIT != 'true' } }
       options { timeout(time: 75, unit: 'MINUTES') }
       steps {
         sh '''
@@ -218,47 +193,13 @@ pipeline {
             --environment prod --tag "$build_tag" --build-date "$build_date" \
             --source-revision "$source_revision" --builder "$BUILDER" \
             --platform linux/amd64 --registry-plain-http "$REGISTRY_PLAIN_HTTP" \
-            --max-workers 3 --manifest-out "$RELEASE_MANIFEST" --make-command make
+            --max-workers 3 --manifest-out "$RELEASE_MANIFEST" \
+            --commands-out "$BUMP_COMMANDS_REPORT" --make-command make
+          echo
+          echo '=== Manual production digest update report ==='
+          cat "$BUMP_COMMANDS_REPORT"
         '''
-        archiveArtifacts artifacts: 'artifacts/release-manifest.json', fingerprint: true
-      }
-    }
-
-    stage('Open digest promotion PR') {
-      when { expression { env.IS_PROMOTION_COMMIT != 'true' } }
-      options { timeout(time: 10, unit: 'MINUTES') }
-      steps {
-        withCredentials([
-          string(credentialsId: 'ssl-proxy-github-promotion-token', variable: 'GITHUB_TOKEN')
-        ]) {
-          sh '''
-            set -eu
-            manifest_path="$(cd "$(dirname "$RELEASE_MANIFEST")" && pwd)/$(basename "$RELEASE_MANIFEST")"
-            promotion_dir="$(mktemp -d "$WORKSPACE/.digest-promotion.XXXXXX")"
-            trap 'rm -rf -- "$promotion_dir"' EXIT HUP INT TERM
-            origin_url="$(git remote get-url origin)"
-            git clone --no-local --branch main --single-branch "$origin_url" "$promotion_dir"
-            cd "$promotion_dir"
-            python3 scripts/promote_release.py --manifest "$manifest_path"
-          '''
-        }
-      }
-    }
-
-    stage('Observe Wiretrap production') {
-      when { expression { env.IS_PROMOTION_COMMIT == 'true' } }
-      options { timeout(time: 90, unit: 'MINUTES') }
-      steps {
-        withCredentials([
-          file(credentialsId: 'ssl-proxy-prod-readonly-kubeconfig', variable: 'PROD_KUBECONFIG')
-        ]) {
-          sh '''
-            expected_revision="$(git rev-parse HEAD)"
-            KUBECONFIG="$PROD_KUBECONFIG" make production-gate \
-              PRODUCTION_GATE_REVISION="$expected_revision" \
-              PRODUCTION_GATE_TIMEOUT=85m
-          '''
-        }
+        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt', fingerprint: true
       }
     }
   }

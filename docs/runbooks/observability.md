@@ -192,7 +192,8 @@ and cleanup logs before scheduling another manual run.
 ## Jenkins build result
 
 Open the latest `ssl-proxy-images` build and address its first failed stage.
-Production promotion remains a reviewed Git change.
+The final report lists any manual production digest updates; Jenkins does not
+apply them.
 
 ## Traefik
 

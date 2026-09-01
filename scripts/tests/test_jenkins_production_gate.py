@@ -4,9 +4,6 @@ import re
 import unittest
 from pathlib import Path
 
-import yaml
-
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -73,31 +70,14 @@ class JenkinsProductionGateTest(unittest.TestCase):
             scala.count("-v /var/run/docker.sock:/var/run/docker.sock"),
         )
 
-    def test_promotion_commit_marker_cannot_bypass_the_observer(self) -> None:
+    def test_pipeline_has_no_automatic_git_promotion(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
-        classification = pipeline[
-            pipeline.index("env.IS_PROMOTION_COMMIT") : pipeline.index(
-                "if (env.IS_MAIN != 'true')"
-            )
-        ]
 
-        self.assertIn("'[digest-promotion]'", classification)
-        self.assertIn("git diff --name-only HEAD^ HEAD", classification)
-        self.assertIn("marked digest promotion changed unexpected paths", classification)
-        self.assertIn("exit 1", classification)
-
-    def test_promotion_runs_in_a_clean_disposable_checkout(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
-        promotion = pipeline[
-            pipeline.index("stage('Open digest promotion PR')") : pipeline.index(
-                "stage('Observe Wiretrap production')"
-            )
-        ]
-
-        self.assertIn("mktemp -d", promotion)
-        self.assertIn("git clone --no-local --branch main --single-branch", promotion)
-        self.assertIn("trap 'rm -rf --", promotion)
-        self.assertIn('python3 scripts/promote_release.py --manifest "$manifest_path"', promotion)
+        self.assertNotIn("digest-promotion", pipeline)
+        self.assertNotIn("Open digest promotion PR", pipeline)
+        self.assertNotIn("scripts/promote_release.py", pipeline)
+        self.assertNotIn("GITHUB_TOKEN", pipeline)
+        self.assertNotIn("git push", pipeline)
 
     def test_pipeline_validates_before_bounded_publication(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
@@ -109,13 +89,15 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn("--max-workers 3", pipeline[publication:])
         self.assertIn("--manifest-out", pipeline[publication:])
 
-    def test_pipeline_opens_reviewed_digest_pr_after_publication(self) -> None:
+    def test_pipeline_ends_with_manual_digest_report(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
         publication = pipeline.index("stage('Publish immutable images')")
-        promotion = pipeline.index("stage('Open digest promotion PR')")
-        self.assertLess(publication, promotion)
-        self.assertIn("ssl-proxy-github-promotion-token", pipeline[promotion:])
-        self.assertIn("scripts/promote_release.py", pipeline[promotion:])
+        report = pipeline.index("=== Manual production digest update report ===")
+
+        self.assertLess(publication, report)
+        self.assertIn('--commands-out "$BUMP_COMMANDS_REPORT"', pipeline[publication:])
+        self.assertIn('cat "$BUMP_COMMANDS_REPORT"', pipeline[publication:])
+        self.assertIn("artifacts/bump-digest-commands.txt", pipeline[publication:])
 
     def test_delivery_validation_is_fail_closed(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
@@ -160,20 +142,14 @@ class JenkinsProductionGateTest(unittest.TestCase):
         )
         self.assertRegex(dockerfile, r'echo "\$\{KUBECTL_SHA256\}  /tmp/kubectl" \| sha256sum -c -')
 
-    def test_pipeline_binds_readonly_kubeconfig_to_final_gate(self) -> None:
+    def test_pipeline_does_not_mutate_or_observe_production(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
-        validation_index = pipeline.index("stage('Validate and test')")
-        gate_index = pipeline.index("stage('Observe Wiretrap production')")
 
-        self.assertGreater(gate_index, validation_index)
-        gate = pipeline[gate_index:]
-        self.assertIn("env.IS_PROMOTION_COMMIT == 'true'", gate)
-        self.assertIn("ssl-proxy-prod-readonly-kubeconfig", gate)
-        self.assertIn("variable: 'PROD_KUBECONFIG'", gate)
-        self.assertIn('expected_revision="$(git rev-parse HEAD)"', gate)
-        self.assertIn('KUBECONFIG="$PROD_KUBECONFIG" make production-gate', gate)
-        self.assertNotIn("kubectl apply", gate)
-        self.assertNotIn("argocd app sync", gate)
+        self.assertNotIn("Observe Wiretrap production", pipeline)
+        self.assertNotIn("production-gate", pipeline)
+        self.assertNotIn("withCredentials", pipeline)
+        self.assertNotIn("kubectl apply", pipeline)
+        self.assertNotIn("argocd app sync", pipeline)
 
     def test_pipeline_refreshes_dind_tls_context_before_preflight(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
@@ -339,73 +315,22 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertNotIn("default_jenkins_builds_", dashboard + rules)
         self.assertNotIn("default_jenkins_queue_", dashboard + rules)
 
-    def test_compose_mounts_required_readonly_kubeconfig_secret(self) -> None:
+    def test_controller_requires_no_git_or_production_credentials(self) -> None:
         compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
             encoding="utf-8"
         )
         environment_example = (REPOSITORY_ROOT / ".env.example").read_text(
             encoding="utf-8"
         )
-        jenkins_service = compose[
-            compose.index("  jenkins:\n") : compose.index("\nnetworks:")
-        ]
-
-        self.assertIn(
-            "      - ssl-proxy-prod-readonly-kubeconfig", jenkins_service
-        )
-        self.assertRegex(
-            compose,
-            re.compile(
-                r"^  ssl-proxy-prod-readonly-kubeconfig:\n"
-                r"    file: \$\{JENKINS_PROD_READONLY_KUBECONFIG_FILE:\?"
-                r"JENKINS_PROD_READONLY_KUBECONFIG_FILE is required\}$",
-                re.MULTILINE,
-            ),
-        )
-        self.assertIn(
-            "JENKINS_PROD_READONLY_KUBECONFIG_FILE=",
-            environment_example,
-        )
-
-    def test_jcasc_imports_readonly_kubeconfig_as_file_credential(self) -> None:
         casc = (REPOSITORY_ROOT / "docker/jenkins/casc/jenkins.yaml").read_text(
             encoding="utf-8"
         )
 
-        self.assertRegex(
-            casc,
-            re.compile(
-                r'^credentials:\n'
-                r"  system:\n"
-                r"    domainCredentials:\n"
-                r"      - credentials:\n"
-                r"          - file:\n"
-                r"              scope: GLOBAL\n"
-                r'              id: "ssl-proxy-prod-readonly-kubeconfig"\n'
-                r'              description: "[^"]+"\n'
-                r'              fileName: "prod-readonly-kubeconfig"\n'
-                r'              secretBytes: "\$\{readFileBase64:'
-                r'/run/secrets/ssl-proxy-prod-readonly-kubeconfig\}"$',
-                re.MULTILINE,
-            ),
-        )
-
-    def test_jcasc_declares_the_github_promotion_credential(self) -> None:
-        casc = yaml.safe_load(
-            (REPOSITORY_ROOT / "docker/jenkins/casc/jenkins.yaml").read_text(
-                encoding="utf-8"
-            )
-        )
-        credentials = casc["credentials"]["system"]["domainCredentials"][0][
-            "credentials"
-        ]
-        identifiers = {
-            credential_type["id"]
-            for credential in credentials
-            for credential_type in credential.values()
-        }
-
-        self.assertIn("ssl-proxy-github-promotion-token", identifiers)
+        for content in (compose, environment_example, casc):
+            self.assertNotIn("github-promotion", content)
+            self.assertNotIn("GITHUB_PROMOTION", content)
+            self.assertNotIn("prod-readonly-kubeconfig", content)
+            self.assertNotIn("PROD_READONLY_KUBECONFIG", content)
 
     def test_compose_hardens_dind_inotify_capacity(self) -> None:
         compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(

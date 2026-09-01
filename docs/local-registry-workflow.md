@@ -8,14 +8,12 @@ documented in the [GitOps guide](../cyber-stack/README.md).
 
 The dedicated private CI stack runs the registry, Jenkins controller and its
 isolated Docker build engine. Create the Jenkins administrator password as a
-local secret, set the concrete server address in `.env`, and point Compose at
-the platform-provisioned production gate kubeconfig outside the checkout before
-starting the stack:
+local secret and set the concrete server address in `.env` before starting the
+stack:
 
 ```bash
 umask 077
 openssl rand -base64 32 > secrets/jenkins-admin-password
-export JENKINS_PROD_READONLY_KUBECONFIG_FILE=/etc/ssl-proxy/jenkins/prod-readonly-kubeconfig
 docker compose -f docker-compose.ci.yaml up -d --build
 ```
 
@@ -25,10 +23,9 @@ canonical Wiretrap values are `SERVER_IP=192.168.1.242` and
 `JENKINS_BIND_ADDRESS`, `JENKINS_HTTP_PORT` and `JENKINS_URL` control the UI.
 The Jenkins administrator password is consumed through a Docker secret and is
 never committed or placed in container environment variables. The controller
-runs the production gate with the separate read-only kubeconfig file credential;
-only its external host path is passed through the required environment variable.
-It runs as the image's non-root `jenkins` user and talks over mutual TLS to a
-dedicated privileged Docker-in-Docker engine. Treat that engine as a
+does not hold a GitHub write token or a Kubernetes credential. It runs as the
+image's non-root `jenkins` user and talks over mutual TLS to a dedicated
+privileged Docker-in-Docker engine. Treat that engine as a
 root-equivalent build boundary and never expose its network or Jenkins to the
 public internet.
 
@@ -78,7 +75,7 @@ there. It pushes `$TAG` and `latest`, reads the pushed manifest digest from
 Buildx metadata, and reports either `MATCH` or `UNPINNED` against the selected
 Kustomize pin. `UNPINNED` is a successful publication result; the report prints
 the exact `make bump-digest-<service> ENV=<env> DIGEST=<digest>` command for the
-separate reviewed Git change. `REGISTRY` never determines deployment identity
+separate deliberate Git change. `REGISTRY` never determines deployment identity
 for this target.
 
 Kubernetes pulls the committed `repository@sha256:...` reference. Registry
@@ -152,15 +149,14 @@ changing Kubernetes desired state. Use the digest and bump command printed by
 `make publish ENV=prod`, then validate the local dev render. Production receives
 only reviewed digests copied from accepted dev desired state.
 
-The Jenkins `ssl-proxy-images` job polls `main` and accepts GitHub push events,
-initializes the pinned submodules and shared Buildx builder, then publishes the
-same target set as `make publish-all` in independently retried branches.
-Documentation and GitOps validation run alongside publication and still fail
-the overall build without cancelling successful image pushes. After all those
-branches succeed, the Vault-provisioned read-only production kubeconfig gates
-the build on all three Argo CD Applications reaching the triggering full Git
-SHA as `Synced/Healthy`. Jenkins publication and Kubernetes pulls both use the
-private server authority declared by the production image contract.
+The Jenkins `ssl-proxy-images` job polls `main`, initializes the pinned
+submodules and shared Buildx builder, validates the repository, then publishes
+the eight Kubernetes image contracts with bounded concurrency. Its final
+console section and archived `artifacts/bump-digest-commands.txt` contain only
+the manual production bump commands needed for digests that differ from the
+current pins. Jenkins never changes Git or Kubernetes. Jenkins publication and
+Kubernetes pulls both use the private server authority declared by the
+production image contract.
 
 ## Retention and garbage collection
 

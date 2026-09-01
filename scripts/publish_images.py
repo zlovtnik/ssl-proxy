@@ -74,16 +74,35 @@ def publication_report(
     contract: ImageContract, pushed_digest: str, environment: str
 ) -> str:
     status = "MATCH" if pushed_digest == contract.digest else "UNPINNED"
-    bump_command = (
-        f"make bump-digest-{contract.service} ENV={environment} DIGEST={pushed_digest}"
+    lines = [
+        f"{contract.service}: {status}",
+        f"  repository: {contract.repository}",
+        f"  pinned:     {contract.digest}",
+        f"  pushed:     {pushed_digest}",
+    ]
+    if status == "UNPINNED":
+        lines.append(f"  bump:       {bump_command(contract, pushed_digest, environment)}")
+    else:
+        lines.append("  bump:       not required")
+    return "\n".join(lines)
+
+
+def bump_command(
+    contract: ImageContract, pushed_digest: str, environment: str
+) -> str:
+    return (
+        f"make bump-digest-{contract.service} "
+        f"ENV={environment} DIGEST={pushed_digest}"
     )
+
+
+def bump_commands_report(commands: Sequence[str]) -> str:
+    if not commands:
+        return "No digest updates are required."
     return "\n".join(
         (
-            f"{contract.service}: {status}",
-            f"  repository: {contract.repository}",
-            f"  pinned:     {contract.digest}",
-            f"  pushed:     {pushed_digest}",
-            f"  bump:       {bump_command}",
+            "Manual digest updates (run only when ready):",
+            *commands,
         )
     )
 
@@ -106,6 +125,7 @@ def publish_environment(
     output: Callable[[str], None] = print,
     max_workers: int = 1,
     manifest_out: Path | None = None,
+    commands_out: Path | None = None,
 ) -> int:
     if max_workers < 1 or max_workers > 3:
         raise ImageContractError("max workers must be between 1 and 3")
@@ -116,7 +136,9 @@ def publish_environment(
     )
     with tempfile.TemporaryDirectory(prefix="ssl-proxy-buildx-metadata-") as directory:
         metadata_root = Path(directory)
-        def publish_one(contract: ImageContract) -> tuple[int, str, dict[str, str] | None]:
+        def publish_one(
+            contract: ImageContract,
+        ) -> tuple[int, str, dict[str, str] | None, str | None]:
             metadata_path = metadata_root / f"{contract.service}.json"
             command = make_publish_command(contract, metadata_path, settings)
             returncode = run_command(command, repository_root)
@@ -125,11 +147,22 @@ def publish_environment(
                     returncode or 1,
                     f"{contract.service}: publication failed with exit status {returncode}",
                     None,
+                    None,
                 )
             try:
                 pushed_digest = load_buildx_digest(metadata_path)
             except ImageContractError as error:
-                return 1, f"{contract.service}: cannot verify pushed digest: {error}", None
+                return (
+                    1,
+                    f"{contract.service}: cannot verify pushed digest: {error}",
+                    None,
+                    None,
+                )
+            command = (
+                bump_command(contract, pushed_digest, settings.environment)
+                if pushed_digest != contract.digest
+                else None
+            )
             return (
                 0,
                 publication_report(contract, pushed_digest, settings.environment),
@@ -140,16 +173,30 @@ def publish_environment(
                     "digest": pushed_digest,
                     "sourceRevision": settings.source_revision,
                 },
+                command,
             )
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = list(executor.map(publish_one, contracts))
-        for _returncode, report, _entry in results:
+        for _returncode, report, _entry, _command in results:
             output(report)
-        failures = [returncode for returncode, _report, _entry in results if returncode]
+        failures = [
+            returncode
+            for returncode, _report, _entry, _command in results
+            if returncode
+        ]
         if failures:
             return failures[0]
-        entries = [entry for _returncode, _report, entry in results if entry is not None]
+        entries = [
+            entry
+            for _returncode, _report, entry, _command in results
+            if entry is not None
+        ]
+        commands = [
+            command
+            for _returncode, _report, _entry, command in results
+            if command is not None
+        ]
         if manifest_out is not None:
             manifest_out.parent.mkdir(parents=True, exist_ok=True)
             document = {
@@ -161,6 +208,12 @@ def publish_environment(
             }
             manifest_out.write_text(
                 json.dumps(document, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if commands_out is not None:
+            commands_out.parent.mkdir(parents=True, exist_ok=True)
+            commands_out.write_text(
+                bump_commands_report(commands) + "\n",
                 encoding="utf-8",
             )
     return 0
@@ -190,6 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-revision", required=True, type=non_empty_value)
     parser.add_argument("--max-workers", type=int, default=1)
     parser.add_argument("--manifest-out", type=Path)
+    parser.add_argument("--commands-out", type=Path)
     return parser
 
 
@@ -218,6 +272,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             settings,
             max_workers=arguments.max_workers,
             manifest_out=arguments.manifest_out,
+            commands_out=arguments.commands_out,
         )
     except ImageContractError as error:
         print(f"image contract error: {error}", file=sys.stderr)

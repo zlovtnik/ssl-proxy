@@ -17,6 +17,7 @@ from image_contract import FIRST_PARTY_SERVICES, ImageContract  # noqa: E402
 from publish_images import (  # noqa: E402
     PublishSettings,
     build_parser,
+    bump_commands_report,
     make_publish_command,
     publication_report,
     publish_environment,
@@ -128,6 +129,8 @@ class PublishImagesTest(unittest.TestCase):
     def test_publishes_eight_images_and_reports_match_and_unpinned(self) -> None:
         commands: list[list[str]] = []
         output: list[str] = []
+        manifest = self.root / "artifacts/release-manifest.json"
+        bump_commands = self.root / "artifacts/bump-digest-commands.txt"
 
         def fake_run(command: list[str], _root: Path) -> int:
             commands.append(list(command))
@@ -146,6 +149,8 @@ class PublishImagesTest(unittest.TestCase):
             settings(),
             run_command=fake_run,
             output=output.append,
+            manifest_out=manifest,
+            commands_out=bump_commands,
         )
 
         report = "\n".join(output)
@@ -157,6 +162,12 @@ class PublishImagesTest(unittest.TestCase):
         self.assertIn(
             f"make bump-digest-java-coordinator ENV=prod DIGEST={NEW_DIGEST}", report
         )
+        self.assertIn("bump:       not required", report)
+        command_lines = bump_commands.read_text(encoding="utf-8").splitlines()
+        self.assertEqual("Manual digest updates (run only when ready):", command_lines[0])
+        self.assertEqual(7, len(command_lines[1:]))
+        self.assertFalse(any("bump-digest-ssl-proxy" in line for line in command_lines))
+        self.assertEqual(8, len(json.loads(manifest.read_text(encoding="utf-8"))["images"]))
         for service, command in zip(FIRST_PARTY_SERVICES, commands, strict=True):
             self.assertIn(
                 f"PUBLISH_REPOSITORY=registry.test:5000/releases/{service}", command
@@ -180,6 +191,12 @@ class PublishImagesTest(unittest.TestCase):
             output=lambda _line: None,
         )
         self.assertEqual(7, result)
+
+    def test_empty_bump_report_is_explicit(self) -> None:
+        self.assertEqual(
+            "No digest updates are required.",
+            bump_commands_report(()),
+        )
 
 
 if __name__ == "__main__":

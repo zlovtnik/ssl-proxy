@@ -155,7 +155,7 @@ flowchart LR
 ```
 
 Accepted image digests are recorded in their owning production slice by the
-repository's digest bump helper in a reviewed pull request. Automated sync, pruning and self-healing
+repository's digest bump helper in a deliberate commit to `main`. Automated sync, pruning and self-healing
 keep the production cluster aligned with Git, but Namespace resources are
 excluded from automated pruning and require explicit operator confirmation.
 Rollback is a Git revert.

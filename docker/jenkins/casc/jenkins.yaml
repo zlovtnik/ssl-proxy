@@ -24,22 +24,6 @@ jenkins:
               - "Overall/Read"
               - "Metrics/View"
 
-credentials:
-  system:
-    domainCredentials:
-      - credentials:
-          - file:
-              scope: GLOBAL
-              id: "ssl-proxy-prod-readonly-kubeconfig"
-              description: "Read-only kubeconfig for the production revision gate"
-              fileName: "prod-readonly-kubeconfig"
-              secretBytes: "${readFileBase64:/run/secrets/ssl-proxy-prod-readonly-kubeconfig}"
-          - string:
-              scope: GLOBAL
-              id: "ssl-proxy-github-promotion-token"
-              description: "GitHub token limited to digest branch pushes and pull requests"
-              secret: "${readFile:/run/secrets/github-promotion-token}"
-
 unclassified:
   location:
     url: "${JENKINS_URL}"
