@@ -47,6 +47,13 @@ python3 scripts/platform_postgres.py reset \
   --confirm RESET-ssl-proxy-platform-postgres-data
 ```
 
+The platform bootstrap administrator owns the database-scoped `search_path`
+defaults for `octopus_runtime`, `atheros_search_runtime`,
+`schema_migrator_runtime` and `keycloak_runtime`. The schema executor verifies
+and preserves matching defaults without requiring persistent `CREATEROLE`
+authority. It only attempts to establish a missing default for bootstrap
+workflows that explicitly delegate role administration to `schema_owner`.
+
 Run `platform-sync` after the schema executor succeeds, then let Argo reconcile
 consumers. Do not roll consumers while contract validation or server-side dry
 runs are failing.

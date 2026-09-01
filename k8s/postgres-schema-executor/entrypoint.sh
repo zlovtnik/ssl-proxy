@@ -29,6 +29,32 @@ psql_run() {
     --host="${db_host}" --port="${db_port}" --username="${db_user}" --dbname="${db_name}" "$@"
 }
 
+role_search_path_is_current() {
+  account="$1"
+  expected_search_path="$2"
+  expected_setting="search_path=${expected_search_path}"
+  [ "$(psql_run --tuples-only --no-align --command="
+    SELECT EXISTS (
+      SELECT 1
+      FROM pg_db_role_setting setting
+      JOIN pg_roles role ON role.oid = setting.setrole
+      JOIN pg_database database ON database.oid = setting.setdatabase
+      WHERE role.rolname = '${account}'
+        AND database.datname = '${db_name}'
+        AND '${expected_setting}' = ANY(setting.setconfig)
+    )")" = "t" ]
+}
+
+ensure_role_search_path() {
+  account="$1"
+  expected_search_path="$2"
+  if role_search_path_is_current "${account}" "${expected_search_path}"; then
+    echo "role search_path already configured: ${account}"
+    return
+  fi
+  psql_run --command="ALTER ROLE \"${account}\" IN DATABASE \"${db_name}\" SET search_path TO ${expected_search_path}"
+}
+
 manifest_digest() {
   domain="$1"
   manifest="${schema_root}/${domain}/manifest.yaml"
@@ -94,14 +120,12 @@ sed -e "s/{{KEYCLOAK_ACCOUNT}}/${keycloak_account}/g" \
 # Transaction-pool clients must not depend on a one-time client connection
 # initializer. Role defaults are applied whenever PgBouncer opens an upstream
 # PostgreSQL session and remain correct when a transaction borrows a new one.
-psql_run --set=ON_ERROR_STOP=1 <<SQL
-BEGIN;
-ALTER ROLE "${octopus_account}" IN DATABASE "${db_name}" SET search_path TO octopus_core, atheros_search;
-ALTER ROLE "${search_account}" IN DATABASE "${db_name}" SET search_path TO atheros_search;
-ALTER ROLE "${migrator_account}" IN DATABASE "${db_name}" SET search_path TO schema_migrator;
-ALTER ROLE "${keycloak_account}" IN DATABASE "${db_name}" SET search_path TO keycloak;
-COMMIT;
-SQL
+# The platform bootstrap normally owns these role defaults. Avoid requiring
+# CREATEROLE on every reconciliation after the administrator has set them.
+ensure_role_search_path "${octopus_account}" "octopus_core, atheros_search"
+ensure_role_search_path "${search_account}" "atheros_search"
+ensure_role_search_path "${migrator_account}" "schema_migrator"
+ensure_role_search_path "${keycloak_account}" "keycloak"
 
 ath_sha="$(awk '/^manifest_sha256:/{print $2; exit}' "${schema_root}/atheros_search/manifest.yaml")"
 oct_version="$(awk '/^schema_version:/{print $2; exit}' "${schema_root}/octopus_core/manifest.yaml")"
