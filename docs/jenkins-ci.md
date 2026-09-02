@@ -87,7 +87,14 @@ started. The pipeline does not expose or require a GitHub webhook or write
 credential. Before checkout, Jenkins deletes the CI-owned workspace so reports
 or other untracked files from an interrupted build cannot fail the source
 integrity gate. Docker and BuildKit caches live outside that workspace. Every
-run has a 180-minute hard timeout. Each run:
+run has a 180-minute hard timeout.
+
+Containerized validation extracts the streamed checkout without preserving the
+Jenkins host UID. The root-run validation process therefore owns its temporary
+`/workspace` checkout, including submodules, and Git's dubious-ownership check
+remains enabled without a global `safe.directory` exception.
+
+Each run:
 
 1. checks out the superproject and its pinned submodules, then requires the
    Octopus checkout to match that pin with both worktrees clean;

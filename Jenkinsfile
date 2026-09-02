@@ -98,10 +98,10 @@ pipeline {
               }
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 golang:1.26-bookworm \
-                sh -c 'tar -xf - && make platform-sync-lint'
+                sh -c 'tar --no-same-owner -xf - && make platform-sync-lint'
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 golang:1.26-bookworm \
-                sh -c 'tar -xf - && make atheros-search-test'
+                sh -c 'tar --no-same-owner -xf - && make atheros-search-test'
             '''
           }
         }
@@ -117,11 +117,11 @@ pipeline {
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
-                sh -c 'tar -xf - && cd apps/schema-migrator && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt -Dsbt.supershell=false "Test / testFull"'
+                sh -c 'tar --no-same-owner -xf - && cd apps/schema-migrator && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt -Dsbt.supershell=false "Test / testFull"'
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
-                sh -c 'tar -xf - && cd services/octopus && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt test'
+                sh -c 'tar --no-same-owner -xf - && cd services/octopus && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt test'
             '''
           }
         }
@@ -136,10 +136,10 @@ pipeline {
               }
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 rust:1.95.0-slim-bookworm \
-                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev libcurl4-openssl-dev libsasl2-dev libpcap-dev ripgrep && cargo test -p atheros-sensor'
+                sh -c 'tar --no-same-owner -xf - && apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev libcurl4-openssl-dev libsasl2-dev libpcap-dev ripgrep && cargo test -p atheros-sensor'
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 rust:1.95.0-slim-bookworm \
-                sh -c 'tar -xf - && apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev libcurl4-openssl-dev libsasl2-dev libpcap-dev ripgrep make && make dependency-boundaries'
+                sh -c 'tar --no-same-owner -xf - && apt-get update && apt-get install -y --no-install-recommends build-essential cmake libclang-dev pkg-config libssl-dev libcurl4-openssl-dev libsasl2-dev libpcap-dev ripgrep make && make dependency-boundaries'
             '''
           }
         }

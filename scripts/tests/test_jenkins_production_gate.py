@@ -79,6 +79,13 @@ class JenkinsProductionGateTest(unittest.TestCase):
             scala.count("-v /var/run/docker.sock:/var/run/docker.sock"),
         )
 
+    def test_container_workspaces_preserve_git_ownership_checks(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+
+        self.assertEqual(6, pipeline.count("tar --no-same-owner -xf -"))
+        self.assertNotIn("sh -c 'tar -xf -", pipeline)
+        self.assertNotIn("safe.directory", pipeline)
+
     def test_pipeline_has_no_automatic_git_promotion(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
 
