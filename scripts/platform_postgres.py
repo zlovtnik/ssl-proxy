@@ -84,6 +84,13 @@ ROLLOUT_TARGETS = {
     "schema_owner": (),
 }
 
+ROLE_SEARCH_PATHS = {
+    "octopus_runtime": "octopus_core, atheros_search",
+    "atheros_search_runtime": "atheros_search",
+    "schema_migrator_runtime": "schema_migrator",
+    "keycloak_runtime": "keycloak",
+}
+
 
 @dataclass(frozen=True)
 class PostgresContract:
@@ -387,6 +394,35 @@ def wait_for_health(runner: Runner, runtime: Runtime) -> None:
     raise MaintenanceError("PostgreSQL did not become healthy before the timeout")
 
 
+def ensure_role_search_paths(
+    runner: Runner,
+    runtime: Runtime,
+    contract: PostgresContract,
+) -> None:
+    statements = [
+        f'ALTER ROLE "{role}" IN DATABASE "{contract.database}" '
+        f"SET search_path TO {search_path};"
+        for role, search_path in ROLE_SEARCH_PATHS.items()
+    ]
+    runner.run(
+        (
+            "docker",
+            "exec",
+            "-i",
+            runtime.container,
+            "sh",
+            "-eu",
+            "-c",
+            "PGPASSWORD=$(tr -d '\\r\\n' "
+            "</run/platform-secrets/platform_admin.password); "
+            "export PGPASSWORD; exec psql --no-psqlrc --set=ON_ERROR_STOP=1 "
+            f'--username platform_admin --dbname "{contract.database}"',
+        ),
+        input_data=("\n".join(statements) + "\n").encode("ascii"),
+    )
+    print("canonical PostgreSQL role search paths configured")
+
+
 def write_env_file(values: Mapping[str, bytes | str]) -> Path:
     descriptor, raw_path = tempfile.mkstemp(prefix="ssl-proxy-postgres-", suffix=".env")
     path = Path(raw_path)
@@ -487,6 +523,7 @@ def reset_database(
     runner.run(("docker", "volume", "create", runtime.data_volume))
     compose(runner, runtime, "up", "-d", "postgres")
     wait_for_health(runner, runtime)
+    ensure_role_search_paths(runner, runtime, contract)
     apply_schema(runner, runtime, contract)
     print("database reset complete; run platform-sync before rolling consumers")
 

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import sys
 
@@ -17,16 +18,118 @@ from platform_postgres import (  # noqa: E402
     ROLLOUT_TARGETS,
     Runtime,
     clean_password,
+    ensure_role_search_paths,
     load_contract,
     parse_userlist,
     replace_userlist_password,
     require_confirmation,
+    reset_database,
     validate_private_file,
     verify_deployment_rollouts,
 )
 
 
 class PlatformPostgresTest(unittest.TestCase):
+    def test_reset_configures_canonical_role_search_paths_as_platform_admin(self) -> None:
+        class FakeRunner:
+            def __init__(self) -> None:
+                self.command: tuple[str, ...] | None = None
+                self.input_data: bytes | None = None
+
+            def run(self, arguments, *, input_data=None, **_kwargs):
+                self.command = tuple(arguments)
+                self.input_data = input_data
+                return SimpleNamespace(stdout=b"")
+
+        runtime = Runtime(
+            contract_path=Path("contract"),
+            compose_file=Path("compose"),
+            container="postgres",
+            data_volume="data",
+            secret_volume="secrets",
+            tls_volume="tls",
+            vault_mount="secret",
+            vault_prefix="ssl-proxy/prod",
+            repository_root=REPOSITORY_ROOT,
+            health_timeout=1,
+            kubectl="kubectl",
+            kube_context=None,
+            kubernetes_namespace="prod-ssl-proxy",
+            rollout_timeout=5,
+        )
+        contract = load_contract(
+            REPOSITORY_ROOT / "cyber-stack/platform-input-contract.yaml"
+        )
+        runner = FakeRunner()
+
+        ensure_role_search_paths(runner, runtime, contract)
+
+        self.assertIsNotNone(runner.command)
+        self.assertIn("platform_admin.password", runner.command[-1])
+        self.assertEqual(
+            (
+                'ALTER ROLE "octopus_runtime" IN DATABASE "sync" '
+                "SET search_path TO octopus_core, atheros_search;\n"
+                'ALTER ROLE "atheros_search_runtime" IN DATABASE "sync" '
+                "SET search_path TO atheros_search;\n"
+                'ALTER ROLE "schema_migrator_runtime" IN DATABASE "sync" '
+                "SET search_path TO schema_migrator;\n"
+                'ALTER ROLE "keycloak_runtime" IN DATABASE "sync" '
+                "SET search_path TO keycloak;\n"
+            ).encode("ascii"),
+            runner.input_data,
+        )
+
+    def test_reset_installs_role_defaults_before_applying_schema(self) -> None:
+        class FakeRunner:
+            def run(self, _arguments, **_kwargs):
+                return SimpleNamespace(stdout=b"")
+
+        with tempfile.TemporaryDirectory() as directory:
+            compose_file = Path(directory) / "compose.yaml"
+            compose_file.write_text("services: {}\n", encoding="utf-8")
+            runtime = Runtime(
+                contract_path=Path("contract"),
+                compose_file=compose_file,
+                container="postgres",
+                data_volume="data",
+                secret_volume="secrets",
+                tls_volume="tls",
+                vault_mount="secret",
+                vault_prefix="ssl-proxy/prod",
+                repository_root=REPOSITORY_ROOT,
+                health_timeout=1,
+                kubectl="kubectl",
+                kube_context=None,
+                kubernetes_namespace="prod-ssl-proxy",
+                rollout_timeout=5,
+            )
+            contract = load_contract(
+                REPOSITORY_ROOT / "cyber-stack/platform-input-contract.yaml"
+            )
+            order: list[str] = []
+
+            with (
+                patch("platform_postgres.assert_exact_mount"),
+                patch("platform_postgres.stage_accounts"),
+                patch("platform_postgres.compose"),
+                patch(
+                    "platform_postgres.wait_for_health",
+                    side_effect=lambda *_args: order.append("health"),
+                ),
+                patch(
+                    "platform_postgres.ensure_role_search_paths",
+                    side_effect=lambda *_args: order.append("role-defaults"),
+                ),
+                patch(
+                    "platform_postgres.apply_schema",
+                    side_effect=lambda *_args: order.append("schema"),
+                ),
+            ):
+                reset_database(FakeRunner(), runtime, contract, "RESET-data")
+
+        self.assertEqual(["health", "role-defaults", "schema"], order)
+
     def test_rollout_verification_waits_for_new_generation(self) -> None:
         class FakeRunner:
             def __init__(self) -> None:

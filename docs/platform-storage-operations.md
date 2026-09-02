@@ -40,7 +40,9 @@ python3 scripts/platform_postgres.py stage-secrets
 A full reset is intentionally destructive. It verifies that the running
 container mounts exactly `ssl-proxy-platform-postgres-data`, stages credentials,
 removes and recreates only that named volume, waits for health, and runs the
-canonical checksum-verifying schema executor:
+canonical checksum-verifying schema executor. Before invoking the executor, the
+reset installs the four database-scoped runtime `search_path` defaults with the
+platform bootstrap administrator so the schema owner remains least privileged:
 
 ```bash
 python3 scripts/platform_postgres.py reset \
