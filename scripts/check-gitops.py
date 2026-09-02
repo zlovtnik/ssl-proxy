@@ -1934,6 +1934,9 @@ def _check_postgres_pool_readiness(
         "--set=ON_ERROR_STOP=1",
         "current_user = session_user",
         "current_database()",
+        'while ! result="$(psql',
+        '[ "$attempt" -lt 30 ]',
+        "sleep 2",
     ):
         if required not in script:
             errors.append(f"{relative}: pooled PostgreSQL readiness lost {required}")
@@ -1947,6 +1950,7 @@ def _check_postgres_pool_readiness(
         "PGDATABASE": "sync",
         "PGSSLMODE": "verify-full",
         "PGSSLROOTCERT": "/var/run/pgbouncer-tls/ca.crt",
+        "PGCONNECT_TIMEOUT": "5",
     }
     if environment != expected_environment:
         errors.append(f"{relative}: pooled PostgreSQL readiness must verify PgBouncer TLS")

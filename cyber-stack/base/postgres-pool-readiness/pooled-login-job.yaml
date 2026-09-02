@@ -40,8 +40,14 @@ spec:
                 password_file="$2"
                 PGPASSWORD="$(cat "$password_file")"
                 export PGPASSWORD
-                result="$(psql --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 \
-                  --username="$role" --command='SELECT current_user = session_user AND current_database() = '\''sync'\''')"
+                attempt=1
+                while ! result="$(psql --no-psqlrc --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+                  --username="$role" --command='SELECT current_user = session_user AND current_database() = '\''sync'\''')"; do
+                  [ "$attempt" -lt 30 ] || exit 1
+                  echo "pooled PostgreSQL login for ${role} is not ready; retrying (${attempt}/30)" >&2
+                  attempt=$((attempt + 1))
+                  sleep 2
+                done
                 unset PGPASSWORD
                 [ "$result" = "t" ] || exit 1
               }
@@ -60,6 +66,8 @@ spec:
               value: verify-full
             - name: PGSSLROOTCERT
               value: /var/run/pgbouncer-tls/ca.crt
+            - name: PGCONNECT_TIMEOUT
+              value: "5"
           volumeMounts:
             - name: pgbouncer-tls
               mountPath: /var/run/pgbouncer-tls
