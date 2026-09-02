@@ -22,6 +22,7 @@ pipeline {
     stage('Checkout and classify') {
       options { timeout(time: 10, unit: 'MINUTES') }
       steps {
+        deleteDir()
         checkout scm
         sh '''
           set -eu

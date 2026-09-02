@@ -8,6 +8,15 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class JenkinsProductionGateTest(unittest.TestCase):
+    def test_workspace_is_cleaned_before_checkout_and_source_integrity(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        cleanup = pipeline.index("deleteDir()")
+        checkout = pipeline.index("checkout scm")
+        source_integrity = pipeline.index("make octopus-source-integrity")
+
+        self.assertLess(cleanup, checkout)
+        self.assertLess(checkout, source_integrity)
+
     def test_registry_authority_is_fail_closed_before_validation(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
         checkout = pipeline.index("checkout scm")

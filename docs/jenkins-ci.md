@@ -84,7 +84,10 @@ The managed pipeline polls `main` every five minutes and supports manual builds.
 When a new run is scheduled, Jenkins aborts any active run before starting it.
 This prevents an obsolete checkout from publishing after newer `main` work has
 started. The pipeline does not expose or require a GitHub webhook or write
-credential. Every run has a 180-minute hard timeout. Each run:
+credential. Before checkout, Jenkins deletes the CI-owned workspace so reports
+or other untracked files from an interrupted build cannot fail the source
+integrity gate. Docker and BuildKit caches live outside that workspace. Every
+run has a 180-minute hard timeout. Each run:
 
 1. checks out the superproject and its pinned submodules, then requires the
    Octopus checkout to match that pin with both worktrees clean;
