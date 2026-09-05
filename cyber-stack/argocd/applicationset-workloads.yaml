@@ -156,6 +156,23 @@ spec:
           kind: StatefulSet
           name: ssl-proxy-redpanda
           jsonPointers: [/spec/volumeClaimTemplates]
+        # K3s defaults these PVC template fields; retain storage and access-mode drift checks.
+        - group: apps
+          kind: StatefulSet
+          name: ssl-proxy-minio
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates[].apiVersion
+            - .spec.volumeClaimTemplates[].kind
+            - .spec.volumeClaimTemplates[].status
+            - .spec.volumeClaimTemplates[].spec.volumeMode
+        - group: apps
+          kind: StatefulSet
+          name: ssl-proxy-telemetry-loki
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates[].apiVersion
+            - .spec.volumeClaimTemplates[].kind
+            - .spec.volumeClaimTemplates[].status
+            - .spec.volumeClaimTemplates[].spec.volumeMode
       syncPolicy:
         automated:
           prune: true
