@@ -25,7 +25,7 @@ images:
   name: grafana/loki
 - digest: sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
   name: otel/opentelemetry-collector-contrib
-- digest: sha256:ef5f71a2cfe3923c6194f6f1ae3fa532946424203cdcf43d3b20fa4343dd8d04
+- digest: sha256:25bec04f1ad9100ee3275c711c723ac6ac052579444aa442d878f71505145f9f
   name: postgres-runtime-schema
   newName: 192.168.1.242:5000/postgres-runtime-schema
 - digest: sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
