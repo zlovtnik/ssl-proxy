@@ -42,7 +42,7 @@ services:
       start_period: 20s
 
   jenkins:
-    image: ssl-proxy-ci-jenkins:2.568.2
+    image: ssl-proxy-ci-jenkins:2.568.3
     build:
       context: ./docker/jenkins
       dockerfile: Dockerfile
