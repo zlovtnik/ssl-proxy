@@ -94,6 +94,10 @@ spec:
               value: "false"
             - name: ATHSEARCH_SCHEMA_READY_REQUIRED
               value: "true"
+            - name: ATHSEARCH_WORKER_ENABLED
+              value: "true"
+            - name: ATHSEARCH_EMBEDDING_BACKEND
+              value: "http://localhost:9931"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               valueFrom:
                 configMapKeyRef:
