@@ -131,11 +131,15 @@ make jenkins-plugin-audit
 docker compose -f docker-compose.ci.yaml build jenkins
 ```
 
-Lock generation atomically replaces the committed file. The read-only audit
-resolves `plugins.txt` again, rejects added, removed or changed lock entries,
-and checks every locked version against the official Jenkins update-center
-warning patterns. Resolver failures, metadata fetch or format failures, invalid
-pins and any matching direct or transitive security warning fail the audit.
+Lock generation resolves `plugins.txt` with `--latest=true` to select current
+dependencies and atomically replaces the committed file. The read-only audit
+checks that the lock matches the direct requirements, then resolves
+`plugins.lock.txt` with `--latest=false`, just like the controller image build.
+It rejects missing dependencies or changed resolved pins and checks every locked
+version against the official Jenkins update-center warning patterns. A newer
+upstream release alone does not fail an unchanged build. Resolver failures,
+metadata fetch or format failures, invalid pins and any matching direct or
+transitive security warning still fail the audit.
 There is no warning allowlist. When the audit finds drift or a warning, update
 the responsible direct requirement where a newer compatible version exists,
 regenerate the lock, rebuild the controller and rerun the audit before merging.

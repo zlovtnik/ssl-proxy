@@ -128,6 +128,7 @@ def resolve_plugins(
     requirements: Path,
     dockerfile: Path,
     *,
+    latest: bool = False,
     timeout: float = DEFAULT_RESOLVER_TIMEOUT,
     command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> dict[str, str]:
@@ -141,7 +142,7 @@ def resolve_plugins(
         "jenkins-plugin-cli",
         "--plugins",
         *(f"{name}:{version}" for name, version in requirements_pins.items()),
-        "--latest=true",
+        f"--latest={str(latest).lower()}",
         "--no-download",
         "--list",
     ]
@@ -321,7 +322,7 @@ def describe_drift(lock: Mapping[str, str], effective: Mapping[str, str]) -> lis
 
 def generate_lock(requirements_path: Path, lock_path: Path, dockerfile: Path, timeout: float) -> None:
     requirements = read_pins(requirements_path)
-    effective = resolve_plugins(requirements_path, dockerfile, timeout=timeout)
+    effective = resolve_plugins(requirements_path, dockerfile, latest=True, timeout=timeout)
     validate_direct_requirements(requirements, effective)
     write_lock(lock_path, effective)
     print(f"Wrote {len(effective)} Jenkins plugin pins to {lock_path}")
@@ -337,8 +338,12 @@ def audit(
 ) -> None:
     requirements = read_pins(requirements_path)
     lock = read_pins(lock_path, require_sorted=True)
+    validate_direct_requirements(requirements, lock)
+    # Audit the same pins and resolution policy used by the controller image.
+    # Resolving requirements with latest dependencies makes upstream releases
+    # break unchanged builds even when the committed lock remains valid.
     effective = resolve_plugins(
-        requirements_path, dockerfile, timeout=resolver_timeout
+        lock_path, dockerfile, latest=False, timeout=resolver_timeout
     )
     validate_direct_requirements(requirements, effective)
     diagnostics = describe_drift(lock, effective)

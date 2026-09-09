@@ -120,7 +120,7 @@ class JenkinsPluginsTest(unittest.TestCase):
             with self.subTest(document=document), self.assertRaises(PluginAuditError):
                 jenkins_plugins.matching_warnings({"git": "1"}, document)
 
-    def test_resolver_uses_digest_pinned_image_and_current_dependencies(self) -> None:
+    def test_resolver_uses_digest_pinned_image_and_explicit_upgrade_policy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             requirements = root / "plugins.txt"
@@ -141,9 +141,13 @@ class JenkinsPluginsTest(unittest.TestCase):
             pins = jenkins_plugins.resolve_plugins(
                 requirements, dockerfile, timeout=7, command_runner=runner
             )
+            jenkins_plugins.resolve_plugins(
+                requirements, dockerfile, latest=True, timeout=7, command_runner=runner
+            )
 
         self.assertEqual({"git": "5.10.1"}, pins)
-        self.assertIn("--latest=true", captured[0])
+        self.assertIn("--latest=false", captured[0])
+        self.assertIn("--latest=true", captured[1])
         self.assertIn("--no-download", captured[0])
         self.assertIn("--list", captured[0])
         self.assertIn("jenkins-plugin-cli", captured[0])
@@ -222,12 +226,98 @@ class JenkinsPluginsTest(unittest.TestCase):
                 jenkins_plugins,
                 "resolve_plugins",
                 return_value={"dependency": "2", "direct": "1"},
+            ) as resolve, mock.patch.object(
+                jenkins_plugins, "fetch_update_center", return_value=update_center()
+            ):
+                jenkins_plugins.audit(
+                    requirements, lock, dockerfile, "https://example.test", 5, 5
+                )
+                resolve.assert_called_once_with(
+                    lock, dockerfile, latest=False, timeout=5
+                )
+
+    def test_upstream_release_only_changes_lock_during_explicit_generation(self) -> None:
+        old_version = "4376.v30c8c00684a_3"
+        new_version = "4378.v7a_08f1b_b_f8f4"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements = root / "plugins.txt"
+            lock = root / "plugins.lock.txt"
+            dockerfile = root / "Dockerfile"
+            requirements.write_text("workflow-aggregator:1\n", encoding="utf-8")
+            original = f"workflow-aggregator:1\nworkflow-cps:{old_version}\n"
+            lock.write_text(original, encoding="utf-8")
+            dockerfile.write_text(
+                "FROM example.test/jenkins@sha256:" + "e" * 64 + "\n",
+                encoding="utf-8",
+            )
+
+            def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+                if "--latest=true" in command:
+                    version = new_version
+                elif f"workflow-cps:{old_version}" in command:
+                    version = old_version
+                else:
+                    # Resolving only direct requirements cannot reproduce the lock.
+                    version = "minimum-required-version"
+                return subprocess.CompletedProcess(
+                    command, 0,
+                    resolver_output({"workflow-aggregator": "1", "workflow-cps": version}),
+                    "",
+                )
+
+            resolve = jenkins_plugins.resolve_plugins
+            with mock.patch.object(
+                jenkins_plugins, "resolve_plugins",
+                side_effect=lambda *args, **kwargs: resolve(
+                    *args, **kwargs, command_runner=runner
+                ),
             ), mock.patch.object(
                 jenkins_plugins, "fetch_update_center", return_value=update_center()
             ):
                 jenkins_plugins.audit(
                     requirements, lock, dockerfile, "https://example.test", 5, 5
                 )
+                self.assertEqual(original, lock.read_text(encoding="utf-8"))
+                jenkins_plugins.generate_lock(requirements, lock, dockerfile, 5)
+                self.assertEqual(new_version, jenkins_plugins.read_pins(lock)["workflow-cps"])
+
+    def test_audit_rejects_stale_direct_requirements_before_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements = root / "plugins.txt"
+            lock = root / "plugins.lock.txt"
+            requirements.write_text("direct:2\n", encoding="utf-8")
+            for pins in ("dependency:1\n", "dependency:1\ndirect:1\n"):
+                lock.write_text(pins, encoding="utf-8")
+                with self.subTest(pins=pins), mock.patch.object(
+                    jenkins_plugins, "resolve_plugins"
+                ) as resolve, self.assertRaisesRegex(PluginAuditError, "direct requirement"):
+                    jenkins_plugins.audit(
+                        requirements, lock, root / "Dockerfile", "https://example.test", 5, 5
+                    )
+                resolve.assert_not_called()
+
+    def test_audit_still_rejects_incomplete_or_changed_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requirements = root / "plugins.txt"
+            lock = root / "plugins.lock.txt"
+            requirements.write_text("direct:1\n", encoding="utf-8")
+            lock.write_text("dependency:2\ndirect:1\n", encoding="utf-8")
+            for effective in (
+                {"dependency": "2", "direct": "1", "missing": "1"},
+                {"dependency": "3", "direct": "1"},
+                {"direct": "1"},
+            ):
+                with self.subTest(effective=effective), mock.patch.object(
+                    jenkins_plugins, "resolve_plugins", return_value=effective
+                ), mock.patch.object(
+                    jenkins_plugins, "fetch_update_center", return_value=update_center()
+                ), self.assertRaises(PluginAuditError):
+                    jenkins_plugins.audit(
+                        requirements, lock, root / "Dockerfile", "https://example.test", 5, 5
+                    )
 
     def test_audit_rejects_security_warning(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
