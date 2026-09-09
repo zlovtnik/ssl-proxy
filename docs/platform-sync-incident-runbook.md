@@ -44,9 +44,20 @@ been exposed:
    jq . /run/platform-sync/health.json
    ```
 
-2. Verify all 19 declared Secrets exist:
+2. Verify every Secret declared in the platform input contract exists. From the
+   repository root (requires Python with PyYAML), look up the exact declared set;
+   a missing Secret makes the command fail even if unrelated Secrets exist:
    ```bash
-   kubectl get secrets -n prod-ssl-proxy -o name | wc -l
+   python3 - <<'PY'
+   import subprocess
+   from pathlib import Path
+   import yaml
+
+   spec = yaml.safe_load(Path("cyber-stack/platform-input-contract.yaml").read_text())["spec"]
+   names = sorted({item["name"] for item in spec["inputs"] if item["kind"] == "Secret"})
+   assert names, "contract declares no Secrets"
+   subprocess.run(["kubectl", "get", "secret", *names, "-n", spec["namespace"], "-o", "name"], check=True)
+   PY
    ```
 
 3. Check sync logs:

@@ -9,6 +9,8 @@ writer. Destructive operations require an exact confirmation token.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import ipaddress
 import json
 import os
@@ -128,14 +130,19 @@ class Runner:
         input_data: bytes | None = None,
         capture: bool = True,
         check: bool = True,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
-        completed = subprocess.run(
-            list(arguments),
-            input=input_data,
-            stdout=subprocess.PIPE if capture else None,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                list(arguments),
+                input=input_data,
+                stdout=subprocess.PIPE if capture else None,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise MaintenanceError(f"{arguments[0]} timed out after {timeout}s") from error
         if check and completed.returncode != 0:
             detail = completed.stderr.decode("utf-8", errors="replace").strip()
             if not detail:
@@ -505,6 +512,8 @@ def reset_database(
     runtime: Runtime,
     contract: PostgresContract,
     confirmation: str | None,
+    *,
+    preserve_keycloak: bool = False,
 ) -> None:
     expected = f"RESET-{runtime.data_volume}"
     require_confirmation(confirmation, expected)
@@ -512,6 +521,9 @@ def reset_database(
         raise MaintenanceError(f"Compose file is missing: {runtime.compose_file}")
     assert_exact_mount(runner, runtime)
     stage_accounts(runner, runtime, contract)
+    identity_backup = None
+    if preserve_keycloak:
+        identity_backup = backup_keycloak(runner, runtime, contract)
     compose(runner, runtime, "stop", "postgres")
     compose(runner, runtime, "rm", "-f", "postgres")
     references = runner.run(
@@ -525,7 +537,44 @@ def reset_database(
     wait_for_health(runner, runtime)
     ensure_role_search_paths(runner, runtime, contract)
     apply_schema(runner, runtime, contract)
+    if identity_backup is not None:
+        runner.run(
+            ("docker", "exec", "-i", runtime.container, "pg_restore",
+             "--username", "platform_admin", "--dbname", contract.database,
+             "--clean", "--if-exists", "--exit-on-error", "--single-transaction"),
+            input_data=identity_backup.read_bytes(),
+        )
+        print(f"Keycloak identities restored; private recovery backup: {identity_backup}")
     print("database reset complete; run platform-sync before rolling consumers")
+
+
+def backup_keycloak(runner: Runner, runtime: Runtime, contract: PostgresContract) -> Path:
+    """Require quiescent consumers and retain identity recovery outside the checkout."""
+    active = runner.run(
+        ("docker", "exec", runtime.container, "psql", "--no-psqlrc",
+         "--username", "platform_admin", "--dbname", contract.database, "-Atc",
+         "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
+         "AND pid<>pg_backend_pid() AND backend_type='client backend'")
+    ).stdout.strip()
+    if active != b"0":
+        raise MaintenanceError(
+            "database clients are still connected; quiesce consumers through Git/Argo before cleanup"
+        )
+    dump = runner.run(
+        ("docker", "exec", runtime.container, "pg_dump", "--username", "platform_admin",
+         "--dbname", contract.database, "--format=custom", "--schema=keycloak")
+    ).stdout
+    if not dump.startswith(b"PGDMP"):
+        raise MaintenanceError("Keycloak backup is not a PostgreSQL custom archive; refusing reset")
+    directory = Path(tempfile.mkdtemp(prefix="ssl-proxy-identity-", dir=Path.home()))
+    backup = directory / "keycloak.dump"
+    with backup.open("xb") as output:
+        os.chmod(backup, 0o600)
+        output.write(dump)
+        output.flush()
+        os.fsync(output.fileno())
+    print(f"Keycloak recovery backup: {backup}")
+    return backup
 
 
 def parse_userlist(contents: bytes) -> dict[str, str]:
@@ -675,8 +724,10 @@ def rotate_password(
         raise MaintenanceError(f"unsupported PostgreSQL role: {role}")
     require_confirmation(confirmation, f"ROTATE-{role}")
     rollout_targets = ROLLOUT_TARGETS[role]
-    rollout_generations = {
-        deployment: deployment_generation(runner, runtime, deployment)
+    rollout_states = {
+        deployment: deployment_reload_state(
+            runner, runtime, deployment, timeout=runtime.rollout_timeout
+        )
         for deployment in rollout_targets
     }
     old_password = vault_read(
@@ -751,7 +802,7 @@ def rotate_password(
         raise MaintenanceError(f"rotation failed and was rolled back: {primary_error}") from primary_error
     print(f"rotated {role}; waiting for platform-sync and Reloader")
     try:
-        verify_deployment_rollouts(runner, runtime, rollout_generations)
+        verify_deployment_rollouts(runner, runtime, rollout_states, account, new_password)
     except MaintenanceError as error:
         raise MaintenanceError(
             f"rotation completed, but consumer rollout verification failed: {error}; "
@@ -771,57 +822,118 @@ def kubectl_arguments(runtime: Runtime, *arguments: str) -> tuple[str, ...]:
     return tuple(command)
 
 
-def deployment_generation(runner: Runner, runtime: Runtime, deployment: str) -> int:
+RELOADER_ANNOTATION = "reloader.stakater.com/last-reloaded-from"
+
+
+def kubernetes_object(
+    runner: Runner, runtime: Runtime, kind: str, name: str, *, timeout: float
+) -> dict:
     result = runner.run(
-        kubectl_arguments(
-            runtime,
-            "get",
-            "deployment",
-            deployment,
-            "-o",
-            "jsonpath={.metadata.generation}",
-        )
+        kubectl_arguments(runtime, "get", kind, name, "-o", "json"),
+        timeout=timeout,
     )
     try:
-        return int(result.stdout.strip())
+        document = json.loads(result.stdout)
+        if not isinstance(document, dict):
+            raise ValueError("expected object")
+        return document
     except ValueError as error:
-        raise MaintenanceError(
-            f"could not read generation for Deployment/{deployment}"
-        ) from error
+        raise MaintenanceError(f"could not read {kind}/{name}") from error
+
+
+def deployment_reload_state(
+    runner: Runner, runtime: Runtime, deployment: str, *, timeout: float
+) -> tuple[int, str]:
+    document = kubernetes_object(runner, runtime, "deployment", deployment, timeout=timeout)
+    try:
+        generation = int(document["metadata"]["generation"])
+        annotations = document["spec"]["template"].get("metadata", {}).get("annotations") or {}
+        return generation, annotations.get(RELOADER_ANNOTATION, "")
+    except (KeyError, TypeError, ValueError) as error:
+        raise MaintenanceError(f"could not read rollout state for Deployment/{deployment}") from error
 
 
 def verify_deployment_rollouts(
     runner: Runner,
     runtime: Runtime,
-    previous_generations: Mapping[str, int],
+    previous_states: Mapping[str, tuple[int, str]],
+    account: Account,
+    password: bytes,
 ) -> None:
-    if not previous_generations:
+    if not previous_states:
         return
     deadline = time.monotonic() + runtime.rollout_timeout
-    pending = dict(previous_generations)
+
+    def remaining_timeout() -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise MaintenanceError(f"consumer rollout deadline expired after {runtime.rollout_timeout}s")
+        return remaining
+
+    pending = dict(previous_states)
     while pending and time.monotonic() < deadline:
         for deployment, previous in tuple(pending.items()):
-            if deployment_generation(runner, runtime, deployment) > previous:
+            is_pool = deployment == "postgres-pgbouncer"
+            secret_name = "pgbouncer-runtime-users" if is_pool else account.secret_name
+            secret = kubernetes_object(
+                runner, runtime, "secret", secret_name, timeout=remaining_timeout()
+            )
+            try:
+                data = {
+                    key: base64.b64decode(value, validate=True)
+                    for key, value in secret.get("data", {}).items()
+                }
+            except (ValueError, TypeError) as error:
+                raise MaintenanceError(f"could not decode Secret/{secret_name}") from error
+            if is_pool:
+                projected = parse_userlist(data.get("userlist.txt", b"")).get(account.role)
+                matches = projected is not None and projected.encode("utf-8") == password
+            else:
+                matches = data.get("password") == password
+            if not matches:
+                continue
+            # Match GetSHAfromSecret in the pinned Reloader v1.4.19:
+            # https://github.com/stakater/Reloader/blob/v1.4.19/internal/pkg/util/util.go
+            digest = hashlib.sha1(b";".join(sorted(
+                key.encode("utf-8") + b"=" + value for key, value in data.items()
+            ))).hexdigest()
+            generation, annotation = deployment_reload_state(
+                runner, runtime, deployment, timeout=remaining_timeout()
+            )
+            try:
+                source = json.loads(annotation) if annotation else {}
+            except ValueError:
+                source = {}
+            if (
+                generation > previous[0]
+                and annotation != previous[1]
+                and isinstance(source, dict)
+                and source.get("type") == "SECRET"
+                and source.get("name") == secret_name
+                and source.get("namespace") == runtime.kubernetes_namespace
+                and source.get("hash") == digest
+            ):
                 del pending[deployment]
         if pending:
-            time.sleep(2)
+            time.sleep(min(2, remaining_timeout()))
     if pending:
         names = ", ".join(sorted(pending))
         raise MaintenanceError(
-            f"Reloader did not advance Deployment generation for {names} "
+            f"Secret projection or Reloader Pod template change not verified for {names} "
             f"within {runtime.rollout_timeout}s"
         )
-    for deployment in previous_generations:
-        remaining = max(1, int(deadline - time.monotonic()))
+    for deployment in previous_states:
+        remaining = remaining_timeout()
         runner.run(
             kubectl_arguments(
                 runtime,
                 "rollout",
                 "status",
                 f"deployment/{deployment}",
-                f"--timeout={remaining}s",
+                f"--timeout={max(1, int(remaining))}s",
             ),
             capture=False,
+            timeout=remaining_timeout(),
         )
 
 
@@ -937,6 +1049,8 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("stage-secrets", help="stage all five Vault passwords in the Docker secret volume")
     reset = commands.add_parser("reset", help="delete and recreate the exact PostgreSQL data volume")
     reset.add_argument("--confirm")
+    reset.add_argument("--preserve-keycloak", action="store_true",
+                       help="require disconnected consumers and preserve existing identity data")
     rotate = commands.add_parser("rotate-password", help="rotate one PostgreSQL account with rollback")
     rotate.add_argument("--role", choices=tuple(ACCOUNTS_BY_ROLE), required=True)
     rotate.add_argument("--confirm")
@@ -962,7 +1076,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             stage_accounts(runner, runtime, contract)
         elif arguments.command == "reset":
             require_tools("docker", "vault")
-            reset_database(runner, runtime, contract, arguments.confirm)
+            reset_database(runner, runtime, contract, arguments.confirm,
+                           preserve_keycloak=arguments.preserve_keycloak)
         elif arguments.command == "rotate-password":
             tools = ["docker", "vault"]
             if ROLLOUT_TARGETS[arguments.role]:

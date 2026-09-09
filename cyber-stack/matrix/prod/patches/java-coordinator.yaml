@@ -4,15 +4,21 @@ metadata:
   name: ssl-proxy-java-coordinator
   namespace: ssl-proxy
 spec:
-  replicas: 3
+  replicas: 1
+  # Stop the old consumer before starting its replacement; Kafka retains work.
+  strategy:
+    type: Recreate
   template:
     spec:
       containers:
         - name: java-coordinator
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=40 -XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError"
           resources:
             limits:
               cpu: "2"
-              memory: 2Gi
+              memory: 4Gi
             requests:
-              cpu: 500m
-              memory: 512Mi
+              cpu: "1"
+              memory: 2Gi

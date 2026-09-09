@@ -26,10 +26,12 @@ def contract_digest(root: Path) -> str:
 
 def manifest_digest(root: Path) -> str:
     contents = (root / PREFLIGHT_PATH).read_text(encoding="utf-8")
-    match = DIGEST_PATTERN.search(contents)
-    if match is None:
-        raise ValueError(f"{PREFLIGHT_PATH} has no valid EXPECTED_CONTRACT_SHA256")
-    return match.group(0).rsplit('"', 2)[1]
+    matches = list(DIGEST_PATTERN.finditer(contents))
+    if len(matches) != 1:
+        raise ValueError(
+            f"{PREFLIGHT_PATH} must contain exactly one valid EXPECTED_CONTRACT_SHA256"
+        )
+    return matches[0].group(0).rsplit('"', 2)[1]
 
 
 def write_digest(root: Path, expected: str) -> None:

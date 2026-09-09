@@ -866,9 +866,13 @@ def _check_octopus_runtime(
     errors: list[str] = []
     if (
         expected_environment == "production"
-        and _path(deployments[0], "spec", "replicas") != 3
+        and _path(deployments[0], "spec", "replicas") != 1
     ):
-        errors.append(f"{relative}: production Octopus requires exactly 3 replicas")
+        errors.append(f"{relative}: production Octopus requires exactly 1 replica")
+    if expected_environment == "production":
+        strategy = _mapping(_path(deployments[0], "spec", "strategy"))
+        if strategy.get("type") != "Recreate" or strategy.get("rollingUpdate") is not None:
+            errors.append(f"{relative}: singleton Octopus requires Recreate without rollingUpdate")
     for variable, value in expected.items():
         entries = [
             _mapping(entry)

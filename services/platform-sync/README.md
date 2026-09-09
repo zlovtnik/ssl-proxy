@@ -120,10 +120,12 @@ Key metrics:
 - `platform_sync_last_run_duration_seconds` - Most recent run duration
 - `platform_sync_last_inputs_written` - Inputs written by the most recent run
 - `platform_sync_objects_changed_total` - Platform input objects whose data changed
-
-Each write event includes `changed` and `contract_input_index`. Object names
-remain redacted by policy; the stable index follows the contract input order.
 - `platform_sync_last_run_timestamp_seconds` - Most recent completion time
+
+Each write event includes `changed`. Writes for declared inputs also include
+`contract_input_index`, a zero-based index following the contract input order.
+The readiness ConfigMap write has no `contract_input_index`. Object names
+remain redacted by policy.
 
 ### Systemd Timers
 
@@ -152,7 +154,20 @@ If the credential generator fails:
 If the sync fails:
 
 1. Check logs: `journalctl -u vault-k8s-sync -f`
-2. Verify all 19 declared Secrets exist: `kubectl get secrets -n prod-ssl-proxy`
+2. Verify every declared Secret by name. Run from the repository root with Python
+   and PyYAML installed; missing contract Secrets make this command fail:
+   ```bash
+   python3 - <<'PY'
+   import subprocess
+   from pathlib import Path
+   import yaml
+
+   spec = yaml.safe_load(Path("cyber-stack/platform-input-contract.yaml").read_text())["spec"]
+   names = sorted({item["name"] for item in spec["inputs"] if item["kind"] == "Secret"})
+   assert names, "contract declares no Secrets"
+   subprocess.run(["kubectl", "get", "secret", *names, "-n", spec["namespace"], "-o", "name"], check=True)
+   PY
+   ```
 3. Check the health file: `jq . /run/platform-sync/health.json`
 4. Run a dry run: `SYNC_DRY_RUN=true /opt/platform-sync/bin/platform-sync`
 

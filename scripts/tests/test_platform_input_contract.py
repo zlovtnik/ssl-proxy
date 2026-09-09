@@ -14,6 +14,11 @@ import yaml
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY_ROOT / "scripts"))
 
+from gen_contract_digest import (  # noqa: E402
+    PREFLIGHT_PATH,
+    manifest_digest,
+    write_digest,
+)
 from platform_input_contract import (  # noqa: E402
     CONTRACT_RELATIVE_PATH,
     PLATFORM_BOOTSTRAP,
@@ -99,6 +104,25 @@ def render_production() -> list[dict[str, object]]:
 
 
 class PlatformInputContractTest(unittest.TestCase):
+    def test_digest_requires_exactly_one_valid_entry_in_both_modes(self) -> None:
+        digest = "a" * 64
+        entry = f'- name: EXPECTED_CONTRACT_SHA256\n  value: "{digest}"\n'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / PREFLIGHT_PATH
+            path.parent.mkdir(parents=True)
+            for contents in ("", entry.replace(digest, "invalid"), entry * 2,
+                             entry + entry.replace(digest, "b" * 64)):
+                with self.subTest(contents=contents):
+                    path.write_text(contents, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "exactly one"):
+                        manifest_digest(root)
+                    with self.assertRaisesRegex(ValueError, "exactly one"):
+                        write_digest(root, digest)
+                    self.assertEqual(contents, path.read_text(encoding="utf-8"))
+            path.write_text(entry, encoding="utf-8")
+            self.assertEqual(digest, manifest_digest(root))
+
     def test_checked_in_contract_digest_matches_preflight(self) -> None:
         subprocess.run(
             [sys.executable, "scripts/gen_contract_digest.py", "--check"],

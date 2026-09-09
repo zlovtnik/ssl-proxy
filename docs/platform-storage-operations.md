@@ -19,6 +19,39 @@ registry and Kubernetes storage hygiene. Read it with the
 
 ## PostgreSQL preflight and volume reset
 
+Run these Make tasks from the repository checkout on the Wiretrap server.
+Inspect disk usage before choosing cleanup:
+
+```bash
+make storage-audit
+```
+
+To repeat the PostgreSQL cleanup while preserving Vault passwords, TLS material
+and existing Keycloak users, first update the server checkout to include the
+current [maintenance CLI](../scripts/platform_postgres.py). Quiesce database
+consumers, including PgBouncer and Keycloak, through reviewed Git/Argo changes.
+Then run:
+
+```bash
+make postgres-clean POSTGRES_CLEAN_CONFIRM=RESET-ssl-proxy-platform-postgres-data
+```
+
+This permanently erases PostgreSQL application data. It refuses to reset while
+database clients remain connected, saves a private Keycloak archive under the
+current user's home directory, recreates the exact PostgreSQL data volume,
+applies canonical schemas and restores identity data. The archive is retained
+for recovery if any later step fails. After success, run platform-sync and
+restore consumers through Git/Argo as described below. If reset fails, keep
+consumers stopped and use the printed archive path for identity recovery;
+do not rerun against a partially restored database without preserving that archive.
+
+Both tasks run locally without SSH. The cleanup task uses existing Vault
+authentication and defaults `VAULT_ADDR` to `https://192.168.1.242:8200` and
+`VAULT_CACERT` to `$HOME/.local/share/ssl-proxy-platform/vault-ca.crt`.
+Export either variable to override it. Credentials are never passed through
+Make arguments. These targets leave
+Kubernetes volumes, Vault, Jenkins and registry storage intact.
+
 The maintenance CLI validates the digest-pinned PostgreSQL bootstrap contract,
 the exact container-to-volume attachment, Vault access and all five isolated
 account inputs without printing values:

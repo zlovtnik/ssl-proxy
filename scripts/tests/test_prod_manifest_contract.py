@@ -129,7 +129,8 @@ def octopus() -> list[dict[str, object]]:
 kind: Deployment
 metadata: {name: ssl-proxy-java-coordinator}
 spec:
-  replicas: 3
+  replicas: 1
+  strategy: {type: Recreate}
   template:
     spec:
       containers:
@@ -252,10 +253,19 @@ class ProductionManifestContractTest(unittest.TestCase):
         rendered[0]["spec"]["replicas"] = 4
 
         errors = check_gitops._check_octopus_runtime(rendered, "prod")
-        self.assertTrue(any("exactly 3 replicas" in error for error in errors))
+        self.assertTrue(any("exactly 1 replica" in error for error in errors))
         self.assertTrue(any("OCTOPUS_CONSUMERS_ENABLED=true" in error for error in errors))
         self.assertTrue(any("complete processor catalog" in error for error in errors))
         self.assertTrue(any("retired cutover inputs" in error for error in errors))
+
+    def test_octopus_rejects_surging_singleton_rollout(self) -> None:
+        for strategy in ({}, {"type": "RollingUpdate"},
+                         {"type": "Recreate", "rollingUpdate": {"maxSurge": 1}}):
+            with self.subTest(strategy=strategy):
+                rendered = octopus()
+                rendered[0]["spec"]["strategy"] = strategy
+                errors = check_gitops._check_octopus_runtime(rendered, "prod")
+                self.assertTrue(any("Recreate" in error for error in errors))
 
     def test_octopus_schema_checksum_matches_canonical_manifest(self) -> None:
         rendered = octopus()

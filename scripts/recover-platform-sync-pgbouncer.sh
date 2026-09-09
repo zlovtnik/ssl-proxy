@@ -57,10 +57,6 @@ require_command strings
 require_command systemctl
 require_command vault
 
-if systemctl is-active --quiet "$SYNC_SERVICE"; then
-    fail "$SYNC_SERVICE is currently running; wait for it to finish and retry"
-fi
-
 timer_was_active=false
 work_dir=""
 strings_file=""
@@ -81,8 +77,12 @@ trap cleanup EXIT
 
 if systemctl is-active --quiet "$SYNC_TIMER"; then
     timer_was_active=true
-    systemctl stop "$SYNC_TIMER"
 fi
+systemctl stop "$SYNC_TIMER"
+
+sync_state="$(systemctl show "$SYNC_SERVICE" --property=ActiveState --value)"
+[[ $sync_state == inactive || $sync_state == failed ]] || \
+    fail "$SYNC_SERVICE is currently running or transitioning; wait for it to finish and retry"
 
 work_dir="$(mktemp -d /tmp/platform-pgbouncer-recovery.XXXXXX)"
 strings_file="$work_dir/platform-sync.strings"
@@ -160,17 +160,23 @@ vault kv patch \
 unset octopus_password atheros_password migrator_password
 
 printf '%s\n' 'Running platform-sync...'
+export KUBECONFIG=/run/platform-sync/kubeconfig
+previous_resource_version="$(kubectl get configmap platform-ready -n "$NAMESPACE" \
+    -o jsonpath='{.metadata.resourceVersion}')"
+[[ -n $previous_resource_version ]] || fail "platform-ready/resourceVersion is empty"
 systemctl start "$SYNC_SERVICE"
 systemctl --quiet is-failed "$SYNC_SERVICE" && \
     fail "$SYNC_SERVICE failed; inspect journalctl -u $SYNC_SERVICE"
 
-export KUBECONFIG=/run/platform-sync/kubeconfig
 ready="$(kubectl get configmap platform-ready -n "$NAMESPACE" -o jsonpath='{.data.ready}')"
 contract_sha="$(kubectl get configmap platform-ready -n "$NAMESPACE" -o jsonpath='{.data.contract-sha256}')"
 last_success="$(kubectl get configmap platform-ready -n "$NAMESPACE" -o jsonpath='{.data.last-success-unix}')"
+resource_version="$(kubectl get configmap platform-ready -n "$NAMESPACE" -o jsonpath='{.metadata.resourceVersion}')"
 
 [[ $ready == true ]] || fail "platform-ready/ready is not true"
 [[ $contract_sha =~ ^[0-9a-f]{64}$ ]] || fail "platform-ready/contract-sha256 is invalid"
 [[ $last_success =~ ^[0-9]+$ ]] || fail "platform-ready/last-success-unix is invalid"
+[[ -n $resource_version && $resource_version != "$previous_resource_version" ]] || \
+    fail "platform-ready was not updated by this recovery run"
 
 printf '%s\n' 'Recovery complete: platform-ready is published and the sync timer is restored.'
