@@ -1,13 +1,17 @@
+# syntax=docker/dockerfile:1.7
+
 FROM coredns/coredns:1.12.3 AS coredns
 
-FROM rust:1.95.0-slim-bookworm AS builder
+FROM rust:1.95.0-slim-bookworm AS chef
 WORKDIR /app
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 
 # Install build dependencies required for openssl-sys
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang \
     cmake \
     build-essential \
+    mold \
     libclang-dev \
     pkg-config \
     libssl-dev \
@@ -15,15 +19,43 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+RUN --mount=type=cache,id=ssl-proxy-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=ssl-proxy-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    cargo install cargo-chef --version 0.1.74 --locked
+
+FROM chef AS planner
 COPY src ./src
 COPY benches ./benches
 COPY crates ./crates
 COPY services/atheros-sensor ./services/atheros-sensor
 COPY Cargo.toml Cargo.lock ./
-RUN cargo build --release --workspace && cargo build --release --manifest-path services/atheros-sensor/Cargo.toml
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+ARG TARGETPLATFORM
+COPY --from=planner /app/recipe.json ./recipe.json
+RUN --mount=type=cache,id=ssl-proxy-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=ssl-proxy-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=ssl-proxy-target-rust-1.95.0-${TARGETPLATFORM},target=/app/target,sharing=locked \
+    cargo chef cook --release --workspace --locked --recipe-path recipe.json
+
+COPY src ./src
+COPY benches ./benches
+COPY crates ./crates
+COPY services/atheros-sensor ./services/atheros-sensor
+COPY Cargo.toml Cargo.lock ./
+RUN --mount=type=cache,id=ssl-proxy-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=ssl-proxy-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=ssl-proxy-target-rust-1.95.0-${TARGETPLATFORM},target=/app/target,sharing=locked \
+    cargo build --release --workspace --locked \
+    && mkdir -p /out \
+    && cp target/release/ssl-proxy target/release/atheros-sensor \
+        target/release/wg-udp-frontdoor target/release/wg-obfs-shim /out/
 
 FROM rust:1.95.0-slim-bookworm AS boringtun-builder
-RUN cargo install --locked boringtun-cli --version 0.7.1 --root /opt/boringtun
+RUN --mount=type=cache,id=ssl-proxy-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=ssl-proxy-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    cargo install --locked boringtun-cli --version 0.7.1 --root /opt/boringtun
 
 FROM debian:bookworm-slim AS atheros-sensor
 ENV TZ=America/New_York
@@ -45,7 +77,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=builder /app/target/release/atheros-sensor /usr/local/bin/atheros-sensor
+COPY --from=builder /out/atheros-sensor /usr/local/bin/atheros-sensor
 RUN ldconfig && chmod +x /usr/local/bin/atheros-sensor \
   && groupadd -r proxyuser && useradd -r -g proxyuser proxyuser \
   && chown -R proxyuser:proxyuser /app /usr/local/bin/atheros-sensor \
@@ -75,10 +107,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=coredns /coredns /usr/local/bin/coredns
-COPY --from=builder /app/target/release/ssl-proxy .
-COPY --from=builder /app/target/release/wg-udp-frontdoor /usr/local/bin/wg-udp-frontdoor
+COPY --from=builder /out/ssl-proxy .
+COPY --from=builder /out/wg-udp-frontdoor /usr/local/bin/wg-udp-frontdoor
 COPY --from=boringtun-builder /opt/boringtun/bin/boringtun-cli /usr/local/bin/boringtun-cli
-COPY --from=builder /app/target/release/wg-obfs-shim /usr/local/bin/wg-obfs-shim
+COPY --from=builder /out/wg-obfs-shim /usr/local/bin/wg-obfs-shim
 COPY static ./static
 COPY config/client ./client-config
 COPY config/peer1/peer1-obfuscated.conf.example ./client-config/peer1-obfuscated.conf.example

@@ -56,6 +56,39 @@ trust the exact `SERVER_IP:5000` authority, then verify a CRI pull. Keep port
 `5000` behind a host firewall. Use TLS and authentication when the network is
 shared or untrusted.
 
+## Local Rust build caches
+
+The root [Dockerfile](../Dockerfile) uses cargo-chef 0.1.74 with Rust 1.95.0
+and mold. Dependency cooking and application compilation both use the locked
+release workspace build, including `atheros-sensor`, with the existing release
+optimizations. Source copies remain selective and include the sensor data files.
+
+Reuse the existing named Buildx builder for successive builds:
+
+```bash
+make build-ssl-proxy build-atheros-sensor BUILDER=ssl-proxy-publisher PLATFORM=linux/amd64
+```
+
+Keep the same registry configuration used to initialize that builder. If your
+builder has a different name, pass that name through `BUILDER`. The existing
+Make targets already use Buildx; no external cache backend is needed.
+
+BuildKit caches Cargo registry and Git downloads, and shares a locked,
+platform-specific target cache between dependency cooking and compilation.
+Both steps use the same toolchain, `/app` working directory, and mold flags,
+as required for [cargo-chef cache reuse](https://github.com/LukeMathWalker/cargo-chef).
+Finished application binaries are copied to `/out` before the target cache mount
+disappears. The pinned boringtun installation also reuses download caches and
+keeps its output in `/opt/boringtun`.
+
+Cache storage belongs to the selected builder. Replacing that builder, pruning
+its cache, or automatic [BuildKit garbage collection](https://docs.docker.com/build/cache/garbage-collection/)
+can remove cached layers and downloads; persistence is not indefinite. A source
+change should reuse the dependency cooking layer, while an unchanged build can
+reuse the application compilation layer too. Build time depends on retained
+caches, hardware, emulation, network access, and source changes; no fixed speedup
+is guaranteed.
+
 ## Environment-aware Kubernetes publication
 
 ```bash

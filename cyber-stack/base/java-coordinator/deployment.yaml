@@ -313,6 +313,8 @@ spec:
               value: "5000"
             - name: POSTGRES_STATEMENT_TIMEOUT_SECS
               value: "30"
+            - name: POSTGRES_NETWORK_TIMEOUT_SECS
+              value: "60"
             - name: POSTGRES_WARN_ONLY
               value: "false"
             - name: POSTGRES_SSL_MODE
