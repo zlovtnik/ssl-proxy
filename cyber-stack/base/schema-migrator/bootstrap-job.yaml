@@ -39,6 +39,8 @@ spec:
               MASTER_CONFIG=/tmp/kcadm-master.config
               ADMIN_CONFIG="$REALM_CONFIG"
               used_recovery=false
+              stage="waiting for Keycloak"
+              trap 'status=$?; if [ "$status" -ne 0 ]; then echo "Keycloak bootstrap failed during $stage (exit $status)" >&2; fi' EXIT
 
               echo "Waiting for Keycloak to be ready..."
               for i in $(seq 1 120); do
@@ -55,6 +57,8 @@ spec:
                 sleep 5
               done
 
+              stage="authenticating realm automation"
+              echo "Authenticating Keycloak realm automation..."
               if ! "$KCADM" config credentials \
                 --config "$REALM_CONFIG" \
                 --server "$KEYCLOAK_URL" \
@@ -62,6 +66,8 @@ spec:
                 --client "$KEYCLOAK_ADMIN_CLIENT_ID" \
                 --secret "$KEYCLOAK_ADMIN_CLIENT_SECRET" >/dev/null 2>&1; then
                 authenticated=false
+                stage="authenticating recovery credentials"
+                echo "Realm authentication unavailable; trying recovery credentials..."
                 for attempt in $(seq 1 90); do
                   if "$KCADM" config credentials \
                     --config "$MASTER_CONFIG" \
@@ -150,6 +156,20 @@ spec:
                 fi
               fi
 
+              stage="resolving application client"
+              echo "Resolving Keycloak client $CLIENT_ID in realm $REALM..."
+              # The realm is imported before Keycloak becomes ready. A missing
+              # client is a configuration error, not an eventual readiness event.
+              client_ids="$($KCADM get clients --config "$ADMIN_CONFIG" -r "$REALM" \
+                -q "clientId=$CLIENT_ID" --fields id --format csv --noquotes)"
+              client_uuid="$(printf '%s\n' "$client_ids" | grep -v '^id$' | head -n 1)"
+              if [ -z "$client_uuid" ]; then
+                echo "Keycloak client $CLIENT_ID was not found in realm $REALM; check the realm configuration" >&2
+                exit 1
+              fi
+
+              stage="configuring application administrator"
+              echo "Configuring Keycloak application administrator..."
               user_id="$($KCADM get users --config "$ADMIN_CONFIG" -r "$REALM" \
                 -q "username=$APP_USERNAME" -q exact=true --fields id --format csv --noquotes \
                 | grep -v '^id$' | head -n 1)"
@@ -168,22 +188,10 @@ spec:
                 --username "$APP_USERNAME" --new-password - >/dev/null \
                 <<< "$APP_PASSWORD"
 
-              client_uuid=""
-              for attempt in $(seq 1 45); do
-                client_uuid="$($KCADM get clients --config "$ADMIN_CONFIG" -r "$REALM" \
-                  -q "clientId=$CLIENT_ID" --fields id --format csv --noquotes \
-                  | grep -v '^id$' | head -n 1)"
-                if [ -n "$client_uuid" ]; then
-                  break
-                fi
-                sleep 2
-              done
-              if [ -z "$client_uuid" ]; then
-                echo "Keycloak client $CLIENT_ID was not found" >&2
-                exit 1
-              fi
+              stage="configuring application client and roles"
+              echo "Configuring Keycloak client $CLIENT_ID and administrator role..."
               "$KCADM" update "clients/$client_uuid" --config "$ADMIN_CONFIG" -r "$REALM" \
-                -s "redirectUris=[\"$PUBLIC_ORIGIN/*\"]" -s "webOrigins=[\"$UI_ORIGIN\"]" >/dev/null
+                -s "redirectUris=[\"$PUBLIC_ORIGIN/callback\"]" -s "webOrigins=[\"$UI_ORIGIN\"]" >/dev/null
 
               existing_roles="$($KCADM get "users/$user_id/role-mappings/clients/$client_uuid" \
                 --config "$ADMIN_CONFIG" -r "$REALM" --fields name --format csv --noquotes)"
@@ -193,6 +201,7 @@ spec:
               fi
 
               if [ "$used_recovery" = true ]; then
+                stage="removing recovery client"
                 recovery_client_uuid="$($KCADM get clients --config "$MASTER_CONFIG" -r master \
                   -q "clientId=$KEYCLOAK_ADMIN_CLIENT_ID" --fields id --format csv --noquotes \
                   | grep -v '^id$' | head -n 1)"
@@ -201,6 +210,7 @@ spec:
                     --config "$MASTER_CONFIG" -r master
                 fi
               fi
+              echo "Keycloak bootstrap completed successfully."
           env:
             - name: KEYCLOAK_URL
               value: "http://ssl-proxy-schema-migrator-keycloak:8080"
@@ -214,17 +224,17 @@ spec:
             - name: REALM
               value: "middleware"
             - name: CLIENT_ID
-              value: "bedrock-ui"
+              value: "schema-migrator-ui"
             - name: PUBLIC_ORIGIN
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-platform-config
-                  key: IDENTITY_PUBLIC_ORIGIN
+                  key: SCHEMA_MIGRATOR_CORS_ORIGIN
             - name: UI_ORIGIN
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-platform-config
-                  key: IDENTITY_PUBLIC_ORIGIN
+                  key: SCHEMA_MIGRATOR_CORS_ORIGIN
             - name: ADMIN_ROLE
               value: "admin"
             - name: APP_USERNAME

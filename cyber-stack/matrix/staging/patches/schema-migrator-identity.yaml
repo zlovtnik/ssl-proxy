@@ -14,7 +14,12 @@ data:
       "loginWithEmailAllowed": true,
       "sslRequired": "external",
       "requiredActions": [{"alias":"CONFIGURE_TOTP","name":"Configure OTP","providerId":"CONFIGURE_TOTP","enabled":true,"defaultAction":true,"priority":10}],
-      "roles": {"realm":[{"name":"admin"},{"name":"operator"},{"name":"viewer"}]},
+      "roles": {
+        "realm":[{"name":"admin"},{"name":"operator"},{"name":"viewer"}],
+        "client": {
+          "schema-migrator-ui":[{"name":"admin"},{"name":"operator"},{"name":"viewer"}]
+        }
+      },
       "clients": [
         {
           "clientId":"schema-migrator-ui", "name":"Schema Migrator UI", "enabled":true,

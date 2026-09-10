@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -149,6 +153,99 @@ spec:
 
 
 class ProductionManifestContractTest(unittest.TestCase):
+    def bootstrap_container(self) -> dict:
+        return documents(
+            (ROOT / "cyber-stack/base/schema-migrator/bootstrap-job.yaml").read_text()
+        )[0]["spec"]["template"]["spec"]["containers"][0]
+
+    def test_bootstrap_client_matches_realm_and_callback_configuration(self) -> None:
+        env = {entry["name"]: entry for entry in self.bootstrap_container()["env"]}
+        for path in (
+            "cyber-stack/base/schema-migrator/configmaps.yaml",
+            "cyber-stack/matrix/prod/patches/schema-migrator-identity.yaml",
+            "cyber-stack/matrix/staging/patches/schema-migrator-identity.yaml",
+        ):
+            with self.subTest(path=path):
+                realm_config = next(
+                    doc for doc in documents((ROOT / path).read_text())
+                    if "realm.json" in doc.get("data", {})
+                )
+                realm = json.loads(realm_config["data"]["realm.json"])
+                client = next(
+                    item for item in realm["clients"]
+                    if item["clientId"] == env["CLIENT_ID"]["value"]
+                )
+                self.assertEqual(realm["realm"], env["REALM"]["value"])
+                self.assertIn(
+                    env["ADMIN_ROLE"]["value"],
+                    [role["name"] for role in realm["roles"]["client"][client["clientId"]]],
+                )
+                self.assertEqual([client["webOrigins"][0] + "/callback"], client["redirectUris"])
+        for name in ("PUBLIC_ORIGIN", "UI_ORIGIN"):
+            self.assertEqual(
+                "SCHEMA_MIGRATOR_CORS_ORIGIN",
+                env[name]["valueFrom"]["configMapKeyRef"]["key"],
+            )
+
+    def run_bootstrap(self, scenario: str) -> tuple[subprocess.CompletedProcess, str]:
+        script = self.bootstrap_container()["args"][0].replace(
+            "KCADM=/opt/keycloak/bin/kcadm.sh", "KCADM=mock_kcadm"
+        )
+        mocks = r'''
+timeout() { return 0; }
+sleep() { echo "Unexpected retry" >&2; return 99; }
+mock_kcadm() {
+  printf '%s\n' "$*" >> "$CALL_LOG"
+  case "$1 $2" in
+    "config credentials") return 0 ;;
+    "get clients")
+      case "$SCENARIO" in
+        missing) printf 'id\n' ;;
+        api_failure) echo 'Admin API unavailable' >&2; return 23 ;;
+        *) printf 'id\nclient-uuid\n' ;;
+      esac ;;
+    "get users") printf 'id\nuser-uuid\n' ;;
+    "get users/user-uuid/role-mappings/clients/client-uuid") printf 'name\nadmin\n' ;;
+    "set-password --config") cat >/dev/null ;;
+    "update clients/client-uuid") return 0 ;;
+    *) echo 'Unexpected admin command' >&2; return 98 ;;
+  esac
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            calls = Path(directory) / "calls"
+            env = dict(os.environ, SCENARIO=scenario, CALL_LOG=str(calls))
+            for entry in self.bootstrap_container()["env"]:
+                env[entry["name"]] = entry.get("value", "test-secret")
+            env.update(PUBLIC_ORIGIN="https://migrator.example.internal",
+                       UI_ORIGIN="https://migrator.example.internal")
+            result = subprocess.run(
+                ["bash", "-ec", mocks + script], env=env, text=True,
+                capture_output=True, timeout=5,
+            )
+            return result, calls.read_text()
+
+    def test_bootstrap_existing_client_completes(self) -> None:
+        result, calls = self.run_bootstrap("existing")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("bootstrap completed successfully", result.stdout)
+        self.assertIn('redirectUris=["https://migrator.example.internal/callback"]', calls)
+        self.assertNotIn("test-secret", result.stdout + result.stderr)
+
+    def test_bootstrap_missing_client_fails_before_user_changes(self) -> None:
+        result, calls = self.run_bootstrap("missing")
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("client schema-migrator-ui was not found", result.stderr)
+        self.assertNotIn("set-password", calls)
+        self.assertEqual(1, calls.count("get clients"))
+
+    def test_bootstrap_client_api_error_is_not_hidden_by_csv_pipeline(self) -> None:
+        result, calls = self.run_bootstrap("api_failure")
+        self.assertEqual(23, result.returncode, result.stderr)
+        self.assertIn("Admin API unavailable", result.stderr)
+        self.assertIn("failed during resolving application client (exit 23)", result.stderr)
+        self.assertNotIn("set-password", calls)
+
     def test_keycloak_bootstrap_probe_uses_tools_present_in_keycloak_image(self) -> None:
         rendered = documents(
             (ROOT / "cyber-stack/base/schema-migrator/bootstrap-job.yaml").read_text()
