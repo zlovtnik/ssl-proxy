@@ -85,7 +85,7 @@ Embedding settings use these shared fallbacks only when their corresponding
 | Variable | Default | Shared fallback |
 |---|---:|---|
 | `ATHSEARCH_EMBEDDING_BACKEND` | empty | `VECTOR_EMBEDDING_URL` |
-| `ATHSEARCH_EMBEDDING_MODEL` | `nomic-embed-text-v2-moe` | `VECTOR_EMBEDDING_MODEL` |
+| `ATHSEARCH_EMBEDDING_MODEL` | `nomic-embed-text-v2-moe` | `VECTOR_EMBEDDING_MODEL`; other model values fail startup validation |
 | `ATHSEARCH_EMBEDDING_DIMENSIONS` | `768` | `VECTOR_EMBEDDING_DIMENSIONS` |
 
 Embedding dimensions must resolve to `768`. The client accepts supported

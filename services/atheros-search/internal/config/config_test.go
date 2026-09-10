@@ -35,6 +35,22 @@ func setRequiredPostgresEnv(t *testing.T) {
 	}
 }
 
+func TestLoadOnlySupportsNomicMoE(t *testing.T) {
+	setRequiredPostgresEnv(t)
+	t.Setenv("ATHSEARCH_EMBEDDING_MODEL", "")
+	t.Setenv("VECTOR_EMBEDDING_MODEL", "")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "nomic-embed-text-v2-moe", cfg.EmbeddingModel)
+	for _, key := range []string{"ATHSEARCH_EMBEDDING_MODEL", "VECTOR_EMBEDDING_MODEL"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "unsupported-model")
+			_, err := Load()
+			require.ErrorContains(t, err, "ATHSEARCH_EMBEDDING_MODEL must be nomic-embed-text-v2-moe")
+		})
+	}
+}
+
 func TestLoadReadsPostgresPasswordFromFile(t *testing.T) {
 	setRequiredPostgresEnv(t)
 	t.Setenv("ATHSEARCH_POSTGRES_DSN", "")

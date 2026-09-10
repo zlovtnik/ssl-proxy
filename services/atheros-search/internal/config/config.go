@@ -192,6 +192,9 @@ func Load() (Config, error) {
 	if cfg.PostgresConnMaxLifetime <= 0 || cfg.PostgresConnMaxIdleTime <= 0 {
 		return cfg, errors.New("Postgres connection lifetime and idle time must be positive")
 	}
+	if cfg.EmbeddingModel != DefaultEmbeddingModel {
+		return cfg, fmt.Errorf("ATHSEARCH_EMBEDDING_MODEL must be %s, got %q", DefaultEmbeddingModel, cfg.EmbeddingModel)
+	}
 	if cfg.EmbeddingDimensions != DefaultEmbeddingDimensions {
 		return cfg, fmt.Errorf("ATHSEARCH_EMBEDDING_DIMENSIONS must be %d, got %d", DefaultEmbeddingDimensions, cfg.EmbeddingDimensions)
 	}

@@ -342,7 +342,7 @@ spec:
             - name: OCTOPUS_PROCESSOR_INTERVAL_SECONDS
               value: "10"
             - name: OCTOPUS_EMBEDDING_MODEL
-              value: "sentence-transformers/all-MiniLM-L6-v2"
+              value: "nomic-embed-text-v2-moe"
             - name: OCTOPUS_EVENT_DUPLICATE_DISTANCE
               value: "0.05"
             - name: OCTOPUS_BEHAVIOR_SIMILARITY_THRESHOLD
