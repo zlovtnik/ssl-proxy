@@ -9,6 +9,8 @@ spec:
       containers:
         - name: atheros-search
           env:
+            - name: ATHSEARCH_EMBEDDING_BACKEND
+              value: "http://192.168.1.242:9931"
             - name: ATHSEARCH_JWT_JWKS_URI
               value: "https://gateway.rclabs.uk/realms/middleware/protocol/openid-connect/certs"
 ---
