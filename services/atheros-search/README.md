@@ -87,6 +87,15 @@ Embedding settings use these shared fallbacks only when their corresponding
 | `ATHSEARCH_EMBEDDING_BACKEND` | empty | `VECTOR_EMBEDDING_URL` |
 | `ATHSEARCH_EMBEDDING_MODEL` | `nomic-embed-text-v2-moe` | `VECTOR_EMBEDDING_MODEL`; other model values fail startup validation |
 | `ATHSEARCH_EMBEDDING_DIMENSIONS` | `768` | `VECTOR_EMBEDDING_DIMENSIONS` |
+| `ATHSEARCH_EMBEDDING_MAX_TOKENS` | `512` | None | Per-input token budget; longer texts are split and chunk vectors mean-pooled |
+
+The embedding backend rejects any single input larger than its model context
+(512 tokens for the llama.cpp deployment). Before a request is sent, the
+client estimates the token count of every text — counting punctuation and
+special characters as individual tokens, since MAC addresses, JSON tags and
+`key: value` separators are token-heavy — and splits texts that exceed the
+budget at line, then word boundaries. Chunk embeddings are mean-pooled, so
+each input still produces one 768-dimension vector.
 
 Embedding dimensions must resolve to `768`. The client accepts supported
 OpenAI-compatible and Ollama response shapes. Enabling workers requires a

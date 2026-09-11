@@ -14,12 +14,18 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+
+	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/embed"
 )
 
 const (
 	DefaultEmbeddingModel      = "nomic-embed-text-v2-moe"
 	DefaultEmbeddingDimensions = 768
-	DefaultCORSAllowedOrigin   = "http://127.0.0.1:5173"
+	// DefaultEmbeddingMaxTokens matches the llama.cpp embedding backend
+	// context (n_ctx=512). Longer texts are split into chunks and
+	// mean-pooled by the embed client.
+	DefaultEmbeddingMaxTokens = embed.DefaultMaxTokens
+	DefaultCORSAllowedOrigin  = "http://127.0.0.1:5173"
 )
 
 type Config struct {
@@ -36,6 +42,7 @@ type Config struct {
 	EmbeddingModel               string
 	EmbeddingDimensions          int
 	EmbeddingBackend             string
+	EmbeddingMaxTokens           int
 	GRPCPort                     int
 	HTTPPort                     int
 	MetricsPort                  int
@@ -117,6 +124,7 @@ func Load() (Config, error) {
 		EmbeddingModel:               envString("ATHSEARCH_EMBEDDING_MODEL", envString("VECTOR_EMBEDDING_MODEL", DefaultEmbeddingModel)),
 		EmbeddingDimensions:          envInt("ATHSEARCH_EMBEDDING_DIMENSIONS", envInt("VECTOR_EMBEDDING_DIMENSIONS", DefaultEmbeddingDimensions)),
 		EmbeddingBackend:             firstEnv("ATHSEARCH_EMBEDDING_BACKEND", "VECTOR_EMBEDDING_URL"),
+		EmbeddingMaxTokens:           envInt("ATHSEARCH_EMBEDDING_MAX_TOKENS", DefaultEmbeddingMaxTokens),
 		GRPCPort:                     envInt("ATHSEARCH_GRPC_PORT", 50051),
 		HTTPPort:                     envInt("ATHSEARCH_HTTP_PORT", 8080),
 		MetricsPort:                  envInt("ATHSEARCH_METRICS_PORT", 9090),
@@ -197,6 +205,9 @@ func Load() (Config, error) {
 	}
 	if cfg.EmbeddingDimensions != DefaultEmbeddingDimensions {
 		return cfg, fmt.Errorf("ATHSEARCH_EMBEDDING_DIMENSIONS must be %d, got %d", DefaultEmbeddingDimensions, cfg.EmbeddingDimensions)
+	}
+	if cfg.EmbeddingMaxTokens < 64 {
+		return cfg, fmt.Errorf("ATHSEARCH_EMBEDDING_MAX_TOKENS must be at least 64, got %d", cfg.EmbeddingMaxTokens)
 	}
 	if cfg.HybridAlpha < 0 || cfg.HybridAlpha > 1 {
 		return cfg, fmt.Errorf("ATHSEARCH_HYBRID_ALPHA must be between 0 and 1, got %f", cfg.HybridAlpha)

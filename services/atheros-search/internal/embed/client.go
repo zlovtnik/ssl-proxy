@@ -45,7 +45,13 @@ type HTTPClient struct {
 	BaseURL    string
 	Model      string
 	Dimensions int
-	Client     *http.Client
+	// MaxTokens is the per-input token budget. Inputs whose estimated
+	// token count exceeds the budget are split into chunks, and the chunk
+	// embeddings are mean-pooled so each input still yields a single
+	// vector. Zero selects DefaultMaxTokens (512, the nomic-embed
+	// llama.cpp context size).
+	MaxTokens int
+	Client    *http.Client
 }
 
 type embeddingsRequest struct {
@@ -61,22 +67,67 @@ type embeddingsResponse struct {
 	Error      any         `json:"error"`
 }
 
-func NewHTTPClient(baseURL, model string, dimensions int) *HTTPClient {
+func NewHTTPClient(baseURL, model string, dimensions, maxTokens int) *HTTPClient {
 	return &HTTPClient{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
 		Model:      model,
 		Dimensions: dimensions,
+		MaxTokens:  maxTokens,
 		Client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
 }
 
+// embedRequestBatch bounds how many chunk inputs are posted per HTTP request.
+const embedRequestBatch = 32
+
 func (c *HTTPClient) Embed(ctx context.Context, texts []string, _ Kind) ([][]float32, error) {
 	if c.BaseURL == "" {
 		return nil, errors.New("embedding backend URL is empty")
 	}
-	body, err := json.Marshal(embeddingsRequest{Model: c.Model, Input: texts})
+	// Split every text into chunks that respect the model token budget,
+	// remember which chunk range belongs to which input, embed the chunks,
+	// then pool each range back into a single vector.
+	offsets := make([]int, len(texts)+1)
+	inputs := make([]string, 0, len(texts))
+	for i, text := range texts {
+		chunks := ChunkText(text, c.MaxTokens)
+		offsets[i+1] = offsets[i] + len(chunks)
+		inputs = append(inputs, chunks...)
+	}
+	vectors, err := c.embedInputs(ctx, inputs)
+	if err != nil {
+		return nil, err
+	}
+	pooled := make([][]float32, len(texts))
+	for i := range texts {
+		pooled[i] = meanVectors(vectors[offsets[i]:offsets[i+1]], c.Dimensions)
+	}
+	return pooled, nil
+}
+
+// embedInputs posts inputs in bounded sub-batches. Every input is a single
+// chunk that already respects the model token budget, so the backend never
+// receives an input larger than its context.
+func (c *HTTPClient) embedInputs(ctx context.Context, inputs []string) ([][]float32, error) {
+	vectors := make([][]float32, 0, len(inputs))
+	for start := 0; start < len(inputs); start += embedRequestBatch {
+		end := start + embedRequestBatch
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		part, err := c.embedOnce(ctx, inputs[start:end])
+		if err != nil {
+			return nil, err
+		}
+		vectors = append(vectors, part...)
+	}
+	return vectors, nil
+}
+
+func (c *HTTPClient) embedOnce(ctx context.Context, inputs []string) ([][]float32, error) {
+	body, err := json.Marshal(embeddingsRequest{Model: c.Model, Input: inputs})
 	if err != nil {
 		return nil, err
 	}
@@ -115,8 +166,8 @@ func (c *HTTPClient) Embed(ctx context.Context, texts []string, _ Kind) ([][]flo
 			vectors[i] = item.Embedding
 		}
 	}
-	if len(vectors) != len(texts) {
-		return nil, fmt.Errorf("embedding backend returned %d vectors for %d texts", len(vectors), len(texts))
+	if len(vectors) != len(inputs) {
+		return nil, fmt.Errorf("embedding backend returned %d vectors for %d inputs", len(vectors), len(inputs))
 	}
 	for i, vec := range vectors {
 		if len(vec) != c.Dimensions {
@@ -124,6 +175,27 @@ func (c *HTTPClient) Embed(ctx context.Context, texts []string, _ Kind) ([][]flo
 		}
 	}
 	return vectors, nil
+}
+
+// meanVectors averages chunk embeddings into a single vector. A single chunk
+// is copied through unchanged, so short inputs behave exactly as before.
+func meanVectors(chunkVectors [][]float32, dimensions int) []float32 {
+	if len(chunkVectors) == 1 {
+		return append([]float32(nil), chunkVectors[0]...)
+	}
+	mean := make([]float32, dimensions)
+	for _, vec := range chunkVectors {
+		for i := range mean {
+			if i < len(vec) {
+				mean[i] += vec[i]
+			}
+		}
+	}
+	count := float32(len(chunkVectors))
+	for i := range mean {
+		mean[i] /= count
+	}
+	return mean
 }
 
 func responseErrorText(body []byte) string {

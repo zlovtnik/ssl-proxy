@@ -106,7 +106,7 @@ func main() {
 		embedder = embed.NoopClient{Dimensions: cfg.EmbeddingDimensions}
 		logger.Warn().Msg("embedding backend not configured; using zero-vector embedder")
 	} else {
-		embedder = embed.NewCircuitClient(embed.NewHTTPClient(cfg.EmbeddingBackend, cfg.EmbeddingModel, cfg.EmbeddingDimensions))
+		embedder = embed.NewCircuitClient(embed.NewHTTPClient(cfg.EmbeddingBackend, cfg.EmbeddingModel, cfg.EmbeddingDimensions, cfg.EmbeddingMaxTokens))
 	}
 	m := metrics.New()
 	embedder = embed.CachedClient{
