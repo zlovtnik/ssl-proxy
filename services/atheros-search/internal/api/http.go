@@ -40,7 +40,7 @@ func httpStatusFromError(err error) int {
 	if strings.Contains(msg, "request body too large") {
 		return http.StatusRequestEntityTooLarge
 	}
-	if strings.Contains(msg, "unsupported search kind") || strings.Contains(msg, "unsupported graph node kind") || strings.Contains(msg, "unsupported inventory grouping") || strings.Contains(msg, "unsupported merge decision") || strings.Contains(msg, "must be before") || strings.Contains(msg, "is required") {
+	if strings.Contains(msg, "unsupported search kind") || strings.Contains(msg, "has been retired") || strings.Contains(msg, "unsupported inventory grouping") || strings.Contains(msg, "must be before") || strings.Contains(msg, "is required") {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
@@ -260,60 +260,6 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 			Msg("suggest filters completed")
 		writeProtoJSON(w, http.StatusOK, resp)
 	})
-	registerJSON(mux, "POST", "/v1/graph", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
-		start := time.Now()
-		reqID := requestID()
-		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/graph").Str("method", "POST").Str("req_id", reqID).Logger(), r.Context())
-		log.Info().Msg("graph request started")
-
-		body, ok := readRequestBody(w, r)
-		if !ok {
-			log.Error().Dur("latency", time.Since(start)).Msg("graph failed: read body")
-			return
-		}
-		var filters search.GraphFilters
-		if len(strings.TrimSpace(string(body))) > 0 {
-			if err := json.Unmarshal(body, &filters); err != nil {
-				log.Error().Err(err).Dur("latency", time.Since(start)).Msg("graph failed: unmarshal filters")
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		}
-		log = log.With().
-			Bool("has_mac", strings.TrimSpace(filters.SourceMAC) != "").
-			Str("mac_hash", shortHash(filters.SourceMAC)).
-			Bool("has_ssid", strings.TrimSpace(filters.SSID) != "").
-			Str("ssid_hash", shortHash(filters.SSID)).
-			Int("kinds", len(filters.Kinds)).
-			Int("location_ids", len(filters.LocationIDs)).
-			Int("sensor_ids", len(filters.SensorIDs)).
-			Bool("threat_only", filters.ThreatOnly).
-			Logger()
-		if filters.ObservedAfter != nil {
-			log = log.With().Time("observed_after", *filters.ObservedAfter).Logger()
-		}
-		if filters.ObservedBefore != nil {
-			log = log.With().Time("observed_before", *filters.ObservedBefore).Logger()
-		}
-
-		if err := search.ValidateGraphFilters(filters); err != nil {
-			log.Warn().Err(err).Dur("latency", time.Since(start)).Msg("graph failed: validation")
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		resp, err := svc.Graph(r.Context(), filters)
-		if err != nil {
-			log.Error().Err(err).Dur("latency", time.Since(start)).Msg("graph failed")
-			writeError(w, httpStatusFromError(err), err.Error())
-			return
-		}
-		log.Info().
-			Dur("latency", time.Since(start)).
-			Int("nodes", len(resp.Nodes)).
-			Int("edges", len(resp.Edges)).
-			Msg("graph completed")
-		writeJSON(w, http.StatusOK, resp)
-	})
 	registerJSON(mux, "POST", "/v1/inventory", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		start := time.Now()
 		reqID := requestID()
@@ -354,42 +300,6 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 			Int("edges", len(resp.Edges)).
 			Int("total_registered", resp.TotalRegisteredCount).
 			Msg("inventory completed")
-		writeJSON(w, http.StatusOK, resp)
-	})
-	registerJSONRoles(mux, "POST", "/v1/inventory/merge-candidates/{candidate_id}/decision", tokenAuth, []string{auth.RoleOperator, auth.RoleAdmin}, func(w http.ResponseWriter, r *http.Request, params map[string]string) {
-		start := time.Now()
-		reqID := requestID()
-		candidateID := params["candidate_id"]
-		log := loggerWithTrace(logger.With().
-			Str("endpoint", "/v1/inventory/merge-candidates/:id/decision").
-			Str("method", "POST").
-			Str("req_id", reqID).
-			Str("candidate_hash", shortHash(candidateID)).
-			Logger(), r.Context())
-		log.Info().Msg("merge decision request started")
-
-		body, ok := readRequestBody(w, r)
-		if !ok {
-			log.Error().Dur("latency", time.Since(start)).Msg("merge decision failed: read body")
-			return
-		}
-		var req search.MergeDecisionRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			log.Error().Err(err).Dur("latency", time.Since(start)).Msg("merge decision failed: unmarshal")
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		resp, err := svc.MergeDecision(r.Context(), candidateID, req.Decision)
-		if err != nil {
-			log.Error().Err(err).Dur("latency", time.Since(start)).Msg("merge decision failed")
-			writeError(w, httpStatusFromError(err), err.Error())
-			return
-		}
-		log.Info().
-			Dur("latency", time.Since(start)).
-			Str("decision", string(req.Decision)).
-			Bool("accepted", resp.Accepted).
-			Msg("merge decision completed")
 		writeJSON(w, http.StatusOK, resp)
 	})
 	mux.HandlePath("GET", "/healthz", func(w http.ResponseWriter, r *http.Request, _ map[string]string) {

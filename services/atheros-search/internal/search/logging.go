@@ -11,13 +11,7 @@ import (
 )
 
 func LogQuery(ctx context.Context, pool *sql.DB, queryText, queryKind string, qvec []float32, topK int, resultKeys []string, sessionID string, latencyMS int64) (int64, error) {
-	var vector any
-	if len(qvec) > 0 {
-		if err := validateVector(qvec); err != nil {
-			return 0, err
-		}
-		vector = VectorLiteral(qvec)
-	}
+	_ = qvec
 	queryUUID, err := newUUID()
 	if err != nil {
 		return 0, err
@@ -27,35 +21,20 @@ func LogQuery(ctx context.Context, pool *sql.DB, queryText, queryKind string, qv
 		sessionHash = sha256Hex(sessionID)
 	}
 
-	tx, err := pool.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
 	var queryID int64
-	err = tx.QueryRowContext(ctx, `
+	err = pool.QueryRowContext(ctx, `
 INSERT INTO atheros_search.search_queries (
-  query_uuid, hashed_query_text, query_kind, query_vector,
-  top_k, session_hash, latency_ms, created_at, expires_at
-) VALUES ($1, $2, $3, $4::vector, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '30 days')
+  query_uuid, hashed_query_text, query_kind, top_k, session_hash,
+  latency_ms, result_count, request_metadata, created_at, expires_at
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7,
+  jsonb_build_object('has_query', $8),
+  CURRENT_TIMESTAMP,
+  CURRENT_TIMESTAMP + INTERVAL '30 days'
+)
 RETURNING query_id
-`, queryUUID, sha256Hex(queryText), queryKind, vector, topK, sessionHash, latencyMS).Scan(&queryID)
+`, queryUUID, sha256Hex(queryText), queryKind, topK, sessionHash, latencyMS, len(resultKeys), strings.TrimSpace(queryText) != "").Scan(&queryID)
 	if err != nil {
-		return 0, err
-	}
-	for ordinal, key := range resultKeys {
-		key = strings.TrimSpace(key)
-		if key == "" {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO atheros_search.search_query_results (query_id, ordinal, result_key_hash)
-VALUES ($1, $2, $3)
-`, queryID, ordinal+1, sha256Hex(key)); err != nil {
-			return 0, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return queryID, nil

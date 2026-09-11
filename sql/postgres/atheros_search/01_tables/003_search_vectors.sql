@@ -1,69 +1,23 @@
--- object: atheros_search_vectors
--- depends_on: atheros_search_documents
--- Native pgvector HNSW indexes are created after the four vector tables so
--- repeated manifest application remains deterministic.
+-- object: atheros_search_embeddings
+-- depends_on: atheros_search_documents_jobs_devices
 
-CREATE TABLE IF NOT EXISTS atheros_search.search_vectors_event (
-  vector_id       bigserial,
+CREATE TABLE IF NOT EXISTS atheros_search.embeddings (
+  embedding_id    bigserial,
   document_id     uuid NOT NULL,
+  embedding_kind  VARCHAR(32) NOT NULL,
   embedding_model VARCHAR(128) NOT NULL,
   content_sha256  char(64) NOT NULL,
   embedding       VECTOR(768) NOT NULL,
   embedded_at     timestamptz NOT NULL,
   created_at      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (vector_id),
-  CONSTRAINT search_vectors_event_document_uq UNIQUE (document_id, embedding_model)
+  PRIMARY KEY (embedding_id),
+  CONSTRAINT embeddings_document_kind_model_uq UNIQUE (
+    document_id, embedding_kind, embedding_model
+  ),
+  CONSTRAINT embeddings_kind_ck CHECK (embedding_kind IN ('event', 'device'))
 );
 
-CREATE INDEX IF NOT EXISTS search_vectors_event_embedded_idx ON atheros_search.search_vectors_event (embedded_at);
-
-CREATE TABLE IF NOT EXISTS atheros_search.search_vectors_device (
-  vector_id       bigserial,
-  document_id     uuid NOT NULL,
-  embedding_model VARCHAR(128) NOT NULL,
-  content_sha256  char(64) NOT NULL,
-  embedding       VECTOR(768) NOT NULL,
-  embedded_at     timestamptz NOT NULL,
-  created_at      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (vector_id),
-  CONSTRAINT search_vectors_device_document_uq UNIQUE (document_id, embedding_model)
-);
-
-CREATE INDEX IF NOT EXISTS search_vectors_device_embedded_idx ON atheros_search.search_vectors_device (embedded_at);
-
-CREATE TABLE IF NOT EXISTS atheros_search.search_vectors_behaviour (
-  vector_id       bigserial,
-  document_id     uuid NOT NULL,
-  embedding_model VARCHAR(128) NOT NULL,
-  content_sha256  char(64) NOT NULL,
-  embedding       VECTOR(768) NOT NULL,
-  embedded_at     timestamptz NOT NULL,
-  created_at      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (vector_id),
-  CONSTRAINT search_vectors_behaviour_document_uq UNIQUE (document_id, embedding_model)
-);
-
-CREATE INDEX IF NOT EXISTS search_vectors_behaviour_embedded_idx ON atheros_search.search_vectors_behaviour (embedded_at);
-
-CREATE TABLE IF NOT EXISTS atheros_search.search_vectors_sequence (
-  vector_id       bigserial,
-  document_id     uuid NOT NULL,
-  embedding_model VARCHAR(128) NOT NULL,
-  content_sha256  char(64) NOT NULL,
-  embedding       VECTOR(768) NOT NULL,
-  embedded_at     timestamptz NOT NULL,
-  created_at      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (vector_id),
-  CONSTRAINT search_vectors_sequence_document_uq UNIQUE (document_id, embedding_model)
-);
-
-CREATE INDEX IF NOT EXISTS search_vectors_sequence_embedded_idx ON atheros_search.search_vectors_sequence (embedded_at);
-
-CREATE INDEX IF NOT EXISTS search_vectors_event_hnsw_idx
-  ON atheros_search.search_vectors_event USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX IF NOT EXISTS search_vectors_device_hnsw_idx
-  ON atheros_search.search_vectors_device USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX IF NOT EXISTS search_vectors_behaviour_hnsw_idx
-  ON atheros_search.search_vectors_behaviour USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX IF NOT EXISTS search_vectors_sequence_hnsw_idx
-  ON atheros_search.search_vectors_sequence USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS embeddings_kind_model_idx
+  ON atheros_search.embeddings (embedding_kind, embedding_model, embedded_at DESC);
+CREATE INDEX IF NOT EXISTS embeddings_hnsw_idx
+  ON atheros_search.embeddings USING hnsw (embedding vector_cosine_ops);

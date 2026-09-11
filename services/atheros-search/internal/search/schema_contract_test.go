@@ -17,8 +17,6 @@ func TestCanonicalPostgresSchemaMatchesQueryFacade(t *testing.T) {
 		"sql/postgres/atheros_search/01_tables/001_schema_manifest.sql",
 		"sql/postgres/atheros_search/01_tables/002_search_documents.sql",
 		"sql/postgres/atheros_search/01_tables/003_search_vectors.sql",
-		"sql/postgres/atheros_search/01_tables/004_projection_state.sql",
-		"sql/postgres/atheros_search/01_tables/005_graph_inventory_identity.sql",
 		"sql/postgres/atheros_search/01_tables/006_query_feedback.sql",
 	}
 	combined := ""
@@ -28,24 +26,15 @@ func TestCanonicalPostgresSchemaMatchesQueryFacade(t *testing.T) {
 		combined += string(body)
 	}
 	for _, required := range []string{
-		"CREATE TABLE IF NOT EXISTS atheros_search.schema_manifest",
+		"CREATE TABLE IF NOT EXISTS atheros_search.schema_readiness",
 		"CREATE TABLE IF NOT EXISTS atheros_search.search_documents",
-		"CREATE TABLE IF NOT EXISTS atheros_search.search_document_tokens",
-		"CREATE TABLE IF NOT EXISTS atheros_search.search_vectors_event",
-		"CREATE TABLE IF NOT EXISTS atheros_search.search_vectors_device",
-		"CREATE TABLE IF NOT EXISTS atheros_search.search_vectors_behaviour",
-		"CREATE TABLE IF NOT EXISTS atheros_search.search_vectors_sequence",
-		"CREATE TABLE IF NOT EXISTS atheros_search.threat_signals",
-		"CREATE TABLE IF NOT EXISTS atheros_search.sequence_transitions",
-		"CREATE TABLE IF NOT EXISTS atheros_search.graph_nodes",
-		"CREATE TABLE IF NOT EXISTS atheros_search.graph_edges",
-		"CREATE TABLE IF NOT EXISTS atheros_search.inventory_devices",
-		"CREATE TABLE IF NOT EXISTS atheros_search.merge_candidates",
-		"CREATE TABLE IF NOT EXISTS atheros_search.merge_decisions",
-		"decision IN ('merge', 'not_match', 'needs_more_data', 'undo_merge')",
+		"CREATE TABLE IF NOT EXISTS atheros_search.embedding_jobs",
+		"CREATE TABLE IF NOT EXISTS atheros_search.devices",
+		"CREATE TABLE IF NOT EXISTS atheros_search.embeddings",
 		"CREATE TABLE IF NOT EXISTS atheros_search.search_queries",
-		"CREATE TABLE IF NOT EXISTS atheros_search.search_query_results",
-		"query_vector      VECTOR(768)",
+		"CREATE TABLE IF NOT EXISTS atheros_search.worker_heartbeat",
+		"embedding       VECTOR(768) NOT NULL",
+		"embedding_kind IN ('event', 'device')",
 	} {
 		require.Contains(t, combined, required)
 	}

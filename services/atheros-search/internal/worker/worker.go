@@ -191,7 +191,7 @@ func groupJobsByKind(jobs []Job) map[string][]Job {
 }
 
 func (p *Pool) storeCompletion(ctx context.Context, job Job, vector []float32) error {
-	table, err := vectorTableForKind(job.EmbeddingKind)
+	kind, err := normalizeEmbeddingKind(job.EmbeddingKind)
 	if err != nil {
 		return err
 	}
@@ -200,7 +200,7 @@ func (p *Pool) storeCompletion(ctx context.Context, job Job, vector []float32) e
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := insertVector(ctx, tx, table, job.DocumentID, job.EmbeddingModel, job.ContentSHA256, vector); err != nil {
+	if err := insertVector(ctx, tx, job.DocumentID, kind, job.EmbeddingModel, job.ContentSHA256, vector); err != nil {
 		return err
 	}
 	if err := completeJob(ctx, tx, job.JobID, job.LeaseToken, job.LeaseFence); err != nil {

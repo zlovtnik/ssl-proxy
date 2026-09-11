@@ -66,7 +66,7 @@ func TestSparseTokenPatternsNormalizeAndPreserveSuffixWildcard(t *testing.T) {
 	require.Equal(t, []string{"deauth"}, sparseTokenPatterns("deauth deauth"))
 }
 
-func TestSuggestSSIDQueryIsUncappedAndPostgreSQLSafe(t *testing.T) {
-	require.NotContains(t, suggestSSIDSQL, "LIMIT")
+func TestSuggestSSIDQueryIsPostgreSQLSafe(t *testing.T) {
+	require.Contains(t, suggestSSIDSQL, "LIMIT 50")
 	require.Contains(t, suggestSSIDSQL, "$1")
 }

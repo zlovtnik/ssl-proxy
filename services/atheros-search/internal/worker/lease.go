@@ -170,32 +170,29 @@ WHERE jobs.job_id = expired.job_id
 	return result.RowsAffected()
 }
 
-func vectorTableForKind(kind string) (string, error) {
+func normalizeEmbeddingKind(kind string) (string, error) {
 	switch kind {
 	case "event":
-		return "search_vectors_event", nil
+		return "event", nil
 	case "device":
-		return "search_vectors_device", nil
-	case "behaviour", "behaviour_window":
-		return "search_vectors_behaviour", nil
-	case "sequence", "frame_sequence":
-		return "search_vectors_sequence", nil
+		return "device", nil
 	default:
 		return "", fmt.Errorf("unknown embedding kind: %s", kind)
 	}
 }
 
-func insertVector(ctx context.Context, tx *sql.Tx, table, documentID, embeddingModel, contentSHA256 string, embedding []float32) error {
+func insertVector(ctx context.Context, tx *sql.Tx, documentID, embeddingKind, embeddingModel, contentSHA256 string, embedding []float32) error {
 	vecStr := formatVector(embedding)
-	query := fmt.Sprintf(`
-INSERT INTO atheros_search.%s (document_id, embedding_model, content_sha256, embedding, embedded_at)
-VALUES ($1, $2, $3, $4::vector, CURRENT_TIMESTAMP)
-ON CONFLICT (document_id) DO UPDATE SET
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO atheros_search.embeddings (
+  document_id, embedding_kind, embedding_model, content_sha256, embedding, embedded_at
+)
+VALUES ($1, $2, $3, $4, $5::vector, CURRENT_TIMESTAMP)
+ON CONFLICT (document_id, embedding_kind, embedding_model) DO UPDATE SET
   embedding = EXCLUDED.embedding,
   content_sha256 = EXCLUDED.content_sha256,
   embedded_at = CURRENT_TIMESTAMP
-`, table)
-	_, err := tx.ExecContext(ctx, query, documentID, embeddingModel, contentSHA256, vecStr)
+`, documentID, embeddingKind, embeddingModel, contentSHA256, vecStr)
 	return err
 }
 

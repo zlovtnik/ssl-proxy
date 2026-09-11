@@ -33,6 +33,9 @@ type ETLHealth struct {
 	EmbeddingLeased        int64             `json:"embedding_leased"`
 	EmbeddingCompleted     int64             `json:"embedding_completed"`
 	EmbeddingFailed        int64             `json:"embedding_failed"`
+	EmbeddingRetryCount    int64             `json:"embedding_retry_count"`
+	OldestEmbeddingJobAt   *time.Time        `json:"oldest_embedding_job_at,omitempty"`
+	EmbeddingDependency    string            `json:"embedding_dependency"`
 	Workers                []WorkerHeartbeat `json:"workers"`
 }
 
@@ -60,35 +63,51 @@ func (h *HealthMonitor) Snapshot(ctx context.Context) (ETLHealth, error) {
 
 	err := h.db.QueryRowContext(ctx, `
 SELECT
-  wireless_events_24h_count,
-  wireless_last_observed_at,
-  ingest_pending_count,
-  ingest_processing_count,
-  ingest_failed_count,
-  batch_pending_count,
-  batch_processing_count,
-  batch_completed_count,
-  batch_failed_count,
-  job_stored_pending_count,
-  job_stored_running_count,
-  job_stored_completed_count,
-  job_stored_failed_count,
-  job_effective_pending_count,
-  job_effective_running_count,
-  job_effective_completed_count,
-  job_effective_failed_count,
-  job_orphaned_count,
-  backlog_pending_count,
-  backlog_failed_count
-FROM atheros_search.v_sync_plane_health
-WHERE projection_key = 'current'
-LIMIT 1
+  COUNT(*) FILTER (WHERE observed_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'),
+  MAX(observed_at)
+FROM octopus_core.wireless_observations
 `).Scan(
 		&health.WirelessEvents24h,
 		&health.WirelessLastObservedAt,
+	)
+	if err != nil {
+		return health, err
+	}
+
+	err = h.db.QueryRowContext(ctx, `
+SELECT
+  COUNT(*) FILTER (WHERE disposition = 'received'),
+  COUNT(*) FILTER (WHERE disposition = 'processing'),
+  COUNT(*) FILTER (WHERE disposition IN ('rejected', 'failed'))
+FROM octopus_core.ingestion_receipts
+`).Scan(
 		&health.IngestPending,
 		&health.IngestProcessing,
 		&health.IngestFailed,
+	)
+	if err != nil {
+		return health, err
+	}
+
+	err = h.db.QueryRowContext(ctx, `
+SELECT
+  COUNT(*) FILTER (WHERE work_kind = 'batch' AND status = 'pending'),
+  COUNT(*) FILTER (WHERE work_kind = 'batch' AND status IN ('leased', 'running')),
+  COUNT(*) FILTER (WHERE work_kind = 'batch' AND status = 'completed'),
+  COUNT(*) FILTER (WHERE work_kind = 'batch' AND status = 'failed'),
+  COUNT(*) FILTER (WHERE work_kind = 'job' AND status = 'pending'),
+  COUNT(*) FILTER (WHERE work_kind = 'job' AND status IN ('leased', 'running')),
+  COUNT(*) FILTER (WHERE work_kind = 'job' AND status = 'completed'),
+  COUNT(*) FILTER (WHERE work_kind = 'job' AND status = 'failed'),
+  COUNT(*) FILTER (WHERE work_kind = 'job' AND status = 'pending'),
+  COUNT(*) FILTER (WHERE work_kind = 'job' AND status IN ('leased', 'running')),
+  COUNT(*) FILTER (WHERE work_kind = 'job' AND status = 'completed'),
+  COUNT(*) FILTER (WHERE work_kind = 'job' AND status = 'failed'),
+  COUNT(*) FILTER (WHERE status IN ('leased', 'running') AND lease_expires_at <= CURRENT_TIMESTAMP),
+  COUNT(*) FILTER (WHERE work_kind = 'backlog' AND status = 'pending'),
+  COUNT(*) FILTER (WHERE work_kind = 'backlog' AND status = 'failed')
+FROM octopus_core.work_items
+`).Scan(
 		&health.BatchPending,
 		&health.BatchProcessing,
 		&health.BatchCompleted,
@@ -105,25 +124,38 @@ LIMIT 1
 		&health.BacklogPending,
 		&health.BacklogFailed,
 	)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil {
 		return health, err
 	}
 
 	embedErr := h.db.QueryRowContext(ctx, `
 SELECT
-  SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END),
-  SUM(CASE WHEN status = 'leased' THEN 1 ELSE 0 END),
-  SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
-  SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)
+  COUNT(*) FILTER (WHERE status = 'pending'),
+  COUNT(*) FILTER (WHERE status = 'leased'),
+  COUNT(*) FILTER (WHERE status = 'completed'),
+  COUNT(*) FILTER (WHERE status = 'failed'),
+  COALESCE(SUM(attempt_count) FILTER (WHERE status IN ('pending', 'leased', 'failed')), 0),
+  MIN(created_at) FILTER (WHERE status IN ('pending', 'leased'))
 FROM atheros_search.embedding_jobs
 `).Scan(
 		&health.EmbeddingPending,
 		&health.EmbeddingLeased,
 		&health.EmbeddingCompleted,
 		&health.EmbeddingFailed,
+		&health.EmbeddingRetryCount,
+		&health.OldestEmbeddingJobAt,
 	)
 	if embedErr != nil && embedErr != sql.ErrNoRows {
 		return health, embedErr
+	}
+	if health.EmbeddingFailed > 0 {
+		health.EmbeddingDependency = "blocked"
+	} else if health.EmbeddingPending > 0 && len(health.Workers) == 0 {
+		health.EmbeddingDependency = "waiting_for_worker"
+	} else if health.EmbeddingPending == 0 && health.EmbeddingCompleted == 0 {
+		health.EmbeddingDependency = "waiting_for_source"
+	} else {
+		health.EmbeddingDependency = "healthy"
 	}
 
 	rows, err := h.db.QueryContext(ctx, `
@@ -140,6 +172,9 @@ ORDER BY worker_id
 			}
 			health.Workers = append(health.Workers, wh)
 		}
+	}
+	if health.EmbeddingPending > 0 && len(health.Workers) == 0 {
+		health.EmbeddingDependency = "waiting_for_worker"
 	}
 
 	return health, nil

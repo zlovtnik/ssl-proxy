@@ -47,8 +47,8 @@ func TestProcessBatchCommitsClaimBeforeEmbeddingAndCompletesAtomically(t *testin
 	mock.ExpectCommit()
 	mock.ExpectPing()
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO atheros_search\\.search_vectors_event").
-		WithArgs(job.DocumentID, job.EmbeddingModel, job.ContentSHA256, "[0.25,0.5]").
+	mock.ExpectExec("INSERT INTO atheros_search\\.embeddings").
+		WithArgs(job.DocumentID, job.EmbeddingKind, job.EmbeddingModel, job.ContentSHA256, "[0.25,0.5]").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE atheros_search\\.embedding_jobs").
 		WithArgs(job.JobID, job.LeaseToken, job.LeaseFence).
@@ -72,8 +72,8 @@ func TestStoreCompletionRollsBackVectorWhenLeaseIsLost(t *testing.T) {
 
 	job := testJob()
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO atheros_search\\.search_vectors_event").
-		WithArgs(job.DocumentID, job.EmbeddingModel, job.ContentSHA256, "[1]").
+	mock.ExpectExec("INSERT INTO atheros_search\\.embeddings").
+		WithArgs(job.DocumentID, job.EmbeddingKind, job.EmbeddingModel, job.ContentSHA256, "[1]").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE atheros_search\\.embedding_jobs").
 		WithArgs(job.JobID, job.LeaseToken, job.LeaseFence).
@@ -93,8 +93,8 @@ func TestStoreCompletionRollsBackWhenVectorWriteFails(t *testing.T) {
 
 	job := testJob()
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO atheros_search\\.search_vectors_event").
-		WithArgs(job.DocumentID, job.EmbeddingModel, job.ContentSHA256, "[1]").
+	mock.ExpectExec("INSERT INTO atheros_search\\.embeddings").
+		WithArgs(job.DocumentID, job.EmbeddingKind, job.EmbeddingModel, job.ContentSHA256, "[1]").
 		WillReturnError(errors.New("vector write failed"))
 	mock.ExpectRollback()
 

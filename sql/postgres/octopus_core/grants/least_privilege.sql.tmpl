@@ -1,36 +1,72 @@
--- Provision accounts and credentials outside schema migration. Replace the
--- account tokens with pre-existing TLS-authenticated PostgreSQL identities.
+-- Runtime roles are provisioned outside schema migration. Grants are
+-- deliberately table-specific so new relations are inaccessible by default.
 
-GRANT USAGE ON SCHEMA octopus_core TO {{OCTOPUS_ACCOUNT}};
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA octopus_core
-  TO {{OCTOPUS_ACCOUNT}};
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA octopus_core TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE ON SCHEMA octopus_core TO {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
 
-GRANT SELECT ON octopus_core.schema_readiness
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.sync_events
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.devices
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.wireless_authorized_networks
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.wireless_clients
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.wireless_frames
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.wireless_frame_radio
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.wireless_frame_qos
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.wireless_frame_network
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.wireless_frame_app_signals
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.wireless_frame_identity
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.wireless_frame_security
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.wireless_shadow_alerts
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
-GRANT SELECT ON octopus_core.v_wireless_device_inventory
-  TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.registered_devices TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.authorized_networks TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.consumer_checkpoints TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.ingestion_receipts TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.work_items TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.dead_letters TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.outbox_events TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.outbox_attempts TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.processor_runs TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.processor_checkpoints TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.proxy_events TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_observations TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_alerts TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sensors TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.payload_archives TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.maintenance_runs TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.maintenance_findings TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT ON octopus_core.schema_readiness TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_cursors TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.consumer_offsets TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_jobs TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_batches TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_errors TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_backlog TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.ingestion_evidence TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_events TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_event_payload_archives TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_event_tombstones TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.devices TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_authorized_networks TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_clients TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_shadow_alerts TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_frames TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_frame_radio TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_frame_qos TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_frame_network TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_frame_app_signals TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_frame_identity TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_frame_security TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_inventory_projection_inputs TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_shadow_alert_inputs TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_sensors TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_audit_frames TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_bandwidth_windows TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_client_inventory TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_probe_requests TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.proxy_blocked_host_rollups TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.proxy_payload_audit TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.work_leases TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.processor_state TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.retention_runs TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.reconciliation_findings TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.outbox_publish_attempts TO {{OCTOPUS_ACCOUNT}};
+
+-- Atheros Search can calculate ETL health and serve alerts, but it cannot read
+-- operator credentials or registered-device claims.
+GRANT SELECT ON octopus_core.schema_readiness TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT ON octopus_core.consumer_checkpoints TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT ON octopus_core.ingestion_receipts TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT (
+  work_id, work_kind, status, priority, lease_expires_at,
+  attempt_count, max_attempts, next_attempt_at,
+  created_at, started_at, finished_at, updated_at
+) ON octopus_core.work_items TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT ON octopus_core.wireless_observations TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT ON octopus_core.wireless_alerts TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT ON octopus_core.sensors TO {{ATHEROS_SEARCH_ACCOUNT}};

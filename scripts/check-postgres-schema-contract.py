@@ -19,7 +19,7 @@ def scalar(text: str, key: str) -> str:
 
 
 def apply_order(text: str) -> list[str]:
-    match = re.search(r"(?ms)^apply_order:\n((?:  - .+\n)+)", text)
+    match = re.search(r"(?m)^apply_order:\n((?:  - [^\n]+\n)+)", text)
     return re.findall(r"(?m)^  - (.+)$", match.group(1)) if match else []
 
 

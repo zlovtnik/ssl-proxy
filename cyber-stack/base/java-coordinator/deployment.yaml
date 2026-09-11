@@ -294,7 +294,7 @@ spec:
             - name: POSTGRES_ENABLED
               value: "true"
             - name: POSTGRES_SCHEMA_MANIFEST_SHA256
-              value: "aa7b959953e75d287bea35161bbdc47498e577b3e629368773e5569e6e77d57b"
+              value: "667d18f947613918c506cd21c3542fdb927c71292f57db76cafed6a244d2303b"
             - name: POSTGRES_HOST
               value: "postgres-pgbouncer"
             - name: POSTGRES_PORT
@@ -331,10 +331,8 @@ spec:
                 sync-load-dispatch,sync-load-consumer,sync-result-consumer,
                 sync-outbox-publisher,wireless-frame-normalizer,
                 wireless-inventory-projector,wireless-identity-projector,
-                embedding-preparer,embedding-text-builder,behavior-projector,
-                timing-projector,baseline-projector,sequence-projector,
-                graph-projector,similarity-projector,clustering-projector,
-                dns-alert-projector,rf-alert-projector,risk-projector,
+                embedding-preparer,embedding-text-builder,
+                rf-alert-projector,
                 event-retention,search-retention,stale-worker-cleanup,
                 scheduled-reconciliation
             - name: OCTOPUS_PROCESSOR_BATCH_SIZE
@@ -345,10 +343,6 @@ spec:
               value: "nomic-embed-text-v2-moe"
             - name: OCTOPUS_EVENT_DUPLICATE_DISTANCE
               value: "0.05"
-            - name: OCTOPUS_BEHAVIOR_SIMILARITY_THRESHOLD
-              value: "0.88"
-            - name: OCTOPUS_SEQUENCE_DISTANCE_THRESHOLD
-              value: "0.10"
             - name: OCTOPUS_CONSUMERS_ENABLED
               value: "true"
             - name: OCTOPUS_ENVIRONMENT

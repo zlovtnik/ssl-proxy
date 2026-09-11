@@ -1,14 +1,6 @@
 -- object: octopus_core_schema_control
 -- depends_on: octopus_core_database
 
-CREATE TABLE IF NOT EXISTS octopus_core.schema_revisions (
-  migration_id   VARCHAR(128) NOT NULL,
-  content_sha256 char(64) NOT NULL,
-  applied_at     timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  applied_by     VARCHAR(128) NOT NULL,
-  PRIMARY KEY (migration_id)
-);
-
 CREATE TABLE IF NOT EXISTS octopus_core.schema_readiness (
   domain            VARCHAR(64) NOT NULL,
   required_version  VARCHAR(64) NOT NULL,
@@ -28,14 +20,11 @@ CREATE TABLE IF NOT EXISTS octopus_core.schema_readiness (
 );
 
 INSERT INTO octopus_core.schema_readiness (
-  domain, required_version, applied_version, required_checksum,
-  applied_checksum, ready, details
+  domain, required_version, required_checksum, ready, details
 ) VALUES (
   'octopus_core',
-  '001',
-  NULL,
+  '2026091101',
   '0000000000000000000000000000000000000000000000000000000000000000',
-  NULL,
   false,
   jsonb_build_object('state', 'awaiting-manifest-verification')
-) ON CONFLICT DO NOTHING;
+) ON CONFLICT (domain) DO NOTHING;

@@ -1,82 +1,45 @@
--- object: atheros_search_documents
--- depends_on: atheros_search_schema_manifest
--- Octopus writes normalized documents and postings. No PostgreSQL full-text index is
--- assumed; sparse ranking is implemented by the Go query facade.
+-- object: atheros_search_documents_jobs_devices
+-- depends_on: atheros_search_schema_control
 
 CREATE TABLE IF NOT EXISTS atheros_search.search_documents (
-  document_id       uuid NOT NULL,
-  source_key        VARCHAR(255) NOT NULL,
-  source_table      VARCHAR(128) NOT NULL,
-  source_kind       VARCHAR(64) NOT NULL,
-  source_version    BIGINT NOT NULL DEFAULT 1,
-  source_mac        VARCHAR(17) DEFAULT NULL,
-  location_id       VARCHAR(128) DEFAULT NULL,
-  sensor_id         VARCHAR(64) DEFAULT NULL,
-  observed_at       timestamptz DEFAULT NULL,
-  bssid             VARCHAR(17) DEFAULT NULL,
-  ssid              VARCHAR(256) DEFAULT NULL,
-  frame_subtype     VARCHAR(64) DEFAULT NULL,
-  tags              jsonb NOT NULL,
-  detail_json       jsonb NOT NULL,
-  security_flags    INT NOT NULL DEFAULT 0,
+  document_id        uuid NOT NULL,
+  source_kind        VARCHAR(32) NOT NULL,
+  source_id          VARCHAR(255) NOT NULL,
+  source_version     BIGINT NOT NULL DEFAULT 1,
+  source_mac         VARCHAR(17) DEFAULT NULL,
+  location_id        VARCHAR(128) DEFAULT NULL,
+  sensor_id          VARCHAR(64) DEFAULT NULL,
+  observed_at        timestamptz DEFAULT NULL,
+  bssid              VARCHAR(17) DEFAULT NULL,
+  ssid               VARCHAR(256) DEFAULT NULL,
+  frame_subtype      VARCHAR(64) DEFAULT NULL,
+  security_flags     INT NOT NULL DEFAULT 0,
   handshake_captured boolean NOT NULL DEFAULT false,
-  title             VARCHAR(512) DEFAULT NULL,
-  normalized_text   text NOT NULL,
-  normalized_sha256 char(64) NOT NULL,
-  locale            VARCHAR(16) NOT NULL DEFAULT 'und',
-  status            VARCHAR(32) NOT NULL DEFAULT 'active',
-  metadata          jsonb NOT NULL,
-  created_at        timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at        timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  title              VARCHAR(512) DEFAULT NULL,
+  normalized_text    text NOT NULL,
+  normalized_sha256  char(64) NOT NULL,
+  search_vector      tsvector NOT NULL,
+  filters            jsonb NOT NULL DEFAULT '{}'::jsonb,
+  detail_json        jsonb NOT NULL DEFAULT '{}'::jsonb,
+  status             VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at         timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at         timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (document_id),
-  CONSTRAINT search_documents_source_uq UNIQUE (source_table, source_key, source_version),
-  CONSTRAINT search_documents_status_ck CHECK (
-    status IN ('active', 'superseded', 'deleted', 'failed')
-  )
+  CONSTRAINT search_documents_source_uq UNIQUE (source_kind, source_id, source_version),
+  CONSTRAINT search_documents_kind_ck CHECK (source_kind IN ('event', 'device')),
+  CONSTRAINT search_documents_status_ck CHECK (status IN ('active', 'superseded', 'deleted', 'failed')),
+  CONSTRAINT search_documents_filters_object_ck CHECK (jsonb_typeof(filters) = 'object'),
+  CONSTRAINT search_documents_detail_object_ck CHECK (jsonb_typeof(detail_json) = 'object')
 );
 
-CREATE INDEX IF NOT EXISTS search_documents_kind_observed_idx ON atheros_search.search_documents (source_kind, observed_at);
-CREATE INDEX IF NOT EXISTS search_documents_mac_observed_idx ON atheros_search.search_documents (source_mac, observed_at);
-CREATE INDEX IF NOT EXISTS search_documents_location_observed_idx ON atheros_search.search_documents (location_id, observed_at);
-CREATE INDEX IF NOT EXISTS search_documents_status_idx ON atheros_search.search_documents (status, updated_at);
-
-CREATE TABLE IF NOT EXISTS atheros_search.search_document_tokens (
-  token          VARCHAR(191) NOT NULL,
-  document_id    uuid NOT NULL,
-  field_name     VARCHAR(64) NOT NULL DEFAULT 'body',
-  term_frequency double precision NOT NULL DEFAULT 1,
-  token_count    INT NOT NULL DEFAULT 1,
-  updated_at     timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (token, document_id, field_name),
-  CONSTRAINT search_document_tokens_frequency_ck CHECK (term_frequency >= 0),
-  CONSTRAINT search_document_tokens_count_ck CHECK (token_count > 0)
-);
-
-CREATE INDEX IF NOT EXISTS search_document_tokens_document_idx ON atheros_search.search_document_tokens (document_id);
-
-CREATE TABLE IF NOT EXISTS atheros_search.search_document_tags (
-  document_id uuid NOT NULL,
-  tag_type    VARCHAR(64) NOT NULL,
-  tag_value   VARCHAR(255) NOT NULL,
-  created_at  timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (document_id, tag_type, tag_value)
-);
-
-CREATE INDEX IF NOT EXISTS search_document_tags_lookup_idx ON atheros_search.search_document_tags (tag_type, tag_value, document_id);
-
-CREATE TABLE IF NOT EXISTS atheros_search.search_filter_values (
-  filter_kind      VARCHAR(64) NOT NULL,
-  filter_value     VARCHAR(255) NOT NULL,
-  normalized_value VARCHAR(255) NOT NULL,
-  numeric_value    double precision DEFAULT NULL,
-  datetime_value   timestamptz DEFAULT NULL,
-  created_at       timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at       timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (filter_kind, normalized_value)
-);
-
-CREATE INDEX IF NOT EXISTS search_filter_values_number_idx ON atheros_search.search_filter_values (filter_kind, numeric_value);
-CREATE INDEX IF NOT EXISTS search_filter_values_time_idx ON atheros_search.search_filter_values (filter_kind, datetime_value);
+CREATE INDEX IF NOT EXISTS search_documents_full_text_idx
+  ON atheros_search.search_documents USING gin (search_vector);
+CREATE INDEX IF NOT EXISTS search_documents_kind_observed_idx
+  ON atheros_search.search_documents (source_kind, observed_at DESC, source_id);
+CREATE INDEX IF NOT EXISTS search_documents_status_idx
+  ON atheros_search.search_documents (status, updated_at);
+CREATE INDEX IF NOT EXISTS search_documents_filters_idx
+  ON atheros_search.search_documents USING gin (filters jsonb_path_ops);
 
 CREATE TABLE IF NOT EXISTS atheros_search.embedding_jobs (
   job_id           uuid NOT NULL,
@@ -101,12 +64,45 @@ CREATE TABLE IF NOT EXISTS atheros_search.embedding_jobs (
   CONSTRAINT embedding_jobs_document_uq UNIQUE (
     document_id, embedding_kind, embedding_model, content_sha256
   ),
-  CONSTRAINT embedding_jobs_kind_ck CHECK (
-    embedding_kind IN ('event', 'device', 'behaviour', 'sequence')
-  ),
+  CONSTRAINT embedding_jobs_kind_ck CHECK (embedding_kind IN ('event', 'device')),
   CONSTRAINT embedding_jobs_status_ck CHECK (
     status IN ('pending', 'leased', 'completed', 'failed', 'cancelled')
+  ),
+  CONSTRAINT embedding_jobs_attempts_ck CHECK (
+    attempt_count >= 0 AND max_attempts > 0 AND attempt_count <= max_attempts
+  ),
+  CONSTRAINT embedding_jobs_lease_ck CHECK (
+    (status = 'leased' AND owner_id IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)
+    OR
+    (status <> 'leased' AND owner_id IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)
   )
 );
 
-CREATE INDEX IF NOT EXISTS embedding_jobs_claim_idx ON atheros_search.embedding_jobs (status, priority, next_attempt_at, lease_expires_at);
+CREATE INDEX IF NOT EXISTS embedding_jobs_claim_idx
+  ON atheros_search.embedding_jobs (priority, next_attempt_at, job_id)
+  WHERE status = 'pending';
+
+CREATE TABLE IF NOT EXISTS atheros_search.devices (
+  mac                  VARCHAR(17) NOT NULL,
+  display_name         VARCHAR(255) DEFAULT NULL,
+  registered_device_id uuid DEFAULT NULL,
+  owner_id             VARCHAR(255) DEFAULT NULL,
+  location_id          VARCHAR(128) DEFAULT NULL,
+  first_registered     timestamptz DEFAULT NULL,
+  first_seen           timestamptz NOT NULL,
+  last_seen            timestamptz NOT NULL,
+  active               boolean NOT NULL DEFAULT true,
+  registered           boolean NOT NULL DEFAULT false,
+  tags                 jsonb NOT NULL DEFAULT '[]'::jsonb,
+  known_macs           jsonb NOT NULL DEFAULT '[]'::jsonb,
+  updated_at           timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (mac),
+  CONSTRAINT devices_mac_ck CHECK (mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'),
+  CONSTRAINT devices_seen_ck CHECK (first_seen <= last_seen),
+  CONSTRAINT devices_tags_array_ck CHECK (jsonb_typeof(tags) = 'array'),
+  CONSTRAINT devices_known_macs_array_ck CHECK (jsonb_typeof(known_macs) = 'array')
+);
+
+CREATE INDEX IF NOT EXISTS devices_seen_idx ON atheros_search.devices (last_seen DESC, mac);
+CREATE INDEX IF NOT EXISTS devices_location_idx ON atheros_search.devices (location_id, last_seen DESC);
+CREATE INDEX IF NOT EXISTS devices_owner_idx ON atheros_search.devices (owner_id, last_seen DESC);

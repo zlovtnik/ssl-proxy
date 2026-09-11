@@ -39,7 +39,7 @@ func Sparse(ctx context.Context, pool *sql.DB, query string, opts Options) ([]Ra
 }
 
 func sparseKind(ctx context.Context, pool *sql.DB, query, kind string, opts Options) ([]RawResult, error) {
-	if _, ok := vectorTableByKind[kind]; !ok {
+	if _, ok := supportedSearchKinds[kind]; !ok {
 		return nil, fmt.Errorf("unsupported sparse search kind %q", kind)
 	}
 	overfetch := opts.TopK * opts.OverfetchFactor
@@ -52,22 +52,10 @@ func sparseKind(ctx context.Context, pool *sql.DB, query, kind string, opts Opti
 	if isWildcardAllSearch(query) {
 		return sparseWildcard(ctx, pool, kind, opts, overfetch)
 	}
-	patterns := sparseTokenPatterns(query)
-	if len(patterns) == 0 {
-		return nil, nil
-	}
-
-	clauses := make([]string, 0, len(patterns))
-	args := make([]any, 0, len(patterns)+2)
-	for index, pattern := range patterns {
-		clauses = append(clauses, fmt.Sprintf("t.token LIKE $%d ESCAPE E'\\\\'", index+1))
-		args = append(args, pattern)
-	}
-	args = append(args, kind, overfetch)
-	querySQL := fmt.Sprintf(`
+	querySQL := `
 SELECT
-  d.source_key,
-  d.source_table,
+  d.source_id,
+  CASE d.source_kind WHEN 'event' THEN 'wireless_observations' ELSE 'devices' END,
   d.source_kind,
   COALESCE(d.source_mac, ''),
   COALESCE(d.location_id, ''),
@@ -77,30 +65,27 @@ SELECT
   COALESCE(d.ssid, ''),
   COALESCE(d.frame_subtype, ''),
   CAST(0 AS DOUBLE PRECISION),
-  CAST(ranked.keyword_rank AS DOUBLE PRECISION),
-  COALESCE(d.tags::text, '[]'),
+  CAST(ts_rank_cd(d.search_vector, websearch_to_tsquery('simple', $1)) AS DOUBLE PRECISION),
+  COALESCE(d.filters -> 'tags', '[]'::jsonb)::text,
   COALESCE(d.detail_json::text, '{}'),
   COALESCE(d.security_flags, 0),
-  COALESCE(d.handshake_captured, 0)
-FROM (
-  SELECT t.document_id, SUM(t.term_frequency) AS keyword_rank
-  FROM atheros_search.search_document_tokens t
-  JOIN atheros_search.search_documents filter_doc ON filter_doc.document_id = t.document_id
-  WHERE (%s) AND filter_doc.source_kind = $%d AND filter_doc.status = 'active'
-  GROUP BY t.document_id
-  ORDER BY keyword_rank DESC, t.document_id ASC
-  LIMIT $%d
-) ranked
-JOIN atheros_search.search_documents d ON d.document_id = ranked.document_id
-ORDER BY ranked.keyword_rank DESC, d.observed_at DESC, d.source_key ASC`, strings.Join(clauses, " OR "), len(patterns)+1, len(patterns)+2)
-	return scanSparseRows(ctx, pool, querySQL, opts, args...)
+  COALESCE(d.handshake_captured, false)
+FROM atheros_search.search_documents d
+WHERE d.search_vector @@ websearch_to_tsquery('simple', $1)
+  AND d.source_kind = $2
+  AND d.status = 'active'
+ORDER BY ts_rank_cd(d.search_vector, websearch_to_tsquery('simple', $1)) DESC,
+         d.observed_at DESC,
+         d.source_id ASC
+LIMIT $3`
+	return scanSparseRows(ctx, pool, querySQL, opts, query, kind, overfetch)
 }
 
 func sparseWildcard(ctx context.Context, pool *sql.DB, kind string, opts Options, limit int) ([]RawResult, error) {
 	query := `
 SELECT
-  d.source_key,
-  d.source_table,
+  d.source_id,
+  CASE d.source_kind WHEN 'event' THEN 'wireless_observations' ELSE 'devices' END,
   d.source_kind,
   COALESCE(d.source_mac, ''),
   COALESCE(d.location_id, ''),
@@ -111,13 +96,13 @@ SELECT
   COALESCE(d.frame_subtype, ''),
   CAST(0 AS DOUBLE PRECISION),
   CAST(0.1 AS DOUBLE PRECISION),
-  COALESCE(d.tags::text, '[]'),
+  COALESCE(d.filters -> 'tags', '[]'::jsonb)::text,
   COALESCE(d.detail_json::text, '{}'),
   COALESCE(d.security_flags, 0),
-  COALESCE(d.handshake_captured, 0)
+  COALESCE(d.handshake_captured, false)
 FROM atheros_search.search_documents d
 WHERE d.source_kind = $1 AND d.status = 'active'
-ORDER BY d.observed_at DESC, d.source_key ASC
+ORDER BY d.observed_at DESC, d.source_id ASC
 LIMIT $2`
 	return scanSparseRows(ctx, pool, query, opts, kind, limit)
 }

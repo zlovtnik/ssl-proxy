@@ -167,13 +167,13 @@ WHERE status = 'failed'
 
 func verifySchemaGate(ctx context.Context, database *sql.DB, expectedSHA256 string, logger zerolog.Logger) error {
 	var manifestSHA256 string
-	var ready, vectorReady bool
+	var ready bool
 	err := database.QueryRowContext(ctx, `
-SELECT manifest_sha256, schema_ready, vector_ready
-FROM atheros_search.schema_manifest
-WHERE component = 'atheros-search'
+SELECT applied_checksum, ready
+FROM atheros_search.schema_readiness
+WHERE domain = 'atheros_search'
 LIMIT 1
-`).Scan(&manifestSHA256, &ready, &vectorReady)
+`).Scan(&manifestSHA256, &ready)
 	if err != nil {
 		return fmt.Errorf("schema readiness query: %w", err)
 	}
@@ -181,13 +181,12 @@ LIMIT 1
 	if manifestSHA256 != expectedSHA256 {
 		return fmt.Errorf("schema manifest mismatch: got %s, expected %s", manifestSHA256, expectedSHA256)
 	}
-	if !ready || !vectorReady {
-		return fmt.Errorf("schema not ready: ready=%t vector_ready=%t", ready, vectorReady)
+	if !ready {
+		return fmt.Errorf("schema not ready: ready=%t", ready)
 	}
 	logger.Info().
 		Str("manifest_sha256", manifestSHA256).
 		Bool("ready", ready).
-		Bool("vector_ready", vectorReady).
 		Msg("schema gate passed")
 	return nil
 }

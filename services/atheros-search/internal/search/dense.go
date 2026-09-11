@@ -13,11 +13,9 @@ import (
 
 const embeddingDimensions = 768
 
-var vectorTableByKind = map[string]string{
-	"event":            "search_vectors_event",
-	"device":           "search_vectors_device",
-	"behaviour_window": "search_vectors_behaviour",
-	"frame_sequence":   "search_vectors_sequence",
+var supportedSearchKinds = map[string]struct{}{
+	"event":  {},
+	"device": {},
 }
 
 func Dense(ctx context.Context, pool *sql.DB, qvec []float32, model string, opts Options) ([]RawResult, error) {
@@ -42,7 +40,7 @@ func Dense(ctx context.Context, pool *sql.DB, qvec []float32, model string, opts
 }
 
 func denseKind(ctx context.Context, pool *sql.DB, qvec []float32, model, kind string, opts Options) ([]RawResult, error) {
-	table, ok := vectorTableByKind[kind]
+	_, ok := supportedSearchKinds[kind]
 	if !ok {
 		return nil, fmt.Errorf("unsupported dense search kind %q", kind)
 	}
@@ -54,9 +52,9 @@ func denseKind(ctx context.Context, pool *sql.DB, qvec []float32, model, kind st
 		overfetch = 5000
 	}
 	vector := VectorLiteral(qvec)
-	query := denseKindQuery(table)
+	query := denseKindQuery()
 
-	rows, err := pool.QueryContext(ctx, query, vector, overfetch, model)
+	rows, err := pool.QueryContext(ctx, query, vector, overfetch, model, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -80,11 +78,11 @@ func denseKind(ctx context.Context, pool *sql.DB, qvec []float32, model, kind st
 	return results, rows.Err()
 }
 
-func denseKindQuery(table string) string {
-	return fmt.Sprintf(`
+func denseKindQuery() string {
+	return `
 SELECT
-  d.source_key,
-  d.source_table,
+  d.source_id,
+  CASE d.source_kind WHEN 'event' THEN 'wireless_observations' ELSE 'devices' END,
   d.source_kind,
   COALESCE(d.source_mac, ''),
   COALESCE(d.location_id, ''),
@@ -94,7 +92,7 @@ SELECT
   COALESCE(d.ssid, ''),
   COALESCE(d.frame_subtype, ''),
   CAST(1.0 - nearest.cosine_distance AS DOUBLE PRECISION),
-  COALESCE(d.tags::text, '[]'),
+  COALESCE(d.filters -> 'tags', '[]'::jsonb)::text,
   COALESCE(d.detail_json::text, '{}'),
   COALESCE(d.security_flags, 0),
   COALESCE(d.handshake_captured, false)
@@ -103,13 +101,15 @@ FROM (
     document_id,
     embedding_model,
     embedding <=> $1::vector AS cosine_distance
-  FROM atheros_search.%s
+  FROM atheros_search.embeddings
+  WHERE embedding_model = $3
+    AND embedding_kind = $4
   ORDER BY embedding <=> $1::vector ASC
   LIMIT $2
 ) nearest
 JOIN atheros_search.search_documents d ON d.document_id = nearest.document_id
-WHERE nearest.embedding_model = $3 AND d.status = 'active'
-ORDER BY nearest.cosine_distance ASC, d.source_key ASC`, table)
+WHERE d.status = 'active'
+ORDER BY nearest.cosine_distance ASC, d.source_id ASC`
 }
 
 type scanner interface {

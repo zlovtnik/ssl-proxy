@@ -28,13 +28,10 @@ type Service struct {
 	Logger                zerolog.Logger
 	SuggCache             SuggestCache
 	suggMu                sync.Mutex
-	graphCache            sync.Map
-	graphCacheJanitorOnce sync.Once
 }
 
 func NewService(pool *sql.DB, embedder embed.Client, cfg config.Config, m *metrics.Metrics, logger zerolog.Logger) *Service {
 	s := &Service{Pool: pool, Embedder: embedder, Config: cfg, Metrics: m, Logger: logger}
-	s.startGraphCacheJanitor()
 	return s
 }
 
@@ -125,10 +122,6 @@ func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (resp
 	default:
 		fused = Fuse(denseResults, sparseResults, rerankCandidateLimit(topK), s.Config.HybridAlpha)
 	}
-	fused, err = ApplyThreatBoosts(searchCtx, s.Pool, fused)
-	if err != nil {
-		return nil, err
-	}
 	sort.SliceStable(fused, func(i, j int) bool {
 		if fused[i].Score == fused[j].Score {
 			return fused[i].SourceKey < fused[j].SourceKey
@@ -137,15 +130,6 @@ func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (resp
 	})
 	if len(fused) > topK {
 		fused = fused[:topK]
-	}
-
-	if tokens := ExtractSequenceTokens(query); len(tokens) > 1 {
-		sequenceScore, err := ScoreSequence(searchCtx, s.Pool, tokens)
-		if err == nil {
-			for i := range fused {
-				fused[i].SequenceLogProb = sequenceScore
-			}
-		}
 	}
 
 	resultKeys := make([]string, 0, len(fused))
@@ -239,43 +223,14 @@ func (s *Service) SuggestFilters(ctx context.Context, req *searchv1.SuggestFilte
 	return resp, nil
 }
 
-func (s *Service) startGraphCacheJanitor() {
-	if graphCacheTTL <= 0 {
-		return
-	}
-	s.graphCacheJanitorOnce.Do(func() {
-		go func() {
-			ticker := time.NewTicker(graphCacheTTL)
-			defer ticker.Stop()
-			for range ticker.C {
-				s.pruneExpiredGraphCache(time.Now())
-			}
-		}()
-	})
-}
-
-func (s *Service) pruneExpiredGraphCache(now time.Time) {
-	s.graphCache.Range(func(key, value any) bool {
-		entry, ok := value.(graphCacheEntry)
-		if !ok {
-			s.graphCache.Delete(key)
-			return true
-		}
-		if !now.Before(entry.expiresAt) {
-			s.graphCache.Delete(key)
-		}
-		return true
-	})
-}
-
 func requestKinds(kind searchv1.SearchKind) ([]string, error) {
 	switch kind {
 	case searchv1.SearchKind_SEARCH_KIND_UNSPECIFIED, searchv1.SearchKind_SEARCH_KIND_EVENT:
 		return []string{"event"}, nil
 	case searchv1.SearchKind_SEARCH_KIND_BEHAVIOUR:
-		return []string{"behaviour_window"}, nil
+		return nil, errors.New("behaviour search has been retired")
 	case searchv1.SearchKind_SEARCH_KIND_SEQUENCE:
-		return []string{"frame_sequence"}, nil
+		return nil, errors.New("sequence search has been retired")
 	case searchv1.SearchKind_SEARCH_KIND_DEVICE:
 		return []string{"device"}, nil
 	case searchv1.SearchKind_SEARCH_KIND_CROSS:
@@ -304,9 +259,9 @@ func isWildcardAllSearch(query string) bool {
 func responseKind(kind searchv1.SearchKind) string {
 	switch kind {
 	case searchv1.SearchKind_SEARCH_KIND_BEHAVIOUR:
-		return "behaviour_window"
+		return "retired"
 	case searchv1.SearchKind_SEARCH_KIND_SEQUENCE:
-		return "frame_sequence"
+		return "retired"
 	case searchv1.SearchKind_SEARCH_KIND_DEVICE:
 		return "device"
 	case searchv1.SearchKind_SEARCH_KIND_CROSS:
@@ -327,6 +282,13 @@ func modeName(mode searchv1.SearchMode) string {
 	default:
 		return "unspecified"
 	}
+}
+
+func rerankCandidateLimit(topK int) int {
+	if topK <= 0 {
+		return 0
+	}
+	return topK * 4
 }
 
 func toProtoResult(result RawResult) *searchv1.SearchResult {

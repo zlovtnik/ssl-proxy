@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,7 +13,6 @@ import (
 const (
 	inventoryDefaultLimit         = 400
 	inventoryMaxLimit             = 1000
-	inventoryDefaultMinConfidence = 0.75
 )
 
 type InventoryGrouping string
@@ -22,7 +20,6 @@ type InventoryGrouping string
 const (
 	InventoryGroupingRegistry   InventoryGrouping = "registry"
 	InventoryGroupingCMDB       InventoryGrouping = "cmdb"
-	InventoryGroupingSimilarity InventoryGrouping = "similarity"
 )
 
 type InventoryNodeKind string
@@ -31,8 +28,6 @@ const (
 	InventoryNodeDevice         InventoryNodeKind = "device"
 	InventoryNodeOwner          InventoryNodeKind = "owner"
 	InventoryNodeLocationAsset  InventoryNodeKind = "location_asset"
-	InventoryNodeCluster        InventoryNodeKind = "cluster"
-	InventoryNodeMergeCandidate InventoryNodeKind = "merge_candidate"
 )
 
 type InventoryEdgeKind string
@@ -40,9 +35,6 @@ type InventoryEdgeKind string
 const (
 	InventoryEdgeOwns           InventoryEdgeKind = "owns"
 	InventoryEdgeLocatedAt      InventoryEdgeKind = "located_at"
-	InventoryEdgeClusterMember  InventoryEdgeKind = "cluster_member"
-	InventoryEdgeMergeCandidate InventoryEdgeKind = "merge_candidate"
-	InventoryEdgeSameDevice     InventoryEdgeKind = "same_device"
 )
 
 type InventoryFilters struct {
@@ -50,7 +42,6 @@ type InventoryFilters struct {
 	LocationIDs        []string          `json:"location_ids,omitempty"`
 	OwnerIDs           []string          `json:"owner_ids,omitempty"`
 	ActiveOnly         bool              `json:"active_only,omitempty"`
-	MinDedupConfidence *float64          `json:"min_dedup_confidence,omitempty"`
 	Tags               []string          `json:"tags,omitempty"`
 	Limit              int               `json:"limit,omitempty"`
 }
@@ -67,8 +58,6 @@ type InventoryNode struct {
 	FirstRegistered     *time.Time        `json:"first_registered,omitempty"`
 	LastSeen            *time.Time        `json:"last_seen,omitempty"`
 	Active              bool              `json:"active"`
-	SimilarityClusterID string            `json:"similarity_cluster_id,omitempty"`
-	DedupConfidence     *float64          `json:"dedup_confidence,omitempty"`
 	Tags                []string          `json:"tags,omitempty"`
 }
 
@@ -89,26 +78,6 @@ type InventoryResponse struct {
 	TotalRegisteredCount int             `json:"total_registered_count"`
 }
 
-type MergeDecision string
-
-const (
-	MergeDecisionMerge         MergeDecision = "merge"
-	MergeDecisionNotMatch      MergeDecision = "not_match"
-	MergeDecisionNeedsMoreData MergeDecision = "needs_more_data"
-	MergeDecisionUndoMerge     MergeDecision = "undo_merge"
-)
-
-type MergeDecisionRequest struct {
-	Decision MergeDecision `json:"decision"`
-}
-
-type MergeDecisionResponse struct {
-	CandidateID string        `json:"candidate_id"`
-	Decision    MergeDecision `json:"decision"`
-	Accepted    bool          `json:"accepted"`
-	UndoUntil   *time.Time    `json:"undo_until,omitempty"`
-}
-
 type inventoryDeviceRow struct {
 	MAC                 string
 	DisplayName         string
@@ -119,17 +88,7 @@ type inventoryDeviceRow struct {
 	Active              bool
 	Registered          bool
 	Tags                []string
-	SimilarityClusterID string
-	DedupConfidence     *float64
 	KnownMACs           []string
-}
-
-type inventoryCandidateRow struct {
-	ID         string
-	MACA       string
-	MACB       string
-	Confidence float64
-	ComputedAt *time.Time
 }
 
 func (s *Service) Inventory(ctx context.Context, filters InventoryFilters) (*InventoryResponse, error) {
@@ -147,7 +106,7 @@ func (s *Service) Inventory(ctx context.Context, filters InventoryFilters) (*Inv
 		return nil, err
 	}
 	var totalRegistered int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM atheros_search.inventory_devices WHERE registered").Scan(&totalRegistered); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM atheros_search.devices WHERE registered").Scan(&totalRegistered); err != nil {
 		return nil, err
 	}
 
@@ -155,16 +114,6 @@ func (s *Service) Inventory(ctx context.Context, filters InventoryFilters) (*Inv
 	edges := map[string]InventoryEdge{}
 	for _, device := range devices {
 		addInventoryDevice(nodes, edges, device, filters.Grouping)
-	}
-	if filters.Grouping == InventoryGroupingSimilarity {
-		addInventoryClusters(nodes, edges, devices)
-		candidates, err := fetchInventoryCandidates(ctx, tx, devices, inventoryMinConfidence(filters), filters.Limit)
-		if err != nil {
-			return nil, err
-		}
-		for _, candidate := range candidates {
-			addInventoryCandidate(nodes, edges, candidate)
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -207,9 +156,8 @@ func fetchInventoryDevices(ctx context.Context, tx *sql.Tx, filters InventoryFil
 SELECT
   mac, COALESCE(display_name, ''), COALESCE(owner_id, ''), COALESCE(location_id, ''),
   first_registered, last_seen, active, registered,
-  COALESCE(tags::text, '[]'), COALESCE(similarity_cluster_id, ''),
-  dedup_confidence, COALESCE(known_macs::text, '[]')
-FROM atheros_search.inventory_devices
+  COALESCE(tags::text, '[]'), COALESCE(known_macs::text, '[]')
+FROM atheros_search.devices
 WHERE `+strings.Join(clauses, " AND ")+`
 ORDER BY last_seen DESC, mac ASC
 LIMIT $`+fmt.Sprint(len(args)), args...)
@@ -222,11 +170,10 @@ LIMIT $`+fmt.Sprint(len(args)), args...)
 		var row inventoryDeviceRow
 		var first, last sql.NullTime
 		var tagsJSON, knownMACsJSON string
-		var confidence sql.NullFloat64
 		if err := rows.Scan(
 			&row.MAC, &row.DisplayName, &row.OwnerID, &row.LocationID,
 			&first, &last, &row.Active, &row.Registered,
-			&tagsJSON, &row.SimilarityClusterID, &confidence, &knownMACsJSON,
+			&tagsJSON, &knownMACsJSON,
 		); err != nil {
 			return nil, err
 		}
@@ -234,9 +181,6 @@ LIMIT $`+fmt.Sprint(len(args)), args...)
 		row.LastSeen = nullTimePtr(last)
 		row.Tags = parseTagsJSON(tagsJSON)
 		_ = json.Unmarshal([]byte(knownMACsJSON), &row.KnownMACs)
-		if confidence.Valid {
-			row.DedupConfidence = &confidence.Float64
-		}
 		row.Tags = inventoryDeviceTags(&row)
 		if !inventoryTagsMatch(row.Tags, filters.Tags) {
 			continue
@@ -249,88 +193,6 @@ LIMIT $`+fmt.Sprint(len(args)), args...)
 	return devices, rows.Err()
 }
 
-func fetchInventoryCandidates(ctx context.Context, tx *sql.Tx, devices []inventoryDeviceRow, minConfidence float64, limit int) ([]inventoryCandidateRow, error) {
-	if len(devices) == 0 {
-		return nil, nil
-	}
-	firstPlaceholders := pgPlaceholders(1, len(devices))
-	secondPlaceholders := pgPlaceholders(len(devices)+1, len(devices))
-	args := make([]any, 0, len(devices)*2+2)
-	for _, device := range devices {
-		args = append(args, device.MAC)
-	}
-	for _, device := range devices {
-		args = append(args, device.MAC)
-	}
-	args = append(args, minConfidence, limit)
-	rows, err := tx.QueryContext(ctx, `
-SELECT c.candidate_id, c.mac_a, c.mac_b, c.confidence, c.computed_at
-FROM atheros_search.merge_candidates c
-LEFT JOIN atheros_search.merge_decisions d ON d.candidate_id = c.candidate_id
-WHERE c.mac_a IN (`+firstPlaceholders+`)
-  AND c.mac_b IN (`+secondPlaceholders+`)
-  AND c.confidence >= $`+fmt.Sprint(len(devices)*2+1)+`
-  AND c.status = 'pending'
-  AND (d.candidate_id IS NULL OR d.decision = 'undo_merge')
-ORDER BY c.confidence DESC, c.candidate_id ASC
-LIMIT $`+fmt.Sprint(len(devices)*2+2), args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	results := make([]inventoryCandidateRow, 0)
-	for rows.Next() {
-		var row inventoryCandidateRow
-		var computed sql.NullTime
-		if err := rows.Scan(&row.ID, &row.MACA, &row.MACB, &row.Confidence, &computed); err != nil {
-			return nil, err
-		}
-		row.ComputedAt = nullTimePtr(computed)
-		results = append(results, row)
-	}
-	return results, rows.Err()
-}
-
-func (s *Service) MergeDecision(ctx context.Context, candidateID string, decision MergeDecision) (*MergeDecisionResponse, error) {
-	candidateID = strings.TrimSpace(candidateID)
-	if candidateID == "" {
-		return nil, errors.New("candidate_id is required")
-	}
-	if !validMergeDecision(decision) {
-		return nil, fmt.Errorf("unsupported merge decision %q", decision)
-	}
-	decisionID, err := newUUID()
-	if err != nil {
-		return nil, err
-	}
-	result, err := s.Pool.ExecContext(ctx, `
-INSERT INTO atheros_search.merge_decisions (
-  decision_id, candidate_id, decision, decided_by, evidence, decided_at
-)
-VALUES ($1, $2, $3, 'atheros-search', jsonb_build_object('source', 'public-api'), CURRENT_TIMESTAMP)
-ON CONFLICT (candidate_id) DO UPDATE SET
-  decision = EXCLUDED.decision,
-  decided_by = EXCLUDED.decided_by,
-  evidence = EXCLUDED.evidence,
-  decided_at = EXCLUDED.decided_at
-`, decisionID, candidateID, string(decision))
-	if err != nil {
-		return nil, err
-	}
-	if affected, err := result.RowsAffected(); err != nil || affected == 0 {
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("merge decision was not persisted")
-	}
-	response := &MergeDecisionResponse{CandidateID: candidateID, Decision: decision, Accepted: true}
-	if decision == MergeDecisionMerge {
-		until := time.Now().UTC().Add(15 * time.Minute)
-		response.UndoUntil = &until
-	}
-	return response, nil
-}
-
 func addInventoryDevice(nodes map[string]InventoryNode, edges map[string]InventoryEdge, device inventoryDeviceRow, grouping InventoryGrouping) {
 	id := "device:" + strings.ToLower(device.MAC)
 	label := device.DisplayName
@@ -341,8 +203,7 @@ func addInventoryDevice(nodes map[string]InventoryNode, edges map[string]Invento
 		ID: id, Kind: InventoryNodeDevice, Label: label, MAC: device.MAC,
 		KnownMACs: device.KnownMACs, DisplayName: device.DisplayName, OwnerID: device.OwnerID,
 		LocationID: device.LocationID, FirstRegistered: device.FirstRegistered, LastSeen: device.LastSeen,
-		Active: device.Active, SimilarityClusterID: device.SimilarityClusterID,
-		DedupConfidence: device.DedupConfidence, Tags: device.Tags,
+		Active: device.Active, Tags: device.Tags,
 	}
 	if grouping != InventoryGroupingCMDB {
 		return
@@ -361,38 +222,6 @@ func addInventoryDevice(nodes map[string]InventoryNode, edges map[string]Invento
 	}
 }
 
-func addInventoryClusters(nodes map[string]InventoryNode, edges map[string]InventoryEdge, devices []inventoryDeviceRow) {
-	for _, device := range devices {
-		if device.SimilarityClusterID == "" {
-			continue
-		}
-		clusterID := "cluster:" + device.SimilarityClusterID
-		node := nodes[clusterID]
-		if node.ID == "" {
-			node = InventoryNode{ID: clusterID, Kind: InventoryNodeCluster, Label: "Cluster " + device.SimilarityClusterID, Active: true}
-		}
-		node.KnownMACs = normalizeLowerList(append(node.KnownMACs, device.KnownMACs...))
-		nodes[clusterID] = node
-		deviceID := "device:" + strings.ToLower(device.MAC)
-		edgeID := "cluster_member:" + deviceID + ":" + clusterID
-		edges[edgeID] = InventoryEdge{ID: edgeID, Source: deviceID, Target: clusterID, Kind: InventoryEdgeClusterMember}
-	}
-}
-
-func addInventoryCandidate(nodes map[string]InventoryNode, edges map[string]InventoryEdge, candidate inventoryCandidateRow) {
-	id := "merge_candidate:" + candidate.ID
-	confidence := candidate.Confidence
-	nodes[id] = InventoryNode{ID: id, Kind: InventoryNodeMergeCandidate, Label: candidate.MACA + " / " + candidate.MACB, Active: true, DedupConfidence: &confidence, KnownMACs: []string{candidate.MACA, candidate.MACB}}
-	for _, mac := range []string{candidate.MACA, candidate.MACB} {
-		deviceID := "device:" + strings.ToLower(mac)
-		if _, ok := nodes[deviceID]; !ok {
-			continue
-		}
-		edgeID := "merge_candidate:" + deviceID + ":" + id
-		edges[edgeID] = InventoryEdge{ID: edgeID, Source: deviceID, Target: id, Kind: InventoryEdgeMergeCandidate, Weight: &confidence}
-	}
-}
-
 func inventoryDeviceTags(device *inventoryDeviceRow) []string {
 	tags := append([]string{}, device.Tags...)
 	tags = append(tags, "device")
@@ -407,9 +236,6 @@ func inventoryDeviceTags(device *inventoryDeviceRow) []string {
 	}
 	if device.LocationID != "" {
 		tags = append(tags, "location:"+strings.ToLower(device.LocationID))
-	}
-	if device.SimilarityClusterID != "" {
-		tags = append(tags, "clustered")
 	}
 	return normalizeLowerList(tags)
 }
@@ -428,7 +254,7 @@ func normalizeInventoryFilters(filters InventoryFilters) (InventoryFilters, erro
 		filters.Grouping = InventoryGroupingRegistry
 	}
 	switch filters.Grouping {
-	case InventoryGroupingRegistry, InventoryGroupingCMDB, InventoryGroupingSimilarity:
+	case InventoryGroupingRegistry, InventoryGroupingCMDB:
 	default:
 		return filters, fmt.Errorf("unsupported inventory grouping %q", filters.Grouping)
 	}
@@ -441,33 +267,51 @@ func normalizeInventoryFilters(filters InventoryFilters) (InventoryFilters, erro
 	filters.LocationIDs = normalizeGraphList(filters.LocationIDs)
 	filters.OwnerIDs = normalizeGraphList(filters.OwnerIDs)
 	filters.Tags = normalizeLowerList(filters.Tags)
-	if filters.MinDedupConfidence != nil {
-		value := *filters.MinDedupConfidence
-		if value < 0 {
-			value = 0
-		}
-		if value > 1 {
-			value = 1
-		}
-		filters.MinDedupConfidence = &value
-	}
 	return filters, nil
 }
 
-func inventoryMinConfidence(filters InventoryFilters) float64 {
-	if filters.MinDedupConfidence == nil {
-		return inventoryDefaultMinConfidence
+func addInClause(clauses *[]string, args *[]any, column string, values []any) {
+	if len(values) == 0 {
+		return
 	}
-	return *filters.MinDedupConfidence
+	start := len(*args) + 1
+	placeholders := pgPlaceholders(start, len(values))
+	*clauses = append(*clauses, column+" IN ("+placeholders+")")
+	*args = append(*args, values...)
 }
 
-func validMergeDecision(decision MergeDecision) bool {
-	switch decision {
-	case MergeDecisionMerge, MergeDecisionNotMatch, MergeDecisionNeedsMoreData, MergeDecisionUndoMerge:
-		return true
-	default:
-		return false
+func pgPlaceholders(start, count int) string {
+	parts := make([]string, count)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("$%d", start+i)
 	}
+	return strings.Join(parts, ",")
+}
+
+func stringsToAny(values []string) []any {
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+	return out
+}
+
+func normalizeGraphList(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func nullTimePtr(value sql.NullTime) *time.Time {

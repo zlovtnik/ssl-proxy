@@ -15,11 +15,13 @@ type SuggestCache struct {
 }
 
 const suggestSSIDSQL = `
-SELECT DISTINCT filter_value
-FROM atheros_search.search_filter_values
-WHERE filter_kind = 'ssid'
-  AND ($1 = '' OR normalized_value LIKE $2 ESCAPE E'\\\\')
-ORDER BY normalized_value, filter_value`
+SELECT DISTINCT ssid
+FROM atheros_search.search_documents
+WHERE ssid IS NOT NULL
+  AND status = 'active'
+  AND ($1 = '' OR LOWER(ssid) LIKE $2 ESCAPE E'\\\\')
+ORDER BY ssid
+LIMIT 50`
 
 func SuggestFilters(ctx context.Context, pool *sql.DB, prefix string) (*searchv1.SuggestFiltersResponse, error) {
 	resp := &searchv1.SuggestFiltersResponse{}
@@ -29,20 +31,21 @@ func SuggestFilters(ctx context.Context, pool *sql.DB, prefix string) (*searchv1
 		return nil, err
 	}
 	for _, item := range []struct {
-		kind   string
+		column string
 		target *[]string
 	}{
-		{kind: "location_id", target: &resp.LocationIds},
-		{kind: "sensor_id", target: &resp.SensorIds},
-		{kind: "frame_subtype", target: &resp.FrameSubtypes},
+		{column: "location_id", target: &resp.LocationIds},
+		{column: "sensor_id", target: &resp.SensorIds},
+		{column: "frame_subtype", target: &resp.FrameSubtypes},
 	} {
-		if err := scanDistinct(ctx, pool, `
-SELECT DISTINCT filter_value
-FROM atheros_search.search_filter_values
-WHERE filter_kind = $1
-  AND ($2 = '' OR normalized_value LIKE $3 ESCAPE E'\\\\')
-ORDER BY normalized_value, filter_value
-		LIMIT 50`, item.target, item.kind, normalizedPrefix, pattern); err != nil {
+		query := `SELECT DISTINCT ` + item.column + `
+FROM atheros_search.search_documents
+WHERE ` + item.column + ` IS NOT NULL
+  AND status = 'active'
+  AND ($1 = '' OR LOWER(` + item.column + `) LIKE $2 ESCAPE E'\\\\')
+ORDER BY ` + item.column + `
+LIMIT 50`
+		if err := scanDistinct(ctx, pool, query, item.target, normalizedPrefix, pattern); err != nil {
 			return nil, err
 		}
 	}

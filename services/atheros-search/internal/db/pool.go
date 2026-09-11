@@ -54,18 +54,12 @@ type EmbeddingCounts struct {
 }
 
 func (c EmbeddingCounts) EmptyKinds() []string {
-	empty := make([]string, 0, 4)
+	empty := make([]string, 0, 2)
 	if c.Event == 0 {
 		empty = append(empty, "event")
 	}
 	if c.Device == 0 {
 		empty = append(empty, "device")
-	}
-	if c.Behaviour == 0 {
-		empty = append(empty, "behaviour_window")
-	}
-	if c.Sequence == 0 {
-		empty = append(empty, "frame_sequence")
 	}
 	return empty
 }
@@ -194,19 +188,19 @@ func validatePostgresVersion(versionNum int) error {
 
 func (p *Pool) SchemaReady(ctx context.Context) (SchemaReadyStatus, error) {
 	status := SchemaReadyStatus{ExpectedSHA256: p.expectedManifest}
-	var ready, vectorReady bool
+	var ready bool
 	err := p.QueryRowContext(ctx, `
-SELECT manifest_sha256, schema_ready, vector_ready
-FROM atheros_search.schema_manifest
-WHERE component = 'atheros-search'
+SELECT applied_checksum, ready
+FROM atheros_search.schema_readiness
+WHERE domain = 'atheros_search'
 LIMIT 1
-`).Scan(&status.ManifestSHA256, &ready, &vectorReady)
+`).Scan(&status.ManifestSHA256, &ready)
 	if err != nil {
 		return SchemaReadyStatus{}, fmt.Errorf("Postgres schema readiness query: %w", err)
 	}
 	status.ManifestSHA256 = strings.ToLower(status.ManifestSHA256)
-	status.VectorReady = vectorReady
-	status.Ready = ready && vectorReady && status.ManifestSHA256 == status.ExpectedSHA256
+	status.VectorReady = ready
+	status.Ready = ready && status.ManifestSHA256 == status.ExpectedSHA256
 	return status, nil
 }
 
@@ -214,10 +208,11 @@ func (p *Pool) CountEmbeddings(ctx context.Context) (EmbeddingCounts, error) {
 	var counts EmbeddingCounts
 	err := p.QueryRowContext(ctx, `
 SELECT
-  (SELECT COUNT(*) FROM atheros_search.search_vectors_event),
-  (SELECT COUNT(*) FROM atheros_search.search_vectors_device),
-  (SELECT COUNT(*) FROM atheros_search.search_vectors_behaviour),
-  (SELECT COUNT(*) FROM atheros_search.search_vectors_sequence)
+  COUNT(*) FILTER (WHERE embedding_kind = 'event'),
+  COUNT(*) FILTER (WHERE embedding_kind = 'device'),
+  0,
+  0
+FROM atheros_search.embeddings
 `).Scan(&counts.Event, &counts.Device, &counts.Behaviour, &counts.Sequence)
 	return counts, err
 }

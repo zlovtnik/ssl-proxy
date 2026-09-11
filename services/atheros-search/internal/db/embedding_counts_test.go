@@ -15,12 +15,12 @@ func TestCountEmbeddingsReturnsCountsByKind(t *testing.T) {
 
 	mock.ExpectQuery("SELECT").WillReturnRows(
 		sqlmock.NewRows([]string{"event", "device", "behaviour", "sequence"}).
-			AddRow(4, 0, 2, 0),
+			AddRow(4, 0, 0, 0),
 	)
 
 	counts, err := (&Pool{DB: sqlDB}).CountEmbeddings(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, EmbeddingCounts{Event: 4, Device: 0, Behaviour: 2, Sequence: 0}, counts)
-	require.Equal(t, []string{"device", "frame_sequence"}, counts.EmptyKinds())
+	require.Equal(t, EmbeddingCounts{Event: 4, Device: 0, Behaviour: 0, Sequence: 0}, counts)
+	require.Equal(t, []string{"device"}, counts.EmptyKinds())
 	require.NoError(t, mock.ExpectationsWereMet())
 }

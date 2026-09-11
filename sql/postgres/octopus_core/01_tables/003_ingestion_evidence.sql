@@ -1,161 +1,91 @@
--- object: octopus_core_ingestion_evidence
--- depends_on: octopus_core_sync_state
+-- object: octopus_core_ingestion_work_and_failures
+-- depends_on: octopus_core_configuration_and_checkpoints
 
-CREATE TABLE IF NOT EXISTS octopus_core.ingestion_evidence (
-  topic             VARCHAR(255) NOT NULL,
-  partition_id      INT NOT NULL,
-  record_offset     BIGINT NOT NULL,
-  group_id          VARCHAR(128) NOT NULL,
-  group_version     VARCHAR(64) NOT NULL,
-  artifact_sha256   char(64) NOT NULL,
-  message_key       VARCHAR(512) DEFAULT NULL,
-  payload_sha256    char(64) NOT NULL,
-  disposition       VARCHAR(32) NOT NULL DEFAULT 'received',
-  dedupe_key        VARCHAR(255) DEFAULT NULL,
-  first_seen_at     timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+CREATE TABLE IF NOT EXISTS octopus_core.ingestion_receipts (
+  consumer_group  VARCHAR(128) NOT NULL,
+  topic           VARCHAR(255) NOT NULL,
+  partition_id    INT NOT NULL,
+  record_offset   BIGINT NOT NULL,
+  event_id        VARCHAR(255) NOT NULL,
+  payload_sha256  char(64) NOT NULL,
+  artifact_sha256 char(64) NOT NULL,
+  schema_version  INT DEFAULT NULL,
+  disposition     VARCHAR(32) NOT NULL DEFAULT 'received',
+  received_at     timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  processed_at    timestamptz DEFAULT NULL,
+  PRIMARY KEY (consumer_group, topic, partition_id, record_offset),
+  CONSTRAINT ingestion_receipts_event_uq UNIQUE (topic, event_id),
+  CONSTRAINT ingestion_receipts_partition_ck CHECK (partition_id >= 0),
+  CONSTRAINT ingestion_receipts_offset_ck CHECK (record_offset >= 0),
+  CONSTRAINT ingestion_receipts_disposition_ck CHECK (
+    disposition IN ('received', 'processing', 'processed', 'rejected', 'failed')
+  )
+);
+
+CREATE INDEX IF NOT EXISTS ingestion_receipts_event_idx
+  ON octopus_core.ingestion_receipts (event_id, topic);
+CREATE INDEX IF NOT EXISTS ingestion_receipts_disposition_idx
+  ON octopus_core.ingestion_receipts (disposition, received_at);
+
+CREATE TABLE IF NOT EXISTS octopus_core.work_items (
+  work_id           uuid NOT NULL,
+  work_kind         VARCHAR(32) NOT NULL,
+  dedupe_key        VARCHAR(255) NOT NULL,
+  source_receipt    jsonb DEFAULT NULL,
+  payload           jsonb NOT NULL,
+  status            VARCHAR(32) NOT NULL DEFAULT 'pending',
+  priority          INT NOT NULL DEFAULT 100,
+  owner_id          VARCHAR(128) DEFAULT NULL,
+  lease_token       uuid DEFAULT NULL,
+  lease_fence       BIGINT NOT NULL DEFAULT 0,
+  lease_expires_at  timestamptz DEFAULT NULL,
+  attempt_count     INT NOT NULL DEFAULT 0,
+  max_attempts      INT NOT NULL DEFAULT 5,
+  next_attempt_at   timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_error        TEXT DEFAULT NULL,
+  created_at        timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  started_at        timestamptz DEFAULT NULL,
+  finished_at       timestamptz DEFAULT NULL,
   updated_at        timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (group_id, topic, partition_id, record_offset),
-  CONSTRAINT ingestion_evidence_disposition_ck CHECK (
-    disposition IN ('received', 'duplicate', 'accepted', 'processed', 'rejected', 'failed')
-  )
+  PRIMARY KEY (work_id),
+  CONSTRAINT work_items_dedupe_uq UNIQUE (work_kind, dedupe_key),
+  CONSTRAINT work_items_kind_ck CHECK (work_kind IN ('job', 'batch', 'backlog', 'maintenance')),
+  CONSTRAINT work_items_status_ck CHECK (
+    status IN ('pending', 'leased', 'running', 'completed', 'failed', 'cancelled')
+  ),
+  CONSTRAINT work_items_attempts_ck CHECK (
+    attempt_count >= 0 AND max_attempts > 0 AND attempt_count <= max_attempts
+  ),
+  CONSTRAINT work_items_lease_ck CHECK (
+    (status IN ('leased', 'running') AND owner_id IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)
+    OR
+    (status NOT IN ('leased', 'running') AND owner_id IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)
+  ),
+  CONSTRAINT work_items_payload_ck CHECK (jsonb_typeof(payload) = 'object')
 );
 
-CREATE INDEX IF NOT EXISTS ingestion_evidence_dedupe_idx ON octopus_core.ingestion_evidence (dedupe_key);
-CREATE INDEX IF NOT EXISTS ingestion_evidence_disposition_idx ON octopus_core.ingestion_evidence (disposition, updated_at);
+CREATE INDEX IF NOT EXISTS work_items_claim_idx
+  ON octopus_core.work_items (priority, next_attempt_at, work_id)
+  WHERE status = 'pending';
 
-CREATE TABLE IF NOT EXISTS octopus_core.sync_events (
-  dedupe_key     VARCHAR(255) NOT NULL,
-  stream_name    VARCHAR(255) NOT NULL,
-  observed_at    timestamptz NOT NULL,
-  payload_ref    TEXT NOT NULL,
-  payload        jsonb DEFAULT NULL,
-  payload_sha256 char(64) DEFAULT NULL,
-  status         VARCHAR(32) NOT NULL DEFAULT 'pending',
-  attempt_count  INT NOT NULL DEFAULT 0,
-  last_error     TEXT DEFAULT NULL,
-  producer       VARCHAR(128) NOT NULL DEFAULT 'unknown',
-  event_kind     VARCHAR(64) DEFAULT NULL,
-  payload_archive_uri VARCHAR(2048) DEFAULT NULL,
-  archived_payload_bytes BIGINT DEFAULT NULL,
-  payload_archived_at timestamptz DEFAULT NULL,
-  payload_archived boolean NOT NULL DEFAULT false,
-  sensor_id      VARCHAR(64) DEFAULT NULL,
-  location_id    VARCHAR(128) DEFAULT NULL,
-  username       VARCHAR(255) DEFAULT NULL,
-  event_type     VARCHAR(64) DEFAULT NULL,
-  schema_version INT DEFAULT NULL,
-  frame_type     VARCHAR(32) DEFAULT NULL,
-  frame_subtype  VARCHAR(64) DEFAULT NULL,
-  source_mac     VARCHAR(17) DEFAULT NULL,
-  transmitter_mac VARCHAR(17) DEFAULT NULL,
-  receiver_mac   VARCHAR(17) DEFAULT NULL,
-  bssid          VARCHAR(17) DEFAULT NULL,
-  destination_bssid VARCHAR(17) DEFAULT NULL,
-  ssid           VARCHAR(256) DEFAULT NULL,
-  signal_dbm     INT DEFAULT NULL,
-  noise_dbm      INT DEFAULT NULL,
-  frequency_mhz  INT DEFAULT NULL,
-  channel_flags  INT DEFAULT NULL,
-  data_rate_kbps INT DEFAULT NULL,
-  antenna_id     INT DEFAULT NULL,
-  tsft           BIGINT DEFAULT NULL,
-  fragment_number INT DEFAULT NULL,
-  channel_number INT DEFAULT NULL,
-  signal_status  VARCHAR(64) DEFAULT NULL,
-  adjacent_mac_hint VARCHAR(17) DEFAULT NULL,
-  qos_tid        INT DEFAULT NULL,
-  qos_eosp       boolean DEFAULT NULL,
-  qos_ack_policy INT DEFAULT NULL,
-  qos_ack_policy_label VARCHAR(64) DEFAULT NULL,
-  qos_amsdu      boolean DEFAULT NULL,
-  llc_oui        VARCHAR(16) DEFAULT NULL,
-  ethertype      INT DEFAULT NULL,
-  ethertype_name VARCHAR(64) DEFAULT NULL,
-  src_ip         VARCHAR(45) DEFAULT NULL,
-  dst_ip         VARCHAR(45) DEFAULT NULL,
-  ip_ttl         INT DEFAULT NULL,
-  ip_protocol    INT DEFAULT NULL,
-  ip_protocol_name VARCHAR(64) DEFAULT NULL,
-  src_port       INT DEFAULT NULL,
-  dst_port       INT DEFAULT NULL,
-  transport_protocol VARCHAR(32) DEFAULT NULL,
-  transport_length INT DEFAULT NULL,
-  transport_checksum INT DEFAULT NULL,
-  app_protocol   VARCHAR(64) DEFAULT NULL,
-  ssdp_message_type VARCHAR(64) DEFAULT NULL,
-  ssdp_st        VARCHAR(512) DEFAULT NULL,
-  ssdp_mx        VARCHAR(64) DEFAULT NULL,
-  ssdp_usn       VARCHAR(512) DEFAULT NULL,
-  dhcp_requested_ip VARCHAR(45) DEFAULT NULL,
-  dhcp_hostname  VARCHAR(253) DEFAULT NULL,
-  dhcp_vendor_class VARCHAR(255) DEFAULT NULL,
-  dns_query_name VARCHAR(253) DEFAULT NULL,
-  mdns_name      VARCHAR(253) DEFAULT NULL,
-  session_key    VARCHAR(255) DEFAULT NULL,
-  retransmit_key VARCHAR(255) DEFAULT NULL,
-  frame_fingerprint VARCHAR(255) DEFAULT NULL,
-  payload_visibility VARCHAR(64) DEFAULT NULL,
-  tsft_delta_us  BIGINT DEFAULT NULL,
-  wall_clock_delta_ms BIGINT DEFAULT NULL,
-  large_frame    boolean NOT NULL DEFAULT false,
-  mixed_encryption boolean DEFAULT NULL,
-  dedupe_or_replay_suspect boolean NOT NULL DEFAULT false,
-  raw_len        INT NOT NULL DEFAULT 0,
-  frame_control_flags INT NOT NULL DEFAULT 0,
-  more_data      boolean NOT NULL DEFAULT false,
-  retry          boolean NOT NULL DEFAULT false,
-  power_save     boolean NOT NULL DEFAULT false,
-  protected      boolean NOT NULL DEFAULT false,
-  security_flags INT NOT NULL DEFAULT 0,
-  risk_score     double precision DEFAULT NULL,
-  identity_source VARCHAR(64) DEFAULT NULL,
-  tags           jsonb DEFAULT NULL,
-  wps_device_name VARCHAR(255) DEFAULT NULL,
-  wps_manufacturer VARCHAR(255) DEFAULT NULL,
-  wps_model_name VARCHAR(255) DEFAULT NULL,
-  device_fingerprint VARCHAR(255) DEFAULT NULL,
-  handshake_captured boolean NOT NULL DEFAULT false,
-  wireless_search_text TEXT DEFAULT NULL,
-  created_at     timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at     timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (dedupe_key, stream_name),
-  CONSTRAINT sync_events_status_ck CHECK (
-    status IN ('pending', 'processing', 'batched', 'completed', 'failed')
-  )
+CREATE TABLE IF NOT EXISTS octopus_core.dead_letters (
+  dead_letter_id   uuid NOT NULL,
+  topic            VARCHAR(255) NOT NULL,
+  partition_id     INT DEFAULT NULL,
+  record_offset    BIGINT DEFAULT NULL,
+  event_id_hash    char(64) DEFAULT NULL,
+  payload_sha256   char(64) DEFAULT NULL,
+  error_class      VARCHAR(128) NOT NULL,
+  sanitized_error TEXT NOT NULL,
+  status           VARCHAR(32) NOT NULL DEFAULT 'parked',
+  replay_count     INT NOT NULL DEFAULT 0,
+  next_replay_at   timestamptz DEFAULT NULL,
+  created_at       timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at       timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (dead_letter_id),
+  CONSTRAINT dead_letters_status_ck CHECK (status IN ('parked', 'replay_pending', 'replayed', 'discarded')),
+  CONSTRAINT dead_letters_replay_count_ck CHECK (replay_count >= 0)
 );
 
-CREATE INDEX IF NOT EXISTS sync_events_status_idx ON octopus_core.sync_events (status, updated_at);
-CREATE INDEX IF NOT EXISTS sync_events_stream_status_idx ON octopus_core.sync_events (stream_name, status, observed_at);
-CREATE INDEX IF NOT EXISTS sync_events_observed_idx ON octopus_core.sync_events (observed_at);
-CREATE INDEX IF NOT EXISTS sync_events_sensor_observed_idx ON octopus_core.sync_events (sensor_id, observed_at);
-CREATE INDEX IF NOT EXISTS sync_events_source_observed_idx ON octopus_core.sync_events (source_mac, observed_at);
-CREATE INDEX IF NOT EXISTS sync_events_bssid_observed_idx ON octopus_core.sync_events (bssid, observed_at);
-CREATE INDEX IF NOT EXISTS sync_events_location_observed_idx ON octopus_core.sync_events (location_id, observed_at);
-
-CREATE TABLE IF NOT EXISTS octopus_core.sync_event_payload_archives (
-  dedupe_key     VARCHAR(255) NOT NULL,
-  stream_name    VARCHAR(255) NOT NULL,
-  observed_at    timestamptz NOT NULL,
-  payload_sha256 char(64) DEFAULT NULL,
-  archive_uri    VARCHAR(2048) NOT NULL,
-  payload_bytes  BIGINT NOT NULL DEFAULT 0,
-  archived_at    timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_at     timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at     timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (dedupe_key, stream_name)
-);
-
-CREATE INDEX IF NOT EXISTS sync_event_archives_age_idx ON octopus_core.sync_event_payload_archives (archived_at);
-
-CREATE TABLE IF NOT EXISTS octopus_core.sync_event_tombstones (
-  dedupe_key     VARCHAR(255) NOT NULL,
-  stream_name    VARCHAR(255) NOT NULL,
-  payload_sha256 char(64) DEFAULT NULL,
-  observed_at    timestamptz NOT NULL,
-  expires_at     timestamptz NOT NULL,
-  created_at     timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at     timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (dedupe_key, stream_name)
-);
-
-CREATE INDEX IF NOT EXISTS sync_event_tombstones_expiry_idx ON octopus_core.sync_event_tombstones (expires_at);
+CREATE INDEX IF NOT EXISTS dead_letters_replay_idx
+  ON octopus_core.dead_letters (status, next_replay_at);
