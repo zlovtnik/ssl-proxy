@@ -121,6 +121,23 @@ class DocsCheckTest(unittest.TestCase):
         )
         self.assertEqual([], self.errors(root))
 
+    def test_host_absolute_link_is_rejected_regardless_of_host(self) -> None:
+        root = self.make_repo(
+            "[note](/Users/rcs/git/ssl-proxy/services/octopus/src/main/scala/AppConfig.scala)\n"
+        )
+        errors = self.errors(root)
+        self.assertTrue(
+            any(
+                "absolute local link does not match a repository path" in error
+                for error in errors
+            )
+        )
+        self.assertFalse(any("broken local link" in error for error in errors))
+
+    def test_broken_root_relative_link_is_reported(self) -> None:
+        root = self.make_repo("[missing](/docs/nope.md)\n")
+        self.assertTrue(any("broken local link" in error for error in self.errors(root)))
+
     def test_invalid_anchor_is_reported(self) -> None:
         root = self.make_repo("[target](docs/target.md#missing)\n")
         (root / "docs/target.md").write_text("# Present\n", encoding="utf-8")

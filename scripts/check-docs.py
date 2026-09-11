@@ -335,6 +335,12 @@ def validate_document(path: Path, text: str, view: RepositoryView) -> list[str]:
         raw_path = unquote(parsed.path)
         fragment = unquote(parsed.fragment)
         if raw_path.startswith("/"):
+            first = raw_path.lstrip("/").split("/", 1)[0]
+            if not first or not view.exists(view.root / first):
+                errors.append(
+                    f"{path}: absolute local link does not match a repository path: {target}"
+                )
+                continue
             resolved = (view.root / raw_path.lstrip("/")).resolve()
         elif raw_path:
             resolved = (path.parent / raw_path).resolve()
