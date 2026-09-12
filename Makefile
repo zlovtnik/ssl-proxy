@@ -111,7 +111,7 @@ recover-stack: kube-context-check
 pvc-audit: kube-context-check
 	python3 scripts/pvc_audit.py --kubectl "$(KUBECTL)" $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: storage-audit postgres-clean
+.PHONY: storage-audit postgres-clean postgres-reset-all
 storage-audit:
 	df -h /
 	docker system df -v
@@ -127,6 +127,20 @@ postgres-clean:
 	export VAULT_CACERT="$${VAULT_CACERT:-$$HOME/.local/share/ssl-proxy-platform/vault-ca.crt}"; \
 	python3 scripts/platform_postgres.py check; \
 	python3 scripts/platform_postgres.py reset --preserve-keycloak \
+		--confirm "$(POSTGRES_CLEAN_CONFIRM)"; \
+	df -h /
+
+# Run on the platform server after Git/Argo has quiesced every database client.
+# This intentionally does not retain Keycloak identities or any application state.
+postgres-reset-all:
+	@test "$(POSTGRES_CLEAN_CONFIRM)" = "RESET-ssl-proxy-platform-postgres-data" || { \
+		echo "Set POSTGRES_CLEAN_CONFIRM=RESET-ssl-proxy-platform-postgres-data to erase all PostgreSQL application data, including Keycloak identities." >&2; \
+		exit 2; \
+	}
+	@export VAULT_ADDR="$${VAULT_ADDR:-https://192.168.1.242:8200}"; \
+	export VAULT_CACERT="$${VAULT_CACERT:-$$HOME/.local/share/ssl-proxy-platform/vault-ca.crt}"; \
+	python3 scripts/platform_postgres.py check; \
+	python3 scripts/platform_postgres.py reset \
 		--confirm "$(POSTGRES_CLEAN_CONFIRM)"; \
 	df -h /
 

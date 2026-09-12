@@ -30,6 +30,7 @@ from platform_postgres import (  # noqa: E402
     load_contract,
     parse_userlist,
     replace_userlist_password,
+    require_no_database_clients,
     require_confirmation,
     reset_database,
     validate_private_file,
@@ -47,6 +48,15 @@ class PlatformPostgresTest(unittest.TestCase):
             backup_keycloak(runner, SimpleNamespace(container="postgres"),
                             SimpleNamespace(database="sync"))
         self.assertEqual(runner.run.call_count, 1)
+
+    def test_full_reset_refuses_connected_clients(self) -> None:
+        runner = Mock()
+        runner.run.return_value = SimpleNamespace(stdout=b"1\n")
+
+        with self.assertRaisesRegex(MaintenanceError, "clients are still connected"):
+            require_no_database_clients(
+                runner, SimpleNamespace(container="postgres"), SimpleNamespace(database="sync")
+            )
 
     def test_identity_backup_rejects_invalid_archive_and_saves_private_valid_archive(self) -> None:
         from unittest.mock import Mock
@@ -152,6 +162,7 @@ class PlatformPostgresTest(unittest.TestCase):
             with (
                 patch("platform_postgres.assert_exact_mount"),
                 patch("platform_postgres.stage_accounts"),
+                patch("platform_postgres.require_no_database_clients"),
                 patch("platform_postgres.compose"),
                 patch("platform_postgres.backup_keycloak", return_value=backup),
                 patch(
@@ -174,6 +185,15 @@ class PlatformPostgresTest(unittest.TestCase):
                                preserve_keycloak=True)
 
         self.assertEqual(["health", "role-defaults", "schema", "identity-restore"], order)
+
+    def test_full_reset_target_does_not_preserve_keycloak(self) -> None:
+        makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
+        reset_target = makefile.split("postgres-reset-all:", maxsplit=1)[1].split(
+            "\n\n", maxsplit=1
+        )[0]
+
+        self.assertIn("platform_postgres.py reset", reset_target)
+        self.assertNotIn("--preserve-keycloak", reset_target)
 
     def test_rotation_targets_cover_every_postgres_role(self) -> None:
         self.assertEqual(

@@ -521,6 +521,7 @@ def reset_database(
         raise MaintenanceError(f"Compose file is missing: {runtime.compose_file}")
     assert_exact_mount(runner, runtime)
     stage_accounts(runner, runtime, contract)
+    require_no_database_clients(runner, runtime, contract)
     identity_backup = None
     if preserve_keycloak:
         identity_backup = backup_keycloak(runner, runtime, contract)
@@ -550,16 +551,7 @@ def reset_database(
 
 def backup_keycloak(runner: Runner, runtime: Runtime, contract: PostgresContract) -> Path:
     """Require quiescent consumers and retain identity recovery outside the checkout."""
-    active = runner.run(
-        ("docker", "exec", runtime.container, "psql", "--no-psqlrc",
-         "--username", "platform_admin", "--dbname", contract.database, "-Atc",
-         "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
-         "AND pid<>pg_backend_pid() AND backend_type='client backend'")
-    ).stdout.strip()
-    if active != b"0":
-        raise MaintenanceError(
-            "database clients are still connected; quiesce consumers through Git/Argo before cleanup"
-        )
+    require_no_database_clients(runner, runtime, contract)
     dump = runner.run(
         ("docker", "exec", runtime.container, "pg_dump", "--username", "platform_admin",
          "--dbname", contract.database, "--format=custom", "--schema=keycloak")
@@ -575,6 +567,22 @@ def backup_keycloak(runner: Runner, runtime: Runtime, contract: PostgresContract
         os.fsync(output.fileno())
     print(f"Keycloak recovery backup: {backup}")
     return backup
+
+
+def require_no_database_clients(
+    runner: Runner, runtime: Runtime, contract: PostgresContract
+) -> None:
+    """Refuse a volume reset unless Git/Argo has stopped every database client."""
+    active = runner.run(
+        ("docker", "exec", runtime.container, "psql", "--no-psqlrc",
+         "--username", "platform_admin", "--dbname", contract.database, "-Atc",
+         "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
+         "AND pid<>pg_backend_pid() AND backend_type='client backend'")
+    ).stdout.strip()
+    if active != b"0":
+        raise MaintenanceError(
+            "database clients are still connected; quiesce consumers through Git/Argo before cleanup"
+        )
 
 
 def parse_userlist(contents: bytes) -> dict[str, str]:

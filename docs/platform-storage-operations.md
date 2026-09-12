@@ -45,6 +45,23 @@ restore consumers through Git/Argo as described below. If reset fails, keep
 consumers stopped and use the printed archive path for identity recovery;
 do not rerun against a partially restored database without preserving that archive.
 
+### Full platform identity purge
+
+To discard every PostgreSQL application schema, including all Keycloak users,
+sessions, clients, and credentials, quiesce database clients through reviewed
+Git/Argo changes and run:
+
+```bash
+make postgres-reset-all POSTGRES_CLEAN_CONFIRM=RESET-ssl-proxy-platform-postgres-data
+```
+
+This command does not create or restore a Keycloak archive. After the reset,
+run `platform-sync`, restore workloads through Git/Argo, and use the declared
+realm import and bootstrap job to recreate only the configured identity realm.
+Recreate users and Schema Migrator targets separately. Kafka consumer offsets
+are not reset; a clean rebuild processes only new or previously uncommitted
+records.
+
 Both tasks run locally without SSH. The cleanup task uses existing Vault
 authentication and defaults `VAULT_ADDR` to `https://192.168.1.242:8200` and
 `VAULT_CACERT` to `$HOME/.local/share/ssl-proxy-platform/vault-ca.crt`.
