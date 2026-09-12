@@ -309,7 +309,7 @@ func DBKind(kind string) (string, bool) {
 }
 
 func SupportedDBKinds() []string {
-	return []string{"event", "device"}
+	return []string{"event", "device", "behaviour_window", "frame_sequence"}
 }
 
 func firstEnv(keys ...string) string {

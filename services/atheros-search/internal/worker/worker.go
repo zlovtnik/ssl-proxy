@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+
+	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/embed"
 )
 
 type Pool struct {
@@ -149,13 +151,22 @@ func (p *Pool) processBatch(ctx context.Context, workerID string, logger zerolog
 	go p.renewLeases(renewCtx, jobs, logger)
 
 	completed := 0
-	for kind, kindJobs := range groupJobsByKind(jobs) {
+	for _, group := range orderedJobGroups(jobs) {
+		kind, kindJobs := group.kind, group.jobs
 		texts := make([]string, len(kindJobs))
 		for i := range kindJobs {
 			texts[i] = kindJobs[i].NormalizedText
 		}
 		vectors, embedErr := p.embedder.Embed(ctx, texts, kind)
 		if embedErr != nil {
+			if retryAt, unavailable := embed.RetryTime(embedErr); unavailable {
+				if retryAt.IsZero() {
+					retryAt = time.Now().Add(p.cfg.PollInterval)
+				}
+				logger.Warn().Err(embedErr).Time("retry_at", retryAt).Int("job_count", len(jobs)).Msg("embedding backend unavailable; deferring claimed jobs without consuming attempts")
+				p.deferClaimedJobs(ctx, jobs, retryAt, logger)
+				return
+			}
 			logger.Error().Err(embedErr).Int("job_count", len(kindJobs)).Str("kind", kind).Msg("embedding batch failed")
 			for _, job := range kindJobs {
 				p.failClaimedJob(ctx, job, embedErr, logger)
@@ -180,6 +191,27 @@ func (p *Pool) processBatch(ctx context.Context, workerID string, logger zerolog
 	}
 
 	logger.Info().Int("completed", completed).Int("claimed", len(jobs)).Msg("embedding batch completed")
+}
+
+type jobGroup struct {
+	kind string
+	jobs []Job
+}
+
+// orderedJobGroups keeps processing deterministic. In particular, a circuit
+// opening stops later kinds rather than randomly exhausting them via map order.
+func orderedJobGroups(jobs []Job) []jobGroup {
+	groups := make([]jobGroup, 0, 4)
+	positions := make(map[string]int)
+	for _, job := range jobs {
+		if index, ok := positions[job.EmbeddingKind]; ok {
+			groups[index].jobs = append(groups[index].jobs, job)
+			continue
+		}
+		positions[job.EmbeddingKind] = len(groups)
+		groups = append(groups, jobGroup{kind: job.EmbeddingKind, jobs: []Job{job}})
+	}
+	return groups
 }
 
 func groupJobsByKind(jobs []Job) map[string][]Job {
@@ -222,6 +254,24 @@ func (p *Pool) failClaimedJob(ctx context.Context, job Job, cause error, logger 
 	}
 	if err := tx.Commit(); err != nil {
 		logger.Error().Err(err).Str("job_id", job.JobID).Msg("failed to commit embedding failure")
+	}
+}
+
+func (p *Pool) deferClaimedJobs(ctx context.Context, jobs []Job, retryAt time.Time, logger zerolog.Logger) {
+	for _, job := range jobs {
+		tx, err := p.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+		if err != nil {
+			logger.Error().Err(err).Str("job_id", job.JobID).Msg("failed to begin embedding deferral transaction")
+			continue
+		}
+		if err := deferJob(ctx, tx, job.JobID, job.LeaseToken, job.LeaseFence, retryAt); err != nil {
+			_ = tx.Rollback()
+			logger.Error().Err(err).Str("job_id", job.JobID).Msg("failed to defer claimed embedding job")
+			continue
+		}
+		if err := tx.Commit(); err != nil {
+			logger.Error().Err(err).Str("job_id", job.JobID).Msg("failed to commit embedding job deferral")
+		}
 	}
 }
 

@@ -26,6 +26,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.consumer_offsets TO {{OCTOP
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_jobs TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_batches TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_errors TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE ON SEQUENCE octopus_core.sync_errors_id_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_backlog TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.ingestion_evidence TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_events TO {{OCTOPUS_ACCOUNT}};
@@ -33,6 +34,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_event_payload_archives
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.sync_event_tombstones TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.devices TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_authorized_networks TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE ON SEQUENCE octopus_core.wireless_authorized_networks_id_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_clients TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_shadow_alerts TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_frames TO {{OCTOPUS_ACCOUNT}};
@@ -45,12 +47,19 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_frame_security TO 
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_inventory_projection_inputs TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_shadow_alert_inputs TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_sensors TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE ON SEQUENCE octopus_core.wireless_sensors_sensor_pk_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_audit_frames TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE ON SEQUENCE octopus_core.wireless_audit_frames_frame_pk_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_bandwidth_windows TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE ON SEQUENCE octopus_core.wireless_bandwidth_windows_bw_pk_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_client_inventory TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE ON SEQUENCE octopus_core.wireless_client_inventory_inventory_pk_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_probe_requests TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE ON SEQUENCE octopus_core.wireless_probe_requests_probe_pk_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.proxy_blocked_host_rollups TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE ON SEQUENCE octopus_core.proxy_blocked_host_rollups_id_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.proxy_payload_audit TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE ON SEQUENCE octopus_core.proxy_payload_audit_id_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.work_leases TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.processor_state TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.retention_runs TO {{OCTOPUS_ACCOUNT}};

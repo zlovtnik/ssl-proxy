@@ -210,8 +210,8 @@ func (p *Pool) CountEmbeddings(ctx context.Context) (EmbeddingCounts, error) {
 SELECT
   COUNT(*) FILTER (WHERE embedding_kind = 'event'),
   COUNT(*) FILTER (WHERE embedding_kind = 'device'),
-  0,
-  0
+  COUNT(*) FILTER (WHERE embedding_kind = 'behaviour'),
+  COUNT(*) FILTER (WHERE embedding_kind = 'sequence')
 FROM atheros_search.embeddings
 `).Scan(&counts.Event, &counts.Device, &counts.Behaviour, &counts.Sequence)
 	return counts, err

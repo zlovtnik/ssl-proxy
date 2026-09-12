@@ -816,6 +816,7 @@ OCTOPUS_RUNTIME_PROCESSORS = {
     "sync-load-consumer",
     "sync-result-consumer",
     "sync-outbox-publisher",
+    "wireless-heartbeat-ingestion",
     "wireless-frame-normalizer",
     "wireless-inventory-projector",
     "wireless-identity-projector",

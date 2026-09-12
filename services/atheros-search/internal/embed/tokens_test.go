@@ -1,97 +1,128 @@
 package embed
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 )
 
-func TestEstimateTokensCountsSpecialCharacters(t *testing.T) {
-	cases := []struct {
-		name string
-		text string
-		want int
-	}{
-		{"empty", "", 0},
-		{"short run", "aaaa", 2},                        // ceil(4/3)
-		{"ten run", "aaaaaaaaaa", 4},                    // ceil(10/3)
-		{"mac address", "aa:bb:cc:dd:ee:ff", 11},        // 6 runs of 2 + 5 colons
-		{"spaces skipped", "hello world", 4},            // ceil(5/3) + ceil(5/3)
-		{"newline counts", "kind: event\nquery: x", 10}, // 5 + 1 + 2 + 1 + 1
-		{"json punctuation", `{"a":1}`, 7},              // { " a " : 1 }
-		{"non-ascii double counted", "caf\u00e9", 3},    // ceil(3/3) + 2
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := EstimateTokens(tc.text); got != tc.want {
-				t.Fatalf("EstimateTokens(%q) = %d, want %d", tc.text, got, tc.want)
-			}
-		})
-	}
+// vocabTokenizer is a deterministic tokenizer/detokenizer mock. Every word
+// maps to one stable token id, so detokenizing an exact token range rebuilds
+// exactly the words in that range.
+type vocabTokenizer struct {
+	ids   map[string]int
+	words map[int]string
+	next  int
 }
 
-func TestChunkTextShortInputPassthrough(t *testing.T) {
-	text := "kind: event\nsource_mac: aa:bb:cc:dd:ee:ff"
-	chunks := ChunkText(text, DefaultMaxTokens)
-	if len(chunks) != 1 || chunks[0] != text {
-		t.Fatalf("short text must pass through unchanged, got %d chunks", len(chunks))
-	}
+func newVocabTokenizer() *vocabTokenizer {
+	return &vocabTokenizer{ids: make(map[string]int), words: make(map[int]string)}
 }
 
-func TestChunkTextRespectsTokenBudget(t *testing.T) {
-	var lines []string
-	for i := 0; i < 200; i++ {
-		lines = append(lines, fmt.Sprintf("field_%02d: sensor-1 aa:bb:cc:dd:ee:%02x", i, i))
+func (t *vocabTokenizer) Tokenize(_ context.Context, text string) ([]int, error) {
+	tokens := make([]int, 0, len(text)/4)
+	for _, word := range strings.Fields(text) {
+		id, ok := t.ids[word]
+		if !ok {
+			t.next++
+			id = t.next
+			t.ids[word] = id
+			t.words[id] = word
+		}
+		tokens = append(tokens, id)
 	}
-	text := strings.Join(lines, "\n")
-	maxTokens := 64
-	budget := chunkBudget(maxTokens)
-	chunks := ChunkText(text, maxTokens)
-	if len(chunks) < 2 {
-		t.Fatalf("expected long text to be split, got %d chunks", len(chunks))
+	return tokens, nil
+}
+
+func (t *vocabTokenizer) Detokenize(_ context.Context, tokens []int) (string, error) {
+	words := make([]string, len(tokens))
+	for i, id := range tokens {
+		word, ok := t.words[id]
+		if !ok {
+			return "", fmt.Errorf("unknown token id %d", id)
+		}
+		words[i] = word
 	}
+	return strings.Join(words, " "), nil
+}
+
+func syntheticSequenceText(tokenCount int) string {
+	words := make([]string, tokenCount)
+	for i := range words {
+		words[i] = fmt.Sprintf("tok%06d", i)
+	}
+	return strings.Join(words, " ")
+}
+
+func TestChunkTextSplitsExactTokenRanges(t *testing.T) {
+	tokenizer := newVocabTokenizer()
+	text := syntheticSequenceText(1000)
+	chunks, err := ChunkText(context.Background(), tokenizer, text)
+	if err != nil {
+		t.Fatalf("ChunkText returned error: %v", err)
+	}
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 chunks of 480/480/40, got %d", len(chunks))
+	}
+	wantCounts := []int{480, 480, 40}
 	for i, chunk := range chunks {
-		if got := EstimateTokens(chunk); got > budget {
-			t.Fatalf("chunk %d uses %d tokens, budget is %d", i, got, budget)
+		if chunk.TokenCount != wantCounts[i] {
+			t.Fatalf("chunk %d has %d tokens, want %d", i, chunk.TokenCount, wantCounts[i])
+		}
+		if got := len(strings.Fields(chunk.Text)); got != chunk.TokenCount {
+			t.Fatalf("chunk %d detokenized to %d words, TokenCount is %d", i, got, chunk.TokenCount)
 		}
 	}
-	rejoined := strings.Join(chunks, "\n")
-	for _, line := range lines {
-		if !strings.Contains(rejoined, line) {
-			t.Fatalf("chunking lost line %q", line)
-		}
+	var rebuilt []string
+	for _, chunk := range chunks {
+		rebuilt = append(rebuilt, strings.Fields(chunk.Text)...)
 	}
-}
-
-func TestChunkTextHardSplitsOversizedWord(t *testing.T) {
-	word := strings.Repeat("a", 500)
-	chunks := ChunkText(word, 32)
-	budget := chunkBudget(32)
-	if len(chunks) < 2 {
-		t.Fatalf("expected oversized word to be hard-split, got %d chunks", len(chunks))
+	original := strings.Fields(text)
+	if len(rebuilt) != len(original) {
+		t.Fatalf("chunking lost tokens: rebuilt %d, original %d", len(rebuilt), len(original))
 	}
-	if strings.Join(chunks, "") != word {
-		t.Fatalf("hard split lost content")
-	}
-	for i, chunk := range chunks {
-		if got := EstimateTokens(chunk); got > budget {
-			t.Fatalf("chunk %d uses %d tokens, budget is %d", i, got, budget)
+	for i := range original {
+		if rebuilt[i] != original[i] {
+			t.Fatalf("rebuilt token %d = %q, want %q (order or range mismatch)", i, rebuilt[i], original[i])
 		}
 	}
 }
 
-func TestChunkTextHardSplitsPunctuationHeavyWord(t *testing.T) {
-	// Punctuation counts one token per character, so this line must be
-	// split by rune even though it is short in bytes.
-	word := strings.Repeat("!?", 100)
-	chunks := ChunkText(word, 32)
-	budget := chunkBudget(32)
-	if strings.Join(chunks, "") != word {
-		t.Fatalf("hard split lost content")
+// The retired heuristic dropped long sequence sources and recovery work found
+// sequences larger than 173,443 tokens. Chunking must cover every token of a
+// synthetic sequence beyond that size without exceeding the model context.
+func TestChunkTextCoversSequenceBeyondLegacyLimit(t *testing.T) {
+	const tokenCount = 180001
+	tokenizer := newVocabTokenizer()
+	chunks, err := ChunkText(context.Background(), tokenizer, syntheticSequenceText(tokenCount))
+	if err != nil {
+		t.Fatalf("ChunkText returned error: %v", err)
 	}
+	full := tokenCount / ChunkTokenLimit
+	remainder := tokenCount % ChunkTokenLimit
+	wantChunks := full
+	if remainder > 0 {
+		wantChunks++
+	}
+	if len(chunks) != wantChunks {
+		t.Fatalf("expected %d chunks, got %d", wantChunks, len(chunks))
+	}
+	covered := 0
 	for i, chunk := range chunks {
-		if got := EstimateTokens(chunk); got > budget {
-			t.Fatalf("chunk %d uses %d tokens, budget is %d", i, got, budget)
+		if chunk.TokenCount > ChunkTokenLimit {
+			t.Fatalf("chunk %d has %d tokens, limit is %d", i, chunk.TokenCount, ChunkTokenLimit)
 		}
+		want := ChunkTokenLimit
+		if i == len(chunks)-1 && remainder > 0 {
+			want = remainder
+		}
+		if chunk.TokenCount != want {
+			t.Fatalf("chunk %d has %d tokens, want %d", i, chunk.TokenCount, want)
+		}
+		covered += chunk.TokenCount
+	}
+	if covered != tokenCount {
+		t.Fatalf("chunks cover %d tokens, sequence has %d", covered, tokenCount)
 	}
 }

@@ -100,11 +100,11 @@ FROM (
   SELECT
     document_id,
     embedding_model,
-    embedding <=> $1::vector AS cosine_distance
+    embedding <=> $1::public.vector AS cosine_distance
   FROM atheros_search.embeddings
   WHERE embedding_model = $3
     AND embedding_kind = $4
-  ORDER BY embedding <=> $1::vector ASC
+  ORDER BY embedding <=> $1::public.vector ASC
   LIMIT $2
 ) nearest
 JOIN atheros_search.search_documents d ON d.document_id = nearest.document_id

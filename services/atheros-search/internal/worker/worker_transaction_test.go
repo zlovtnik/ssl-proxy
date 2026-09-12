@@ -50,6 +50,9 @@ func TestProcessBatchCommitsClaimBeforeEmbeddingAndCompletesAtomically(t *testin
 	mock.ExpectExec("INSERT INTO atheros_search\\.embeddings").
 		WithArgs(job.DocumentID, job.EmbeddingKind, job.EmbeddingModel, job.ContentSHA256, "[0.25,0.5]").
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO atheros_search\\.search_vectors_event").
+		WithArgs(job.DocumentID, job.EmbeddingModel, job.ContentSHA256, "[0.25,0.5]").
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE atheros_search\\.embedding_jobs").
 		WithArgs(job.JobID, job.LeaseToken, job.LeaseFence).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -74,6 +77,9 @@ func TestStoreCompletionRollsBackVectorWhenLeaseIsLost(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO atheros_search\\.embeddings").
 		WithArgs(job.DocumentID, job.EmbeddingKind, job.EmbeddingModel, job.ContentSHA256, "[1]").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO atheros_search\\.search_vectors_event").
+		WithArgs(job.DocumentID, job.EmbeddingModel, job.ContentSHA256, "[1]").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE atheros_search\\.embedding_jobs").
 		WithArgs(job.JobID, job.LeaseToken, job.LeaseFence).
@@ -146,6 +152,26 @@ func TestRecoverExpiredLeasesIsBounded(t *testing.T) {
 	recovered, err := recoverExpiredLeases(context.Background(), db, 25)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), recovered)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDeferJobPreservesAttemptForCircuitRetry(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	job := testJob()
+	retryAt := time.Now().Add(time.Minute)
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE atheros_search\\.embedding_jobs").
+		WithArgs(retryAt, job.JobID, job.LeaseToken, job.LeaseFence).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	tx, err := db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	require.NoError(t, deferJob(context.Background(), tx, job.JobID, job.LeaseToken, job.LeaseFence, retryAt))
+	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

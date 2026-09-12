@@ -86,6 +86,12 @@ apply_domain() {
 }
 
 psql_run --file="${schema_root}/00_extensions/001_runtime_extensions.sql"
+psql_run --tuples-only --no-align --command="
+  SELECT EXISTS (
+    SELECT 1 FROM pg_extension extension
+    JOIN pg_namespace namespace ON namespace.oid = extension.extnamespace
+    WHERE extension.extname = 'vector' AND namespace.nspname = 'public'
+  )" | grep -qx t || { echo "pgvector extension must be installed in public" >&2; exit 1; }
 for domain in octopus_core atheros_search schema_migrator keycloak; do apply_domain "${domain}"; done
 
 for domain in octopus_core atheros_search schema_migrator; do
@@ -127,13 +133,22 @@ ensure_role_search_path "${search_account}" "atheros_search"
 ensure_role_search_path "${migrator_account}" "schema_migrator"
 ensure_role_search_path "${keycloak_account}" "keycloak"
 
+for account in "${octopus_account}" "${search_account}"; do
+  psql_run --tuples-only --no-align --command="
+    SELECT has_schema_privilege('${account}', 'atheros_search', 'USAGE')
+       AND has_schema_privilege('${account}', 'public', 'USAGE')
+       AND has_type_privilege('${account}', 'public.vector', 'USAGE')" |
+    grep -qx t || { echo "runtime role lacks schema/type usage: ${account}" >&2; exit 1; }
+done
+
+ath_version="$(awk '/^schema_version:/{print $2; exit}' "${schema_root}/atheros_search/manifest.yaml")"
 ath_sha="$(awk '/^manifest_sha256:/{print $2; exit}' "${schema_root}/atheros_search/manifest.yaml")"
 oct_version="$(awk '/^schema_version:/{print $2; exit}' "${schema_root}/octopus_core/manifest.yaml")"
 oct_sha="$(awk '/^manifest_sha256:/{print $2; exit}' "${schema_root}/octopus_core/manifest.yaml")"
 mig_version="$(awk '/^schema_version:/{print $2; exit}' "${schema_root}/schema_migrator/manifest.yaml")"
 mig_sha="$(awk '/^manifest_sha256:/{print $2; exit}' "${schema_root}/schema_migrator/manifest.yaml")"
 
-psql_run --command="UPDATE atheros_search.schema_manifest SET manifest_sha256='${ath_sha}', schema_ready=true, vector_ready=true, applied_at=CURRENT_TIMESTAMP, details=jsonb_build_object('state','ready','executor','postgres-runtime-schema') WHERE component='atheros-search'"
+psql_run --command="UPDATE atheros_search.schema_readiness SET required_version='${ath_version}', applied_version='${ath_version}', required_checksum='${ath_sha}', applied_checksum='${ath_sha}', ready=true, checked_at=CURRENT_TIMESTAMP, details=jsonb_build_object('state','ready','executor','postgres-runtime-schema') WHERE domain='atheros_search'"
 psql_run --command="UPDATE octopus_core.schema_readiness SET required_version='${oct_version}', applied_version='${oct_version}', required_checksum='${oct_sha}', applied_checksum='${oct_sha}', ready=true, checked_at=CURRENT_TIMESTAMP, details=jsonb_build_object('state','ready','executor','postgres-runtime-schema') WHERE domain='octopus_core'"
 psql_run --command="INSERT INTO schema_migrator.state_schema_migrations(version,checksum,applied_at,applied_by) VALUES ('${mig_version}','${mig_sha}',CURRENT_TIMESTAMP,'postgres-runtime-schema') ON CONFLICT (version) DO UPDATE SET checksum=EXCLUDED.checksum, applied_at=EXCLUDED.applied_at, applied_by=EXCLUDED.applied_by"
 psql_run --command="UPDATE schema_migrator.schema_readiness SET required_version='${mig_version}', applied_version='${mig_version}', required_checksum='${mig_sha}', applied_checksum='${mig_sha}', ready=true, checked_at=CURRENT_TIMESTAMP, details=jsonb_build_object('state','ready','executor','postgres-runtime-schema') WHERE domain='schema_migrator'"

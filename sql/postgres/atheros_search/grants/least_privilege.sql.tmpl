@@ -3,20 +3,32 @@
 -- privileges or access to credential-bearing configuration.
 
 GRANT USAGE ON SCHEMA atheros_search TO {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT USAGE ON SCHEMA public TO {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT USAGE ON TYPE public.vector TO {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
 
 GRANT SELECT ON atheros_search.schema_readiness TO {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.search_documents TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.embedding_jobs TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.search_document_tokens TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.search_document_tags TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.devices TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, DELETE ON atheros_search.embeddings TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, DELETE ON atheros_search.search_vectors_event, atheros_search.search_vectors_device,
+  atheros_search.search_vectors_behaviour, atheros_search.search_vectors_sequence TO {{OCTOPUS_ACCOUNT}};
 
 GRANT SELECT ON atheros_search.search_documents TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, UPDATE ON atheros_search.embedding_jobs TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.embeddings TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE ON atheros_search.search_vectors_event, atheros_search.search_vectors_device,
+  atheros_search.search_vectors_behaviour, atheros_search.search_vectors_sequence TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT ON atheros_search.devices TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.search_queries TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.worker_heartbeat TO {{ATHEROS_SEARCH_ACCOUNT}};
 
 GRANT USAGE, SELECT ON SEQUENCE atheros_search.embeddings_embedding_id_seq TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT USAGE, SELECT ON SEQUENCE atheros_search.search_vectors_event_vector_id_seq,
+  atheros_search.search_vectors_device_vector_id_seq,
+  atheros_search.search_vectors_behaviour_vector_id_seq,
+  atheros_search.search_vectors_sequence_vector_id_seq TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT USAGE, SELECT ON SEQUENCE atheros_search.search_queries_query_id_seq TO {{ATHEROS_SEARCH_ACCOUNT}};

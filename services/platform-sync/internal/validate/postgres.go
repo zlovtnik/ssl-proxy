@@ -134,6 +134,21 @@ func validatePostgresAccount(parent context.Context, pg contract.PostgresValidat
 	return nil
 }
 
+func validatePgvector(ctx context.Context, connection *pgx.Conn) error {
+	var available bool
+	if err := connection.QueryRow(ctx, "select exists (select 1 from pg_extension where extname = 'vector')").Scan(&available); err != nil {
+		return fmt.Errorf("check pgvector extension: %w", err)
+	}
+	if !available {
+		return errors.New("pgvector extension is not installed")
+	}
+	var vectorType string
+	if err := connection.QueryRow(ctx, "select '[]'::public.vector::text").Scan(&vectorType); err != nil {
+		return fmt.Errorf("resolve public.vector type: %w", err)
+	}
+	return nil
+}
+
 func validateAccountGrants(ctx context.Context, connection *pgx.Conn, user string) error {
 	switch user {
 	case "schema_owner":
@@ -149,6 +164,12 @@ func validateAccountGrants(ctx context.Context, connection *pgx.Conn, user strin
 		}
 		return requireAllSequencePrivileges(ctx, connection, "schema_migrator", "USAGE", "SELECT")
 	case "atheros_search_runtime":
+		if err := validatePgvector(ctx, connection); err != nil {
+			return err
+		}
+		if err := requireSchemaPrivileges(ctx, connection, "public", "USAGE"); err != nil {
+			return err
+		}
 		if err := requireSchemaPrivileges(ctx, connection, "atheros_search", "USAGE"); err != nil {
 			return err
 		}
@@ -160,6 +181,12 @@ func validateAccountGrants(ctx context.Context, connection *pgx.Conn, user strin
 		}
 		return requireTableGrants(ctx, connection, atherosSearchGrants())
 	case "octopus_runtime":
+		if err := validatePgvector(ctx, connection); err != nil {
+			return err
+		}
+		if err := requireSchemaPrivileges(ctx, connection, "public", "USAGE"); err != nil {
+			return err
+		}
 		if err := requireSchemaPrivileges(ctx, connection, "octopus_core", "USAGE"); err != nil {
 			return err
 		}

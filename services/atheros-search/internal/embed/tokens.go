@@ -1,161 +1,54 @@
 package embed
 
-import "strings"
+import (
+	"context"
+	"fmt"
+)
 
-// DefaultMaxTokens is the default per-input token budget used to split
-// embedding texts. The llama.cpp embedding backend rejects any input larger
-// than its model context (n_ctx=512 for the nomic-embed-text-v2-moe
-// deployment), so texts are broken into chunks of at most this many
-// estimated tokens before they are sent.
+// DefaultMaxTokens is the llama.cpp model context. Chunks deliberately leave
+// room for the backend's special tokens.
 const DefaultMaxTokens = 512
 
-// tokenOverhead is reserved from the configured budget so BOS/EOS special
-// tokens and estimator error still fit inside the model context.
-const tokenOverhead = 8
+// ChunkTokenLimit is the maximum tokenizer-counted content supplied for one
+// source chunk. It is intentionally independent of character count.
+const ChunkTokenLimit = 480
 
-// minChunkTokens keeps pathological budgets workable instead of producing
-// single-rune chunks.
-const minChunkTokens = 16
+// RequestTokenLimit is the maximum tokenizer-counted content in one embedding
+// request. llama.cpp applies its physical batch limit to this aggregate.
+const RequestTokenLimit = 4096
 
-// chunkBudget converts the configured max tokens into the budget applied to
-// each chunk.
-func chunkBudget(maxTokens int) int {
-	if maxTokens <= 0 {
-		maxTokens = DefaultMaxTokens
-	}
-	budget := maxTokens - tokenOverhead
-	if budget < minChunkTokens {
-		budget = minChunkTokens
-	}
-	return budget
+type Tokenizer interface {
+	Tokenize(context.Context, string) ([]int, error)
+	Detokenize(context.Context, []int) (string, error)
 }
 
-// EstimateTokens returns a conservative upper-bound estimate of the number
-// of tokens a BPE tokenizer produces for text. It deliberately over-counts:
-//   - ASCII letters and digits are grouped into runs priced at one token per
-//     three characters (real tokenizers average closer to four),
-//   - every ASCII punctuation or symbol character is counted as its own
-//     token. BPE usually splits punctuation off, and this corpus is dense
-//     with MAC addresses, JSON, tags and "key: value" separators, so a
-//     naive characters/4 estimate would badly under-count,
-//   - every non-ASCII rune is counted as two tokens (some scripts tokenise
-//     to more than one token per character),
-//   - every newline counts as one token.
-func EstimateTokens(text string) int {
-	total := 0
-	run := 0
-	flush := func() {
-		if run > 0 {
-			total += (run + 2) / 3 // ceil(run/3)
-			run = 0
-		}
+// ChunkText uses the backend tokenizer rather than a heuristic, then rebuilds
+// each exact token range through /detokenize. This preserves every source token
+// and keeps a model input below the effective 512-token context.
+func ChunkText(ctx context.Context, tokenizer Tokenizer, text string) ([]TokenChunk, error) {
+	tokens, err := tokenizer.Tokenize(ctx, text)
+	if err != nil {
+		return nil, fmt.Errorf("tokenize embedding source: %w", err)
 	}
-	for _, r := range text {
-		switch {
-		case r == '\n' || r == '\r':
-			flush()
-			total++
-		case r == ' ' || r == '\t':
-			flush()
-		case r < 0x80 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'):
-			run++
-		case r < 0x80:
-			flush()
-			total++ // ASCII punctuation/symbols are their own token
-		default:
-			flush()
-			total += 2 // non-ASCII runes: conservatively 2 tokens each
-		}
+	if len(tokens) == 0 {
+		return []TokenChunk{{Text: text}}, nil
 	}
-	flush()
-	return total
+	chunks := make([]TokenChunk, 0, (len(tokens)+ChunkTokenLimit-1)/ChunkTokenLimit)
+	for start := 0; start < len(tokens); start += ChunkTokenLimit {
+		end := start + ChunkTokenLimit
+		if end > len(tokens) {
+			end = len(tokens)
+		}
+		content, err := tokenizer.Detokenize(ctx, tokens[start:end])
+		if err != nil {
+			return nil, fmt.Errorf("detokenize embedding source tokens %d:%d: %w", start, end, err)
+		}
+		chunks = append(chunks, TokenChunk{Text: content, TokenCount: end - start})
+	}
+	return chunks, nil
 }
 
-// ChunkText splits text into chunks whose estimated token count does not
-// exceed maxTokens. Chunk boundaries prefer whole lines (the embedding text
-// format is line-based "key: value" fields), then whole words, and only
-// hard-splits by rune when a single word cannot fit the budget on its own.
-// Rejoining the chunks with "\n" preserves all content, though whitespace
-// inside hard-split word runs may be normalised to single spaces.
-func ChunkText(text string, maxTokens int) []string {
-	budget := chunkBudget(maxTokens)
-	if EstimateTokens(text) <= budget {
-		return []string{text}
-	}
-	var chunks []string
-	current := ""
-	for _, line := range strings.Split(text, "\n") {
-		if current == "" {
-			current = line
-		} else if EstimateTokens(current+"\n"+line) <= budget {
-			current += "\n" + line
-		} else {
-			chunks = append(chunks, current)
-			current = line
-		}
-		if EstimateTokens(current) > budget {
-			// A single line overflows the budget; split it on word
-			// boundaries (and hard-split any oversized word).
-			chunks = append(chunks, splitLine(current, budget)...)
-			current = ""
-		}
-	}
-	if current != "" {
-		chunks = append(chunks, current)
-	}
-	return chunks
-}
-
-// splitLine packs whitespace-separated words into chunks within budget,
-// falling back to hardSplitWord for a word that alone exceeds it.
-func splitLine(line string, budget int) []string {
-	words := strings.Fields(line)
-	if len(words) == 0 {
-		return []string{line}
-	}
-	var chunks []string
-	current := ""
-	for _, word := range words {
-		if EstimateTokens(word) > budget {
-			if current != "" {
-				chunks = append(chunks, current)
-				current = ""
-			}
-			chunks = append(chunks, hardSplitWord(word, budget)...)
-			continue
-		}
-		if current == "" {
-			current = word
-			continue
-		}
-		if EstimateTokens(current+" "+word) <= budget {
-			current += " " + word
-		} else {
-			chunks = append(chunks, current)
-			current = word
-		}
-	}
-	if current != "" {
-		chunks = append(chunks, current)
-	}
-	return chunks
-}
-
-// hardSplitWord splits a single oversized word by runes into pieces within
-// budget. Rune-wise appending works because EstimateTokens is monotonic in
-// the characters appended.
-func hardSplitWord(word string, budget int) []string {
-	var chunks []string
-	var current strings.Builder
-	for _, r := range word {
-		if EstimateTokens(current.String()+string(r)) > budget && current.Len() > 0 {
-			chunks = append(chunks, current.String())
-			current.Reset()
-		}
-		current.WriteRune(r)
-	}
-	if current.Len() > 0 {
-		chunks = append(chunks, current.String())
-	}
-	return chunks
+type TokenChunk struct {
+	Text       string
+	TokenCount int
 }

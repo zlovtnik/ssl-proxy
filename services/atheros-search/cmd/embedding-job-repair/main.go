@@ -23,7 +23,7 @@ func main() {
 	tlsKey := flag.String("tls-key", envOr("ATHSEARCH_POSTGRES_TLS_KEY_FILE", ""), "Postgres TLS key file")
 	tlsServer := flag.String("tls-server", envOr("ATHSEARCH_POSTGRES_TLS_SERVER_NAME", ""), "Postgres TLS server name")
 	schemaManifestSHA256 := flag.String("schema-manifest-sha256", envOr("ATHSEARCH_SCHEMA_MANIFEST_SHA256", ""), "Expected schema manifest SHA-256 (required)")
-	action := flag.String("action", "status", "Action: status, reset-stale, retry-failed")
+	action := flag.String("action", "status", "Action: status, reset-stale, retry-failed (retryable jobs only)")
 	staleMinutes := flag.Int("stale-minutes", 60, "Minutes after which a leased job is considered stale")
 	flag.Parse()
 
@@ -151,17 +151,16 @@ SET status = 'pending',
     owner_id = NULL,
     lease_token = NULL,
     lease_expires_at = NULL,
-    attempt_count = 0,
     next_attempt_at = CURRENT_TIMESTAMP,
-    last_error = NULL,
     updated_at = CURRENT_TIMESTAMP
-WHERE status = 'failed'
+WHERE status = 'pending'
+   OR (status = 'failed' AND attempt_count < max_attempts)
 `)
 	if err != nil {
 		return fmt.Errorf("retry failed jobs: %w", err)
 	}
 	affected, _ := result.RowsAffected()
-	logger.Info().Int64("retried", affected).Msg("failed jobs reset to pending")
+	logger.Info().Int64("retried", affected).Msg("retryable embedding jobs reset to pending; terminal diagnostics retained")
 	return nil
 }
 

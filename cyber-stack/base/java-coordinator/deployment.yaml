@@ -329,7 +329,8 @@ spec:
               value: >-
                 sync-scan-ingestion,sync-job-planner,sync-backlog-recovery,
                 sync-load-dispatch,sync-load-consumer,sync-result-consumer,
-                sync-outbox-publisher,wireless-frame-normalizer,
+                sync-outbox-publisher,wireless-heartbeat-ingestion,
+                wireless-frame-normalizer,
                 wireless-inventory-projector,wireless-identity-projector,
                 embedding-preparer,embedding-text-builder,
                 rf-alert-projector,

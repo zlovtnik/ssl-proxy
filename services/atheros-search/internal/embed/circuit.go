@@ -44,8 +44,8 @@ func (c *CircuitClient) State() CircuitState {
 }
 
 func (c *CircuitClient) Embed(ctx context.Context, texts []string, kind Kind) ([][]float32, error) {
-	if c.State() == CircuitOpen {
-		return nil, ErrCircuitOpen
+	if retryAt, open := c.openRetryAt(); open {
+		return nil, &BackendUnavailableError{RetryAt: retryAt, Cause: ErrCircuitOpen}
 	}
 	vectors, err := c.Inner.Embed(ctx, texts, kind)
 	c.record(err)
@@ -53,12 +53,21 @@ func (c *CircuitClient) Embed(ctx context.Context, texts []string, kind Kind) ([
 }
 
 func (c *CircuitClient) Health(ctx context.Context) error {
-	if c.State() == CircuitOpen {
-		return ErrCircuitOpen
+	if retryAt, open := c.openRetryAt(); open {
+		return &BackendUnavailableError{RetryAt: retryAt, Cause: ErrCircuitOpen}
 	}
 	err := c.Inner.Health(ctx)
 	c.record(err)
 	return err
+}
+
+func (c *CircuitClient) openRetryAt() (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state == CircuitOpen && time.Now().After(c.openedUntil) {
+		c.state = CircuitHalfOpen
+	}
+	return c.openedUntil, c.state == CircuitOpen
 }
 
 func (c *CircuitClient) record(err error) {

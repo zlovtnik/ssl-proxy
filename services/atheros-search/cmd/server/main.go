@@ -106,7 +106,16 @@ func main() {
 		embedder = embed.NoopClient{Dimensions: cfg.EmbeddingDimensions}
 		logger.Warn().Msg("embedding backend not configured; using zero-vector embedder")
 	} else {
-		embedder = embed.NewCircuitClient(embed.NewHTTPClient(cfg.EmbeddingBackend, cfg.EmbeddingModel, cfg.EmbeddingDimensions, cfg.EmbeddingMaxTokens))
+		httpEmbedder := embed.NewHTTPClient(cfg.EmbeddingBackend, cfg.EmbeddingModel, cfg.EmbeddingDimensions, cfg.EmbeddingMaxTokens)
+		if cfg.WorkerEnabled {
+			validationCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			err := httpEmbedder.ValidateTokenizer(validationCtx)
+			cancel()
+			if err != nil {
+				logger.Fatal().Err(err).Msg("validate llama.cpp tokenizer endpoints before starting embedding workers")
+			}
+		}
+		embedder = embed.NewCircuitClient(httpEmbedder)
 	}
 	m := metrics.New()
 	embedder = embed.CachedClient{

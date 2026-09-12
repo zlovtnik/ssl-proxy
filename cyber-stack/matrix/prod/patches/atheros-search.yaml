@@ -9,6 +9,10 @@ spec:
       containers:
         - name: atheros-search
           env:
+            - name: ATHSEARCH_WORKER_COUNT
+              value: "2"
+            - name: ATHSEARCH_EMBEDDING_BATCH_SIZE
+              value: "16"
             - name: ATHSEARCH_EMBEDDING_BACKEND
               value: "http://192.168.1.242:9931"
             - name: ATHSEARCH_JWT_JWKS_URI

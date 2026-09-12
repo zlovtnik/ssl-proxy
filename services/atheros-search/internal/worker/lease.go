@@ -123,6 +123,37 @@ WHERE job_id = $3
 	return nil
 }
 
+// deferJob returns a lease to pending at the circuit retry time. Claiming is
+// bookkeeping, not a backend attempt, so this reverses its single increment.
+func deferJob(ctx context.Context, tx *sql.Tx, jobID, leaseToken string, leaseFence int64, retryAt time.Time) error {
+	result, err := tx.ExecContext(ctx, `
+UPDATE atheros_search.embedding_jobs
+SET status = 'pending',
+    owner_id = NULL,
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    attempt_count = GREATEST(attempt_count - 1, 0),
+    next_attempt_at = $1,
+    updated_at = CURRENT_TIMESTAMP
+WHERE job_id = $2
+  AND status = 'leased'
+  AND lease_token = $3
+  AND lease_fence = $4
+  AND lease_expires_at > CURRENT_TIMESTAMP
+`, retryAt, jobID, leaseToken, leaseFence)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("lease lost for job %s: no matching lease token or lease expired", jobID)
+	}
+	return nil
+}
+
 func renewJobLease(ctx context.Context, db *sql.DB, job Job, leaseExpiresAt time.Time) (bool, error) {
 	result, err := db.ExecContext(ctx, `
 UPDATE atheros_search.embedding_jobs
@@ -176,24 +207,59 @@ func normalizeEmbeddingKind(kind string) (string, error) {
 		return "event", nil
 	case "device":
 		return "device", nil
+	case "behaviour", "behavior", "behaviour_window", "behavior_window":
+		return "behaviour", nil
+	case "sequence", "frame_sequence":
+		return "sequence", nil
 	default:
 		return "", fmt.Errorf("unknown embedding kind: %s", kind)
 	}
 }
 
 func insertVector(ctx context.Context, tx *sql.Tx, documentID, embeddingKind, embeddingModel, contentSHA256 string, embedding []float32) error {
+	vectorTable, err := vectorTableForKind(embeddingKind)
+	if err != nil {
+		return err
+	}
 	vecStr := formatVector(embedding)
-	_, err := tx.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO atheros_search.embeddings (
   document_id, embedding_kind, embedding_model, content_sha256, embedding, embedded_at
 )
-VALUES ($1, $2, $3, $4, $5::vector, CURRENT_TIMESTAMP)
+VALUES ($1, $2, $3, $4, $5::public.vector, CURRENT_TIMESTAMP)
 ON CONFLICT (document_id, embedding_kind, embedding_model) DO UPDATE SET
   embedding = EXCLUDED.embedding,
   content_sha256 = EXCLUDED.content_sha256,
   embedded_at = CURRENT_TIMESTAMP
 `, documentID, embeddingKind, embeddingModel, contentSHA256, vecStr)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
+INSERT INTO atheros_search.%s (
+  document_id, embedding_model, content_sha256, embedding, embedded_at
+) VALUES ($1, $2, $3, $4::public.vector, CURRENT_TIMESTAMP)
+ON CONFLICT (document_id, embedding_model) DO UPDATE SET
+  content_sha256 = EXCLUDED.content_sha256,
+  embedding = EXCLUDED.embedding,
+  embedded_at = CURRENT_TIMESTAMP
+`, vectorTable), documentID, embeddingModel, contentSHA256, vecStr)
 	return err
+}
+
+func vectorTableForKind(kind string) (string, error) {
+	switch kind {
+	case "event":
+		return "search_vectors_event", nil
+	case "device":
+		return "search_vectors_device", nil
+	case "behaviour":
+		return "search_vectors_behaviour", nil
+	case "sequence":
+		return "search_vectors_sequence", nil
+	default:
+		return "", fmt.Errorf("unknown embedding kind: %s", kind)
+	}
 }
 
 func formatVector(v []float32) string {
