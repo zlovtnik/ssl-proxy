@@ -829,6 +829,35 @@ OCTOPUS_RUNTIME_PROCESSORS = {
     "scheduled-reconciliation",
 }
 
+POSTGRES_RESET_MAINTENANCE = "ssl-proxy.io/postgres-reset-maintenance"
+
+
+def _is_reset_maintenance(
+    documents: Documents, deployment_names: tuple[str, ...], job_names: tuple[str, ...] = ()
+) -> bool:
+    for name in deployment_names:
+        deployments = _find(documents, "Deployment", name)
+        if len(deployments) != 1:
+            return False
+        deployment = deployments[0]
+        if (
+            _path(deployment, "spec", "replicas") != 0
+            or _mapping(_metadata(deployment).get("annotations")).get(POSTGRES_RESET_MAINTENANCE)
+            != "true"
+        ):
+            return False
+    for name in job_names:
+        jobs = _find(documents, "Job", name)
+        if len(jobs) != 1:
+            return False
+        annotations = _mapping(_metadata(jobs[0]).get("annotations"))
+        if (
+            annotations.get(POSTGRES_RESET_MAINTENANCE) != "true"
+            or annotations.get("argocd.argoproj.io/hook") != "Skip"
+        ):
+            return False
+    return True
+
 
 def _check_octopus_runtime(
     rendered: Documents | str, relative: str
@@ -856,9 +885,20 @@ def _check_octopus_runtime(
         "OCTOPUS_ENVIRONMENT": expected_environment,
     }
     errors: list[str] = []
+    reset_maintenance = _is_reset_maintenance(
+        _documents(rendered),
+        (
+            "ssl-proxy-atheros-search",
+            "ssl-proxy-java-coordinator",
+            "ssl-proxy-schema-migrator-backend",
+            "ssl-proxy-schema-migrator-keycloak",
+        ),
+        ("ssl-proxy-schema-migrator-bootstrap", "ssl-proxy-schema-migrator-validate"),
+    )
     if (
         expected_environment == "production"
         and _path(deployments[0], "spec", "replicas") != 1
+        and not reset_maintenance
     ):
         errors.append(f"{relative}: production Octopus requires exactly 1 replica")
     if expected_environment == "production":
@@ -1908,10 +1948,15 @@ def _check_postgres_pool_readiness(
         return errors
     readiness = readiness_jobs[0]
     annotations = _mapping(_metadata(readiness).get("annotations"))
+    reset_maintenance = _is_reset_maintenance(
+        documents,
+        ("postgres-pgbouncer",),
+        ("ssl-proxy-postgres-schema-executor", "ssl-proxy-postgres-pool-readiness"),
+    )
     if (
         annotations.get("argocd.argoproj.io/hook") != "Sync"
         or annotations.get("argocd.argoproj.io/sync-wave") != "2"
-    ):
+    ) and not reset_maintenance:
         errors.append(f"{relative}: pooled PostgreSQL readiness must be a wave 2 Sync hook")
     containers = _pod_containers(readiness)
     if len(containers) != 1:

@@ -363,6 +363,32 @@ metadata: {name: ssl-proxy-postgres-init-grants, annotations: {argocd.argoproj.i
         )
         self.assertTrue(any("init wave" in error for error in check_gitops._check_postgres_waves(rendered, "test")))
 
+    def test_reset_maintenance_requires_all_database_clients_and_hooks(self) -> None:
+        rendered = documents(
+            """kind: Deployment
+metadata: {name: postgres-pgbouncer, annotations: {ssl-proxy.io/postgres-reset-maintenance: "true"}}
+spec: {replicas: 0}
+---
+kind: Job
+metadata: {name: ssl-proxy-postgres-schema-executor, annotations: {ssl-proxy.io/postgres-reset-maintenance: "true", argocd.argoproj.io/hook: Skip}}
+---
+kind: Job
+metadata: {name: ssl-proxy-postgres-pool-readiness, annotations: {ssl-proxy.io/postgres-reset-maintenance: "true", argocd.argoproj.io/hook: Skip}}
+"""
+        )
+        self.assertTrue(
+            check_gitops._is_reset_maintenance(
+                rendered,
+                ("postgres-pgbouncer",),
+                ("ssl-proxy-postgres-schema-executor", "ssl-proxy-postgres-pool-readiness"),
+            )
+        )
+        self.assertFalse(
+            check_gitops._is_reset_maintenance(
+                rendered, ("ssl-proxy-java-coordinator",)
+            )
+        )
+
     def test_phase_one_rejects_bypass_listeners_and_routes(self) -> None:
         rendered = documents(
             """kind: Service
