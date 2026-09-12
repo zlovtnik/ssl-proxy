@@ -7,9 +7,6 @@ repository root instructions.
 
 ## Service Boundaries
 - `atheros-sensor/` is a Rust host-side Wi-Fi sensor and sync-plane producer.
-- `atheros-search/` is the Go HTTP/gRPC search, vector, and ETL control plane
-  service for wireless audit data. It owns embedding job processing via a
-  worker pool and exposes ETL health monitoring.
 - `octopus/` is the Scala 3 Cats Effect/FS2 coordinator and the sole owner of
   durable ingestion, leases, outbox, and maintained projections in PostgreSQL.
 - Keep cross-service contracts explicit: Redpanda topic names, stream names,

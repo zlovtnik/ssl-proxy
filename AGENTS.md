@@ -22,7 +22,7 @@ overrides a rule for its subtree.
   lives in the `schema_migrator` schema; it also supports external PostgreSQL
   and deprecated Oracle targets.
 - `services/atheros-sensor/` is the Rust Linux monitor-mode wireless sensor.
-- `services/atheros-search/` is the Go HTTP/gRPC search, vector, and ETL
+- `apps/integration-console/atheros-search/` is the Go HTTP/gRPC search, vector, and ETL
   control plane service for wireless audit data. It owns embedding job
   processing via a worker pool and exposes ETL health monitoring.
 - `services/octopus/` is the Scala 3 Cats Effect/FS2 coordinator and owner of
@@ -34,7 +34,7 @@ overrides a rule for its subtree.
   service-specific conventions.
 - `apps/wg-key-rotator/` is an Elixir WireGuard key rotation tool.
 - `apps/integration-console/atheros-search-ui/` is a standalone SolidJS/Bun UI.
-  It has its own local `AGENTS.md`.
+  `apps/integration-console/atheros-search/` and the UI have local `AGENTS.md` files.
 - `sql/postgres/` is the canonical runtime schema source for four schemas in
   the external `sync` database: `octopus_core`, `atheros_search`,
   `schema_migrator`, and `keycloak`, plus the shared `contracts/` layer.

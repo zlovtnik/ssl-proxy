@@ -44,9 +44,8 @@ services:
   atheros-search:
     build:
       context: .
-      dockerfile: services/atheros-search/Dockerfile
+      dockerfile: apps/integration-console/atheros-search/Dockerfile
     environment:
       # The browser-only local UI has no bearer-token flow. Keep auth enabled
       # in the default Compose stack, but disable it for developer builds.
       ATHSEARCH_API_TOKEN_SHA256: ""
-

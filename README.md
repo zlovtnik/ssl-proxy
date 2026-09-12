@@ -21,7 +21,7 @@ only in [`cyber-stack/`](cyber-stack/). Production is reconciled by Argo CD.
 | `sync-plane` | Shared Redpanda producer configuration and contracts | [`crates/sync-plane/`](crates/sync-plane/) |
 | Atheros Sensor | Monitor-mode wireless capture and indirect persistence through Redpanda | [Sensor README](services/atheros-sensor/README.md) |
 | Octopus | Durable ingestion, dedupe, evidence, leases, batching, outbox, PostgreSQL load/results and maintained projections | [Octopus README](services/octopus/README.md) |
-| Atheros Search | HTTP/gRPC search, ETL health, embedding-job claims and vector writes | [Search README](services/atheros-search/README.md) |
+| Atheros Search | HTTP/gRPC search, ETL health, embedding-job claims and vector writes | [Search README](apps/integration-console/atheros-search/README.md) |
 | Integration Console | SolidJS UI for Search, graph, inventory and ETL health | [`atheros-search-ui`](apps/integration-console/atheros-search-ui/) |
 | Schema Migrator | Migration authoring/execution and PostgreSQL-backed internal control state | [Schema Migrator README](apps/schema-migrator/README.md) |
 | WireGuard key rotator | Staged WireGuard key rotation and optional notifications | [Rotator README](apps/wg-key-rotator/README.md) |
@@ -115,7 +115,7 @@ dedupe and topic/partition/offset evidence.
 cargo test -p ssl-proxy
 cargo test -p sync-plane
 cargo test -p atheros-sensor
-(cd services/atheros-search && go test ./...)
+(cd apps/integration-console/atheros-search && go test ./...)
 (cd services/octopus && sbt test)
 (cd apps/schema-migrator && sbt test)
 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v

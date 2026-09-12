@@ -48,7 +48,7 @@ explicitly enabled.
 | Sync Plane | Rust in [`crates/sync-plane/`](../crates/sync-plane/) | Shared Redpanda producer configuration and message contracts | Ingestion state or projections |
 | Atheros Sensor | Rust in [`services/atheros-sensor/`](../services/atheros-sensor/) | Monitor-mode capture, wireless event construction, Redpanda publishing, local backlog | Direct PostgreSQL persistence |
 | Octopus | Scala 3 in [`services/octopus/`](../services/octopus/) | Durable ingestion, dedupe, evidence, cursoring, leases, batching, outbox, PostgreSQL load/results, maintained projections and alert derivation | Embedding execution or public search APIs |
-| Atheros Search | Go in [`services/atheros-search/`](../services/atheros-search/) | HTTP/gRPC search, ETL health APIs, embedding-job claims, embedding calls, vector writes | Projection maintenance or alert derivation |
+| Atheros Search | Go in [`apps/integration-console/atheros-search/`](../apps/integration-console/atheros-search/) | HTTP/gRPC search, ETL health APIs, embedding-job claims, embedding calls, vector writes | Projection maintenance or alert derivation |
 | Integration Console | SolidJS in [`apps/integration-console/atheros-search-ui/`](../apps/integration-console/atheros-search-ui/) | Browser UI for search, graph, inventory and ETL health | Rails runtime or direct database access |
 | Schema Migrator | Scala 3 in [`apps/schema-migrator/`](../apps/schema-migrator/) | Migration definitions, validation, execution history and target connection CRUD | Provisioning the four application schemas at runtime |
 | PostgreSQL schema executor | Shell/container in [`k8s/postgres-schema-executor/`](../k8s/postgres-schema-executor/) | Applying the checksummed canonical manifests | Application data processing |
@@ -135,7 +135,7 @@ Atheros Search workers are enabled with `ATHSEARCH_WORKER_ENABLED=true`.
 Worker count, batch size, lease duration and poll interval are configured with
 the `ATHSEARCH_WORKER_*`, `ATHSEARCH_EMBEDDING_BATCH_SIZE`,
 `ATHSEARCH_LEASE_SECONDS` and `ATHSEARCH_POLL_INTERVAL_MS` variables documented
-in the [Atheros Search README](../services/atheros-search/README.md).
+in the [Atheros Search README](../apps/integration-console/atheros-search/README.md).
 
 ## Kubernetes delivery
 

@@ -211,7 +211,7 @@ dependency-boundaries:
 	@cargo tree -p ssl-proxy --depth 1 --prefix none | awk '$$1 == "atheros-sensor" { found=1; print; } END { exit found ? 1 : 0 }'
 
 atheros-search-test:
-	cd services/atheros-search && go test ./...
+	cd apps/integration-console/atheros-search && go test ./...
 
 platform-sync-lint:
 	cd services/platform-sync && go vet ./...
@@ -309,7 +309,7 @@ endef
 $(eval $(call service_rules,ssl-proxy,Dockerfile,--target ssl-proxy --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),ssl-proxy,.))
 $(eval $(call service_rules,java-coordinator,services/octopus/Dockerfile,--build-arg PARENT_COMMIT=$(PARENT_COMMIT) --build-arg OCTOPUS_COMMIT=$(OCTOPUS_COMMIT),java-coordinator,.))
 $(eval $(call service_rules,atheros-sensor,Dockerfile,--target atheros-sensor --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),atheros-sensor,.))
-$(eval $(call service_rules,atheros-search,services/atheros-search/Dockerfile,,atheros-search,.))
+$(eval $(call service_rules,atheros-search,apps/integration-console/atheros-search/Dockerfile,,atheros-search,.))
 $(eval $(call service_rules,wg-key-rotator,apps/wg-key-rotator/Dockerfile,,wg-key-rotator,apps/wg-key-rotator))
 $(eval $(call service_rules,atheros-search-ui,apps/integration-console/atheros-search-ui/Dockerfile,--build-arg 'VITE_API_BASE=$(ATHEROS_SEARCH_UI_API_BASE)' --build-arg 'VITE_APP_TITLE=$(ATHEROS_SEARCH_UI_TITLE)' --build-arg 'VITE_KEYCLOAK_URL=$(ATHEROS_SEARCH_UI_KEYCLOAK_URL)' --build-arg 'VITE_KEYCLOAK_REALM=$(ATHEROS_SEARCH_UI_KEYCLOAK_REALM)' --build-arg 'VITE_KEYCLOAK_CLIENT_ID=$(ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID)',atheros-search-ui,apps/integration-console/atheros-search-ui))
 $(eval $(call service_rules,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,apps/schema-migrator))
