@@ -19,7 +19,12 @@ BEGIN
     ) THEN
       UPDATE atheros_search.search_documents
       SET source_id = source_key,
-          search_vector = to_tsvector('simple', normalized_text)
+          search_vector = to_tsvector('simple', normalized_text),
+          filters = jsonb_strip_nulls(jsonb_build_object(
+            'source_mac', source_mac, 'location_id', location_id,
+            'sensor_id', sensor_id, 'bssid', bssid, 'ssid', ssid,
+            'frame_subtype', frame_subtype, 'tags', tags
+          ))
       WHERE source_id IS NULL;
     END IF;
 

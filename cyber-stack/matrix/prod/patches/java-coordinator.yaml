@@ -9,6 +9,10 @@ spec:
   strategy:
     type: Recreate
   template:
+    metadata:
+      annotations:
+        # Recreate terminally failed processors after the data-plane upgrade.
+        ssl-proxy.io/atheros-search-schema-version: "004"
     spec:
       containers:
         - name: java-coordinator
