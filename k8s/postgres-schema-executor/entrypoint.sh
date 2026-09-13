@@ -143,16 +143,28 @@ psql_run --tuples-only --no-align --command="
   WHERE n.nspname IN ('octopus_core','atheros_search','schema_migrator')
     AND NOT t.tgisinternal" | grep -qx 0
 
-sed -e "s/{{OCTOPUS_ACCOUNT}}/${octopus_account}/g" \
-    -e "s/{{ATHEROS_SEARCH_ACCOUNT}}/${search_account}/g" \
-    "${schema_root}/octopus_core/grants/least_privilege.sql.tmpl" | psql_run
-sed -e "s/{{OCTOPUS_ACCOUNT}}/${octopus_account}/g" \
-    -e "s/{{ATHEROS_SEARCH_ACCOUNT}}/${search_account}/g" \
-    "${schema_root}/atheros_search/grants/least_privilege.sql.tmpl" | psql_run
-sed -e "s/{{SCHEMA_MIGRATOR_STATE_ACCOUNT}}/${migrator_account}/g" \
-    "${schema_root}/schema_migrator/grants/least_privilege.sql.tmpl" | psql_run
-sed -e "s/{{KEYCLOAK_ACCOUNT}}/${keycloak_account}/g" \
-    "${schema_root}/keycloak/grants/least_privilege.sql.tmpl" | psql_run
+for domain in ${applied_domains}; do
+  case "${domain}" in
+    octopus_core)
+      sed -e "s/{{OCTOPUS_ACCOUNT}}/${octopus_account}/g" \
+          -e "s/{{ATHEROS_SEARCH_ACCOUNT}}/${search_account}/g" \
+          "${schema_root}/octopus_core/grants/least_privilege.sql.tmpl" | psql_run
+      ;;
+    atheros_search)
+      sed -e "s/{{OCTOPUS_ACCOUNT}}/${octopus_account}/g" \
+          -e "s/{{ATHEROS_SEARCH_ACCOUNT}}/${search_account}/g" \
+          "${schema_root}/atheros_search/grants/least_privilege.sql.tmpl" | psql_run
+      ;;
+    schema_migrator)
+      sed -e "s/{{SCHEMA_MIGRATOR_STATE_ACCOUNT}}/${migrator_account}/g" \
+          "${schema_root}/schema_migrator/grants/least_privilege.sql.tmpl" | psql_run
+      ;;
+    keycloak)
+      sed -e "s/{{KEYCLOAK_ACCOUNT}}/${keycloak_account}/g" \
+          "${schema_root}/keycloak/grants/least_privilege.sql.tmpl" | psql_run
+      ;;
+  esac
+done
 
 # Transaction-pool clients must not depend on a one-time client connection
 # initializer. Role defaults are applied whenever PgBouncer opens an upstream

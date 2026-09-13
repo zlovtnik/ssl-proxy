@@ -19,6 +19,7 @@ class PostgresSchemaExecutorTest(unittest.TestCase):
         self.assertIn("AND applied_checksum = '${expected_manifest}'", script)
         self.assertIn('applied_domains="${applied_domains} ${domain}"', script)
         self.assertIn('for domain in ${applied_domains}; do', script)
+        self.assertIn('case "${domain}" in', script)
 
     def test_role_defaults_are_checked_before_privileged_alter(self) -> None:
         script = ENTRYPOINT.read_text(encoding="utf-8")
