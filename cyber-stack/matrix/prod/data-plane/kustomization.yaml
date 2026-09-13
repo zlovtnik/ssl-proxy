@@ -35,7 +35,6 @@ patches:
 - path: ../patches/pgbouncer-external-postgres.yaml
 - path: ../patches/alloy-positions.yaml
 - path: ../patches/jaeger-recovery.yaml
-- path: ../patches/postgres-reset-data-plane.yaml
 - patch: |-
     - op: replace
       path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
