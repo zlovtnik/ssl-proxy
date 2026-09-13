@@ -24,7 +24,7 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         fsGroup: 473
-        supplementalGroups: [999]
+        supplementalGroups: [0, 999]
         seccompProfile:
           type: RuntimeDefault
       tolerations:

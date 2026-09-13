@@ -15,7 +15,7 @@ metadata:
     ssl-proxy.io/postgres-client: "true"
 spec:
   backoffLimit: 0
-  activeDeadlineSeconds: 600
+  activeDeadlineSeconds: 1800
   ttlSecondsAfterFinished: 86400
   template:
     metadata:

@@ -136,6 +136,12 @@ spec:
               value: "10000"
             - name: ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS
               value: "30"
+            - name: ATH_SENSOR_MAC_STATE_CAPACITY
+              value: "25000"
+            - name: ATH_SENSOR_SSID_STATE_CAPACITY
+              value: "4096"
+            - name: ATH_SENSOR_SESSION_STATE_CAPACITY
+              value: "16384"
             - name: SYNC_OUTBOX_DIR
               value: "/sync-outbox"
             - name: RUST_LOG

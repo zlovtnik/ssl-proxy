@@ -20,8 +20,8 @@ data:
   SYNC_LOAD_CONSUMER: "octopus-load-v1"
   SYNC_RESULT_CONSUMER: "octopus-result-v1"
   SYNC_PAYLOAD_AUDIT_CONSUMER: "octopus-payload-audit-v1"
-  SYNC_STREAM_NAMES: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
-  COORDINATOR_LOAD_STREAM_NAMES: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
+  SYNC_STREAM_NAMES: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.attack_sequence,wireless.alert.sequence,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wifi.alert.handshake,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
+  COORDINATOR_LOAD_STREAM_NAMES: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.attack_sequence,wireless.alert.sequence,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wifi.alert.handshake,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
   AUDIT_STREAM_NAME: "AUDIT_STREAM"
   SYNC_RESULT_STREAM_NAME: "ORACLE_RESULT_STREAM"
   WIRELESS_BACKLOG_STREAM_NAME: "WIRELESS_BACKLOG_STREAM"
@@ -112,4 +112,5 @@ data:
     wireless.alert.signal_anomaly|3|1|2592000000|-1
     wireless.alert.pmf_attack|3|1|2592000000|-1
     wireless.alert.attack_sequence|3|1|2592000000|-1
+    wireless.alert.sequence|3|1|2592000000|-1
     wifi.alert.handshake|3|1|2592000000|-1

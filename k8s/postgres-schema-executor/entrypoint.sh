@@ -73,16 +73,44 @@ apply_domain() {
   manifest="${schema_root}/${domain}/manifest.yaml"
   checksums="${schema_root}/${domain}/checksums.sha256"
   expected_manifest="$(awk '/^manifest_sha256:/{print $2; exit}' "${manifest}")"
+  expected_version="$(awk '/^schema_version:/{print $2; exit}' "${manifest}")"
   [ "${expected_manifest}" = "$(manifest_digest "${domain}")" ] ||
     { echo "manifest checksum mismatch: ${domain}" >&2; exit 1; }
+  if domain_is_attested "${domain}" "${expected_version}" "${expected_manifest}"; then
+    echo "schema domain already attested: ${domain}"
+    return
+  fi
+  echo "applying schema domain: ${domain}"
   awk '/^apply_order:$/ { active=1; next } active && /^  - / { print substr($0,5); next } active && /^[^ ]/ { exit }' "${manifest}" |
   while IFS= read -r relative; do
     sql_file="${schema_root}/${domain}/${relative}"
     expected="$(awk -v path="${relative}" '$2 == path {print $1}' "${checksums}")"
     [ "${expected}" = "$(sha256sum "${sql_file}" | awk '{print $1}')" ] ||
       { echo "checksum mismatch: ${domain}/${relative}" >&2; exit 1; }
+    echo "applying schema file: ${domain}/${relative}"
     psql_run --file="${sql_file}"
   done
+}
+
+domain_is_attested() {
+  domain="$1"
+  expected_version="$2"
+  expected_manifest="$3"
+  case "${domain}" in
+    octopus_core|atheros_search|schema_migrator) ;;
+    *) return 1 ;;
+  esac
+
+  [ "$(psql_run --tuples-only --no-align --command="SELECT to_regclass('${domain}.schema_readiness') IS NOT NULL")" = "t" ] ||
+    return 1
+  [ "$(psql_run --tuples-only --no-align --command="
+    SELECT ready
+       AND required_version = '${expected_version}'
+       AND applied_version = '${expected_version}'
+       AND required_checksum = '${expected_manifest}'
+       AND applied_checksum = '${expected_manifest}'
+    FROM ${domain}.schema_readiness
+    WHERE domain = '${domain}'")" = "t" ]
 }
 
 psql_run --file="${schema_root}/00_extensions/001_runtime_extensions.sql"

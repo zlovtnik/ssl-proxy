@@ -9,6 +9,15 @@ ENTRYPOINT = ROOT / "k8s/postgres-schema-executor/entrypoint.sh"
 
 
 class PostgresSchemaExecutorTest(unittest.TestCase):
+    def test_attested_domains_are_not_reapplied(self) -> None:
+        script = ENTRYPOINT.read_text(encoding="utf-8")
+
+        self.assertIn('if domain_is_attested "${domain}" "${expected_version}" "${expected_manifest}"; then', script)
+        self.assertIn('echo "schema domain already attested: ${domain}"', script)
+        self.assertIn("SELECT to_regclass('${domain}.schema_readiness') IS NOT NULL", script)
+        self.assertIn("AND required_checksum = '${expected_manifest}'", script)
+        self.assertIn("AND applied_checksum = '${expected_manifest}'", script)
+
     def test_role_defaults_are_checked_before_privileged_alter(self) -> None:
         script = ENTRYPOINT.read_text(encoding="utf-8")
 
