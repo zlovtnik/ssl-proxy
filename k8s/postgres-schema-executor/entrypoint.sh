@@ -90,6 +90,7 @@ apply_domain() {
     echo "applying schema file: ${domain}/${relative}"
     psql_run --file="${sql_file}"
   done
+  applied_domains="${applied_domains} ${domain}"
 }
 
 domain_is_attested() {
@@ -113,6 +114,7 @@ domain_is_attested() {
     WHERE domain = '${domain}'")" = "t" ]
 }
 
+applied_domains=""
 psql_run --file="${schema_root}/00_extensions/001_runtime_extensions.sql"
 psql_run --tuples-only --no-align --command="
   SELECT EXISTS (
@@ -122,7 +124,8 @@ psql_run --tuples-only --no-align --command="
   )" | grep -qx t || { echo "pgvector extension must be installed in public" >&2; exit 1; }
 for domain in octopus_core atheros_search schema_migrator keycloak; do apply_domain "${domain}"; done
 
-for domain in octopus_core atheros_search schema_migrator; do
+for domain in ${applied_domains}; do
+  [ "${domain}" = "keycloak" ] && continue
   grep -hioE 'CREATE TABLE IF NOT EXISTS [a-z_]+\.[a-z0-9_]+' "${schema_root}/${domain}"/01_tables/*.sql |
   awk '{print $6}' | while IFS= read -r object; do
     psql_run --tuples-only --no-align --command="SELECT to_regclass('${object}') IS NOT NULL" |
