@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-atheros-search
+  namespace: ssl-proxy
+  annotations:
+    ssl-proxy.io/postgres-reset-maintenance: "true"
+spec:
+  replicas: 0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-java-coordinator
+  namespace: ssl-proxy
+  annotations:
+    ssl-proxy.io/postgres-reset-maintenance: "true"
+spec:
+  replicas: 0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-schema-migrator-backend
+  namespace: ssl-proxy
+  annotations:
+    ssl-proxy.io/postgres-reset-maintenance: "true"
+spec:
+  replicas: 0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-schema-migrator-keycloak
+  namespace: ssl-proxy
+  annotations:
+    ssl-proxy.io/postgres-reset-maintenance: "true"
+spec:
+  replicas: 0
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-schema-migrator-bootstrap
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/hook: Skip
+    ssl-proxy.io/postgres-reset-maintenance: "true"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-schema-migrator-validate
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/hook: Skip
+    ssl-proxy.io/postgres-reset-maintenance: "true"
