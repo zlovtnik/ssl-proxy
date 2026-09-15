@@ -111,7 +111,9 @@ Each run:
 
 Validation and publication are fail-closed. Jenkins never pushes a Git branch,
 opens a pull request, updates a Kustomization or contacts the Kubernetes API.
-Build results and both report artifacts remain available in Jenkins; no
+The Scala validation requires Docker-backed Octopus tests, generates JaCoCo and
+Cucumber reports, and archives them under `artifacts/octopus-coverage/` before
+publication. Build results and report artifacts remain available in Jenkins; no
 outbound failure webhook is configured.
 
 ## Local development plugin lock workflow

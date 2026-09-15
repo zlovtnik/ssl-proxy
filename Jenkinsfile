@@ -69,8 +69,10 @@ pipeline {
           fi
           docker context create "$DOCKER_CONTEXT_NAME" \
             --docker "host=$DOCKER_HOST,ca=$DOCKER_CERT_PATH/ca.pem,cert=$DOCKER_CERT_PATH/cert.pem,key=$DOCKER_CERT_PATH/key.pem" >/dev/null
-          env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
-            DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker version
+           env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+             DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker version
+           env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+             DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker pull pgvector/pgvector:pg16
         '''
       }
     }
@@ -118,11 +120,22 @@ pipeline {
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
                 sh -c 'tar --no-same-owner -xf - && cd apps/schema-migrator && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt -Dsbt.supershell=false "Test / testFull"'
-              tar -cf - . | docker_cmd run --rm -i -w /workspace \
+              coverage_container="octopus-coverage-${BUILD_NUMBER}"
+              cleanup_coverage_container() {
+                docker_cmd rm --force "$coverage_container" >/dev/null 2>&1 || true
+              }
+              trap cleanup_coverage_container EXIT
+              tar -cf - . | docker_cmd run --name "$coverage_container" -i -w /workspace \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
-                sh -c 'tar --no-same-owner -xf - && cd services/octopus && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt test'
+                sh -c 'tar --no-same-owner -xf - && cd services/octopus && apt-get update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && OCTOPUS_REQUIRE_DOCKER=true sbt -Dsbt.supershell=false jacoco && python3 scripts/check_coverage.py target/scala-3.3.8/jacoco/report/jacoco.xml'
+              mkdir -p artifacts/octopus-coverage
+              docker_cmd cp "$coverage_container:/workspace/services/octopus/target/scala-3.3.8/jacoco/report" artifacts/octopus-coverage/jacoco
+              docker_cmd cp "$coverage_container:/workspace/services/octopus/target/cucumber" artifacts/octopus-coverage/cucumber
+              cleanup_coverage_container
+              trap - EXIT
             '''
+            archiveArtifacts artifacts: 'artifacts/octopus-coverage/**', fingerprint: true
           }
         }
         stage('Sensor') {
