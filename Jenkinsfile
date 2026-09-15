@@ -128,7 +128,7 @@ pipeline {
               tar -cf - . | docker_cmd run --name "$coverage_container" -i -w /workspace \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
-                sh -c 'tar --no-same-owner -xf - && cd services/octopus && apt-get -o Dir::Etc::sourceparts="-" update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && OCTOPUS_REQUIRE_DOCKER=true sbt -Dsbt.supershell=false jacoco && python3 scripts/check_coverage.py target/scala-3.3.8/jacoco/report/jacoco.xml'
+                sh -c 'tar --no-same-owner -xf - && cd services/octopus && apt-get -o Dir::Etc::sourceparts="-" update && apt-get install -y --no-install-recommends curl bash python3 && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && OCTOPUS_REQUIRE_DOCKER=true sbt -Dsbt.supershell=false jacoco && python3 scripts/check_coverage.py target/scala-3.3.8/jacoco/report/jacoco.xml'
               mkdir -p artifacts/octopus-coverage
               docker_cmd cp "$coverage_container:/workspace/services/octopus/target/scala-3.3.8/jacoco/report" artifacts/octopus-coverage/jacoco
               docker_cmd cp "$coverage_container:/workspace/services/octopus/target/cucumber" artifacts/octopus-coverage/cucumber

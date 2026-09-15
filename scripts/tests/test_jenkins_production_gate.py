@@ -78,6 +78,10 @@ class JenkinsProductionGateTest(unittest.TestCase):
             2,
             scala.count("-v /var/run/docker.sock:/var/run/docker.sock"),
         )
+        self.assertIn(
+            "apt-get install -y --no-install-recommends curl bash python3", scala
+        )
+        self.assertIn("python3 scripts/check_coverage.py", scala)
 
     def test_container_workspaces_preserve_git_ownership_checks(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
