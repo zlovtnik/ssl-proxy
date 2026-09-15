@@ -3,8 +3,10 @@
 This runbook covers the external PostgreSQL prerequisite, the private CI
 registry and Kubernetes storage hygiene. Read it with the
 [secret-management policy](secret-management.md), the
-[production prerequisites](../cyber-stack/matrix/prod/README.md) and the
-[registry workflow](local-registry-workflow.md).
+ [production prerequisites](../cyber-stack/matrix/prod/README.md) and the
+ [registry workflow](local-registry-workflow.md). The tracked host definition,
+ adoption procedure, resource settings, and rollout evidence are in the
+ [Wiretrap PostgreSQL host guide](postgres-host.md).
 
 ## Boundaries
 

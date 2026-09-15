@@ -116,7 +116,8 @@ The platform and network owners perform the cutover in this order:
    authority `192.168.1.242:5000`, then prove the registry API and a CRI pull.
 3. Have the platform owner provision or update the external PostgreSQL 16
    endpoint for database `sync`, preserving backups and verified TLS. Do not
-   deploy a database container from this repository.
+   deploy it through Kubernetes; use the repository-managed host definition in
+   the [Wiretrap PostgreSQL host guide](postgres-host.md).
 4. Through the platform prerequisite workflow, update the non-secret
    `ssl-proxy-prod-postgres-endpoint` host, port, database, TLS mode and TLS
    server-name values to the approved endpoint. Do not patch the ConfigMap

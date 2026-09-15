@@ -9,6 +9,7 @@ REGISTRY_KEEP_RECENT ?= 12
 REGISTRY_CLEAN_CONFIRM ?=
 REGISTRY_GC_CONFIRM ?=
 POSTGRES_CLEAN_CONFIRM ?=
+POSTGRES_COMPOSE_FILE ?= docker/postgres/compose.yaml
 ENV ?= prod
 KUBE_CONTEXT ?=
 KUBECTL ?= kubectl
@@ -111,11 +112,20 @@ recover-stack: kube-context-check
 pvc-audit: kube-context-check
 	python3 scripts/pvc_audit.py --kubectl "$(KUBECTL)" $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: storage-audit postgres-clean postgres-reset-all
+.PHONY: storage-audit postgres-status postgres-config-check postgres-clean postgres-reset-all
 storage-audit:
 	df -h /
 	docker system df -v
 	docker exec ssl-proxy-platform-postgres du -h -d 1 /var/lib/postgresql/data
+
+# Read-only host inspection; it never starts, stops, or recreates PostgreSQL.
+postgres-status:
+	docker compose -f "$(POSTGRES_COMPOSE_FILE)" ps postgres
+	docker inspect ssl-proxy-platform-postgres --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}'
+
+# Validate the repository-managed host definition without changing Docker state.
+postgres-config-check:
+	docker compose -f "$(POSTGRES_COMPOSE_FILE)" config --quiet
 
 # Run on the platform server; never mutate Kubernetes here.
 postgres-clean:

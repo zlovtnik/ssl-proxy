@@ -31,7 +31,7 @@ import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONTRACT = REPOSITORY_ROOT / "cyber-stack/platform-input-contract.yaml"
-DEFAULT_COMPOSE = Path.home() / ".local/share/ssl-proxy-platform/compose.yaml"
+DEFAULT_COMPOSE = REPOSITORY_ROOT / "docker/postgres/compose.yaml"
 DEFAULT_CONTAINER = "ssl-proxy-platform-postgres"
 DEFAULT_DATA_VOLUME = "ssl-proxy-platform-postgres-data"
 DEFAULT_SECRET_VOLUME = "ssl-proxy-platform-postgres-secrets"

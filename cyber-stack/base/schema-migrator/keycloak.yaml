@@ -93,6 +93,12 @@ spec:
                 secretKeyRef:
                   name: postgres-keycloak
                   key: password
+            - name: KC_DB_POOL_INITIAL_SIZE
+              value: "2"
+            - name: KC_DB_POOL_MIN_SIZE
+              value: "2"
+            - name: KC_DB_POOL_MAX_SIZE
+              value: "10"
             - name: KC_BOOTSTRAP_RECOVERY_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -157,6 +163,12 @@ spec:
                 secretKeyRef:
                   name: postgres-keycloak
                   key: password
+            - name: KC_DB_POOL_INITIAL_SIZE
+              value: "2"
+            - name: KC_DB_POOL_MIN_SIZE
+              value: "2"
+            - name: KC_DB_POOL_MAX_SIZE
+              value: "10"
             - name: IDENTITY_HOSTNAME
               valueFrom:
                 configMapKeyRef:

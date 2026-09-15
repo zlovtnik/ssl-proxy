@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import sys
+import yaml
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +21,7 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "scripts"))
 from platform_postgres import (  # noqa: E402
     MaintenanceError,
     ACCOUNTS_BY_ROLE,
+    DEFAULT_COMPOSE,
     RELOADER_ANNOTATION,
     ROLLOUT_TARGETS,
     Runner,
@@ -33,6 +35,7 @@ from platform_postgres import (  # noqa: E402
     require_no_database_clients,
     require_confirmation,
     reset_database,
+    parser,
     validate_private_file,
     verify_deployment_rollouts,
 )
@@ -218,6 +221,99 @@ class PlatformPostgresTest(unittest.TestCase):
         self.assertEqual("verify-full", contract.tls_mode)
         self.assertEqual(contract.host, contract.tls_server_name)
         self.assertIn("@sha256:", contract.image)
+
+    def test_default_compose_is_the_tracked_wiretrap_host_definition(self) -> None:
+        self.assertEqual(
+            REPOSITORY_ROOT / "docker/postgres/compose.yaml", DEFAULT_COMPOSE
+        )
+        self.assertEqual(DEFAULT_COMPOSE, parser().parse_args(["check"]).compose_file)
+        self.assertEqual(
+            Path("override.yaml"),
+            parser().parse_args(["--compose-file", "override.yaml", "check"]).compose_file,
+        )
+
+    def test_tracked_compose_preserves_postgres_host_contract(self) -> None:
+        contract = load_contract(REPOSITORY_ROOT / "cyber-stack/platform-input-contract.yaml")
+        compose_path = REPOSITORY_ROOT / "docker/postgres/compose.yaml"
+        document = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+        postgres = document["services"]["postgres"]
+
+        self.assertEqual("ssl-proxy-platform", document["name"])
+        self.assertEqual("ssl-proxy-platform-postgres", postgres["container_name"])
+        self.assertEqual(contract.image, postgres["image"])
+        self.assertEqual(["192.168.1.242:4000:5432"], postgres["ports"])
+        self.assertEqual("1g", postgres["shm_size"])
+        self.assertEqual(10, postgres["cpus"])
+        self.assertEqual(2048, postgres["cpu_shares"])
+        self.assertEqual("16g", postgres["mem_limit"])
+        self.assertEqual("8g", postgres["mem_reservation"])
+        self.assertEqual("16g", postgres["memswap_limit"])
+        self.assertEqual("120s", postgres["stop_grace_period"])
+        self.assertTrue(all(spec["external"] for spec in document["volumes"].values()))
+        self.assertTrue(document["networks"]["platform"]["external"])
+        mounted_targets = {mount["target"] for mount in postgres["volumes"]}
+        self.assertTrue({
+            "/var/lib/postgresql/data",
+            "/run/platform-secrets",
+            "/var/run/postgres-tls",
+            "/etc/postgresql/postgresql.conf",
+            "/etc/postgresql/pg_hba.conf",
+        }.issubset(mounted_targets))
+        self.assertIn(
+            "../../sql/postgres/00_extensions/001_runtime_extensions.sql",
+            {mount["source"] for mount in postgres["volumes"]},
+        )
+
+        configuration = (REPOSITORY_ROOT / "docker/postgres/postgresql.conf").read_text(
+            encoding="utf-8"
+        )
+        for setting in (
+            "shared_buffers = '4GB'",
+            "effective_cache_size = '12GB'",
+            "work_mem = '16MB'",
+            "max_connections = 150",
+            "superuser_reserved_connections = 3",
+            "max_wal_size = '8GB'",
+            "wal_compression = lz4",
+            "shared_preload_libraries = 'pg_stat_statements'",
+            "track_io_timing = on",
+            "track_wal_io_timing = on",
+        ):
+            self.assertIn(setting, configuration)
+        hba = (REPOSITORY_ROOT / "docker/postgres/pg_hba.conf").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("hostssl all             all", hba)
+        self.assertIn("hostnossl all           all", hba)
+        initializer = (
+            REPOSITORY_ROOT / "docker/postgres/init/010-runtime-roles.sh"
+        ).read_text(encoding="utf-8")
+        for role in (
+            "schema_owner",
+            "octopus_runtime",
+            "atheros_search_runtime",
+            "schema_migrator_runtime",
+            "keycloak_runtime",
+        ):
+            self.assertIn(f"CREATE ROLE {role}", initializer)
+        self.assertIn("GRANT CONNECT, CREATE ON DATABASE sync TO schema_owner;", initializer)
+
+    def test_client_connection_budget_is_bounded(self) -> None:
+        pgbouncer = (REPOSITORY_ROOT / "cyber-stack/base/pgbouncer/workload.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("'default_pool_size = 8'", pgbouncer)
+        self.assertIn("'reserve_pool_size = 2'", pgbouncer)
+        self.assertIn("'max_db_connections = 30'", pgbouncer)
+        self.assertIn("maxSurge: 1", pgbouncer)
+        self.assertIn("maxUnavailable: 0", pgbouncer)
+
+        keycloak = (REPOSITORY_ROOT / "cyber-stack/base/schema-migrator/keycloak.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(2, keycloak.count("name: KC_DB_POOL_INITIAL_SIZE"))
+        self.assertEqual(2, keycloak.count("name: KC_DB_POOL_MIN_SIZE"))
+        self.assertEqual(2, keycloak.count("name: KC_DB_POOL_MAX_SIZE"))
 
     def test_confirmation_is_exact(self) -> None:
         require_confirmation("RESET-volume", "RESET-volume")

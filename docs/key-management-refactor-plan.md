@@ -48,7 +48,8 @@ tools.
 - Its deploy and handover paths call `docker compose` services such as
   `ssl-proxy-next` and `wg-udp-frontdoor`.
 - A clean repository checkout has no general `docker-compose.yaml` containing
-  those services; only build and CI Compose files remain.
+  those services. The only production host definition is the isolated external
+  PostgreSQL prerequisite described in [the host guide](postgres-host.md).
 - Rotation writes `config/server/` and `secrets/` files in a local checkout.
 - It has no Vault KV-v2 writer, platform-input-contract integration, Kubernetes
   Secret update, or Argo CD rollout contract.

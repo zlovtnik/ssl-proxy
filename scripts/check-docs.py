@@ -53,6 +53,10 @@ LOCAL_DEVELOPMENT_HEADING = re.compile(
     r"\b(?:local(?: kubernetes)? development|local test|development environment)\b",
     re.IGNORECASE,
 )
+WIRETRAP_POSTGRES_HOST_GUIDE = "docs/postgres-host.md"
+WIRETRAP_POSTGRES_HOST_HEADING = re.compile(
+    r"\bwiretrap postgresql host\b", re.IGNORECASE
+)
 EXPLICIT_LOCAL_KUBECTL_CONTEXT = re.compile(
     r"\bkubectl\b[^\n]*\s--context(?:=|\s+)"
     r"(?:docker-desktop|minikube|kind-[^\s]+|k3d-[^\s]+)\b",
@@ -422,9 +426,16 @@ def validate_deployment_policy(path: Path, text: str) -> list[str]:
                 f"{path}:{number}: mutating kubectl guidance is prohibited; change Git desired state"
             )
         if COMPOSE_REFERENCE.search(line):
-            if not LOCAL_DEVELOPMENT_HEADING.search(context):
+            is_wiretrap_postgres_host_guide = (
+                path.as_posix().endswith(WIRETRAP_POSTGRES_HOST_GUIDE)
+                and WIRETRAP_POSTGRES_HOST_HEADING.search(context) is not None
+            )
+            if not (
+                LOCAL_DEVELOPMENT_HEADING.search(context)
+                or is_wiretrap_postgres_host_guide
+            ):
                 errors.append(
-                    f"{path}:{number}: Docker Compose may be documented only under local-development headings"
+                    f"{path}:{number}: Docker Compose may be documented only under local-development headings or the Wiretrap PostgreSQL host guide"
                 )
     return errors
 

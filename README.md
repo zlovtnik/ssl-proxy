@@ -80,7 +80,8 @@ and [operations runbook](docs/runbook.md).
 ## Local development
 
 Database integration tests use ephemeral PostgreSQL 16 Testcontainers. No
-development database or database Compose stack is bundled.
+development database Compose stack is bundled; the repository-managed Wiretrap
+host prerequisite is documented in [the PostgreSQL host guide](docs/postgres-host.md).
 
 ```bash
 (cd services/octopus && sbt test)

@@ -3,7 +3,9 @@
 Production uses one platform-operated PostgreSQL 16/pgvector cluster with the
 `sync` database. Its exact value-free server and secret-control-plane bootstrap
 requirements are pinned in `../../platform-input-contract.yaml`. The repository
-does not deploy the database server, run Vault or write the resulting inputs.
+does not deploy the database server through Kubernetes, run Vault or write the
+resulting inputs. Its external Wiretrap host definition and operational
+procedure are tracked in the [PostgreSQL host guide](../../../docs/postgres-host.md).
 The PostgreSQL container must provide at least 1 GiB of shared memory so the
 parallel projection queries cannot exhaust Docker's 64 MiB default `/dev/shm`.
 

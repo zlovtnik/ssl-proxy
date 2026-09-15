@@ -1,0 +1,80 @@
+name: ssl-proxy-platform
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg16-bookworm@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+    container_name: ssl-proxy-platform-postgres
+    restart: unless-stopped
+    ports:
+      - "192.168.1.242:4000:5432"
+    environment:
+      POSTGRES_DB: sync
+      POSTGRES_USER: platform_admin
+      POSTGRES_PASSWORD_FILE: /run/platform-secrets/platform_admin.password
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    cpus: 10
+    cpu_shares: 2048
+    mem_limit: 16g
+    mem_reservation: 8g
+    memswap_limit: 16g
+    shm_size: 1g
+    stop_grace_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-file: "5"
+        max-size: 10m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=platform_admin --dbname=sync"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    volumes:
+      - type: volume
+        source: ssl-proxy-platform-postgres-data
+        target: /var/lib/postgresql/data
+      - type: volume
+        source: ssl-proxy-platform-postgres-secrets
+        target: /run/platform-secrets
+        read_only: true
+      - type: volume
+        source: ssl-proxy-platform-postgres-tls
+        target: /var/run/postgres-tls
+        read_only: true
+      - type: bind
+        source: ./postgresql.conf
+        target: /etc/postgresql/postgresql.conf
+        read_only: true
+      - type: bind
+        source: ./pg_hba.conf
+        target: /etc/postgresql/pg_hba.conf
+        read_only: true
+      - type: bind
+        source: ./init/010-runtime-roles.sh
+        target: /docker-entrypoint-initdb.d/010-runtime-roles.sh
+        read_only: true
+      - type: bind
+        source: ../../sql/postgres/00_extensions/001_runtime_extensions.sql
+        target: /docker-entrypoint-initdb.d/001_runtime_extensions.sql
+        read_only: true
+    networks:
+      - platform
+
+volumes:
+  ssl-proxy-platform-postgres-data:
+    external: true
+  ssl-proxy-platform-postgres-secrets:
+    external: true
+  ssl-proxy-platform-postgres-tls:
+    external: true
+
+networks:
+  platform:
+    name: ssl-proxy-platform
+    external: true

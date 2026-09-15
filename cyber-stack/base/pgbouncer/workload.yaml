@@ -13,6 +13,11 @@ metadata:
 spec:
   revisionHistoryLimit: 3
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: postgres-pgbouncer
@@ -63,8 +68,9 @@ spec:
                   'auth_file = /etc/pgbouncer/users/userlist.txt' \
                   'pool_mode = transaction' \
                   'max_client_conn = 400' \
-                  'default_pool_size = 40' \
-                  'reserve_pool_size = 10' \
+                   'default_pool_size = 8' \
+                   'reserve_pool_size = 2' \
+                   'max_db_connections = 30' \
                   'server_tls_sslmode = verify-full' \
                   'server_tls_ca_file = /etc/pgbouncer/upstream/ca.crt' \
                   'client_tls_sslmode = require' \

@@ -242,6 +242,25 @@ class DocsCheckTest(unittest.TestCase):
         errors = self.errors(rejected)
         self.assertTrue(any("local-development headings" in error for error in errors))
 
+    def test_compose_exception_is_limited_to_wiretrap_postgres_host_guide(self) -> None:
+        guide = check_docs.validate_deployment_policy(
+            Path("docs/postgres-host.md"),
+            "# Wiretrap PostgreSQL Host\n\nRun `docker compose config`.\n",
+        )
+        self.assertEqual([], guide)
+
+        wrong_path = check_docs.validate_deployment_policy(
+            Path("docs/other-host.md"),
+            "# Wiretrap PostgreSQL Host\n\nRun `docker compose config`.\n",
+        )
+        self.assertTrue(any("Wiretrap PostgreSQL host guide" in error for error in wrong_path))
+
+        wrong_heading = check_docs.validate_deployment_policy(
+            Path("docs/postgres-host.md"),
+            "# Operations\n\nRun `docker compose config`.\n",
+        )
+        self.assertTrue(any("Wiretrap PostgreSQL host guide" in error for error in wrong_heading))
+
 
 if __name__ == "__main__":
     unittest.main()
