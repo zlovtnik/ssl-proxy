@@ -49,6 +49,8 @@ services/octopus/.settings/
 !*.conf.example
 !config/templates/*.conf
 !cyber-stack/base/telemetry/config/loki/nginx.conf
+!docker/postgres/postgresql.conf
+!docker/postgres/pg_hba.conf
 
 # Secrets
 *.key
