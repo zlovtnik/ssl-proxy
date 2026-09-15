@@ -68,6 +68,27 @@ manifest_digest() {
   ) | sha256sum | awk '{print $1}'
 }
 
+domain_required_objects_exist() {
+  domain="$1"
+  manifest="${schema_root}/${domain}/manifest.yaml"
+  objects="$(
+    awk '/^apply_order:$/ { active=1; next } active && /^  - / { print substr($0,5); next } active && /^[^ ]/ { exit }' "${manifest}" |
+    while IFS= read -r relative; do
+      grep -hioE 'CREATE TABLE IF NOT EXISTS [a-z_]+\.[a-z0-9_]+' "${schema_root}/${domain}/${relative}" || true
+    done |
+    awk '{print $6}'
+  )"
+
+  [ -n "${objects}" ] || return 1
+  for object in ${objects}; do
+    psql_run --tuples-only --no-align --command="SELECT to_regclass('${object}') IS NOT NULL" |
+      grep -qx t || {
+        echo "missing required object: ${object}" >&2
+        return 1
+      }
+  done
+}
+
 apply_domain() {
   domain="$1"
   manifest="${schema_root}/${domain}/manifest.yaml"
@@ -76,9 +97,12 @@ apply_domain() {
   expected_version="$(awk '/^schema_version:/{print $2; exit}' "${manifest}")"
   [ "${expected_manifest}" = "$(manifest_digest "${domain}")" ] ||
     { echo "manifest checksum mismatch: ${domain}" >&2; exit 1; }
-  if domain_is_attested "${domain}" "${expected_version}" "${expected_manifest}"; then
+  if domain_is_attested "${domain}" "${expected_version}" "${expected_manifest}" && domain_required_objects_exist "${domain}"; then
     echo "schema domain already attested: ${domain}"
     return
+  fi
+  if domain_is_attested "${domain}" "${expected_version}" "${expected_manifest}"; then
+    echo "schema domain attested but required objects are missing; reconciling: ${domain}" >&2
   fi
   echo "applying schema domain: ${domain}"
   awk '/^apply_order:$/ { active=1; next } active && /^  - / { print substr($0,5); next } active && /^[^ ]/ { exit }' "${manifest}" |
@@ -126,11 +150,7 @@ for domain in octopus_core atheros_search schema_migrator keycloak; do apply_dom
 
 for domain in ${applied_domains}; do
   [ "${domain}" = "keycloak" ] && continue
-  grep -hioE 'CREATE TABLE IF NOT EXISTS [a-z_]+\.[a-z0-9_]+' "${schema_root}/${domain}"/01_tables/*.sql |
-  awk '{print $6}' | while IFS= read -r object; do
-    psql_run --tuples-only --no-align --command="SELECT to_regclass('${object}') IS NOT NULL" |
-      grep -qx t || { echo "missing required object: ${object}" >&2; exit 1; }
-  done
+  domain_required_objects_exist "${domain}" || exit 1
 done
 
 psql_run --tuples-only --no-align --command="
