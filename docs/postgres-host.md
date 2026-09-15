@@ -11,10 +11,10 @@ through `platform-sync`. Read this with the [storage runbook](platform-storage-o
 
 `../docker/postgres/compose.yaml` preserves project `ssl-proxy-platform`,
 service `postgres`, container `ssl-proxy-platform-postgres`, endpoint
-`192.168.1.242:4000/sync`, and the existing data, secret, TLS, and platform
-network identities. All three volumes and the network are external, so startup
-fails rather than creating a replacement prerequisite. The PostgreSQL image is
-the exact digest in the platform contract.
+`192.168.1.242:4000/sync`, and the existing data, secret, TLS, and
+`ssl-proxy-platform_default` network identities. All three volumes and the
+network are external, so startup fails rather than creating a replacement
+prerequisite. The PostgreSQL image is the exact digest in the platform contract.
 
 The configuration and HBA files are mounted read-only and are authoritative.
 They require TLS for every TCP client, retain SCRAM authentication and durability

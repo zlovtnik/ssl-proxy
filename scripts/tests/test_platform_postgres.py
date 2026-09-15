@@ -255,7 +255,7 @@ class PlatformPostgresTest(unittest.TestCase):
         self.assertTrue({
             "/var/lib/postgresql/data",
             "/run/platform-secrets",
-            "/var/run/postgres-tls",
+            "/run/postgres-tls",
             "/etc/postgresql/postgresql.conf",
             "/etc/postgresql/pg_hba.conf",
         }.issubset(mounted_targets))

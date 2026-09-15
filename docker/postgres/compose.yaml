@@ -11,6 +11,7 @@ services:
       POSTGRES_DB: sync
       POSTGRES_USER: platform_admin
       POSTGRES_PASSWORD_FILE: /run/platform-secrets/platform_admin.password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
     command:
       - postgres
       - -c
@@ -45,7 +46,7 @@ services:
         read_only: true
       - type: volume
         source: ssl-proxy-platform-postgres-tls
-        target: /var/run/postgres-tls
+        target: /run/postgres-tls
         read_only: true
       - type: bind
         source: ./postgresql.conf
@@ -76,5 +77,5 @@ volumes:
 
 networks:
   platform:
-    name: ssl-proxy-platform
+    name: ssl-proxy-platform_default
     external: true
