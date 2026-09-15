@@ -22,6 +22,7 @@ Thumbs.db
 
 # Build and backup artifacts
 .gradle/
+/artifacts/
 *.bak
 
 # Java / Gradle

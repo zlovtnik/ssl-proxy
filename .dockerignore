@@ -37,6 +37,7 @@ config/peer*/*.conf
 !config/peer*/*.conf.example
 
 # Build output and dependency caches
+artifacts/
 target/
 **/target/
 .gradle/

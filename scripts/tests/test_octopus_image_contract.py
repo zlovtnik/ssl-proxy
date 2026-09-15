@@ -48,6 +48,7 @@ class OctopusImageContractTest(unittest.TestCase):
         git(self.root, "init", "-q")
         git(self.root, "config", "user.email", "test@example.com")
         git(self.root, "config", "user.name", "Test")
+        (self.root / ".gitignore").write_text("artifacts/\n", encoding="utf-8")
         git(
             self.root,
             "update-index",
@@ -55,6 +56,7 @@ class OctopusImageContractTest(unittest.TestCase):
             "--cacheinfo",
             f"160000,{self.octopus_commit},services/octopus",
         )
+        git(self.root, "add", ".gitignore")
         git(self.root, "commit", "-qm", "parent")
 
     def tearDown(self) -> None:
@@ -82,6 +84,16 @@ class OctopusImageContractTest(unittest.TestCase):
         (self.octopus / "source.scala").write_text("object Changed\n", encoding="utf-8")
         with self.assertRaisesRegex(ContractError, "Octopus worktree is not clean"):
             source_revisions(self.root)
+
+    def test_source_integrity_accepts_ignored_ci_artifacts(self) -> None:
+        artifact = self.root / "artifacts" / "octopus-coverage" / "jacoco.xml"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text("coverage", encoding="utf-8")
+
+        parent, octopus = source_revisions(self.root)
+
+        self.assertEqual(git(self.root, "rev-parse", "HEAD"), parent)
+        self.assertEqual(self.octopus_commit, octopus)
 
     def test_source_integrity_rejects_checkout_that_differs_from_pin(self) -> None:
         (self.octopus / "source.scala").write_text("object NewSource\n", encoding="utf-8")
