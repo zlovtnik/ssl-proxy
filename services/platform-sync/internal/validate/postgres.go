@@ -312,7 +312,7 @@ func octopusAtherosGrants() []tableGrant {
 		"behaviour_snapshots", "baseline_profiles", "frame_sequences", "sequence_transitions",
 		"timing_profiles", "similarity_pairs", "threat_signals", "ap_risk_scores",
 		"sequence_transition_contributions", "sequence_previous_totals", "graph_nodes", "graph_edges",
-		"inventory_devices", "identity_clusters", "identity_cluster_members", "merge_candidates",
+		"identity_clusters", "identity_cluster_members", "merge_candidates",
 	} {
 		grants = append(grants, tableGrant{table: "atheros_search." + table, privileges: crud})
 	}
