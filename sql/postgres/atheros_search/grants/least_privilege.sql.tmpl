@@ -17,6 +17,19 @@ GRANT SELECT, DELETE ON atheros_search.embeddings TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, DELETE ON atheros_search.search_vectors_event, atheros_search.search_vectors_device,
   atheros_search.search_vectors_behaviour, atheros_search.search_vectors_sequence TO {{OCTOPUS_ACCOUNT}};
 
+GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.behaviour_snapshots,
+  atheros_search.baseline_profiles, atheros_search.frame_sequences,
+  atheros_search.sequence_transitions, atheros_search.timing_profiles,
+  atheros_search.similarity_pairs, atheros_search.threat_signals,
+  atheros_search.ap_risk_scores, atheros_search.sequence_transition_contributions,
+  atheros_search.sequence_previous_totals TO {{OCTOPUS_ACCOUNT}};
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.graph_nodes,
+  atheros_search.graph_edges, atheros_search.identity_clusters,
+  atheros_search.identity_cluster_members, atheros_search.merge_candidates TO {{OCTOPUS_ACCOUNT}};
+
+GRANT SELECT ON atheros_search.merge_decisions TO {{OCTOPUS_ACCOUNT}};
+
 GRANT SELECT ON atheros_search.search_documents TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, UPDATE ON atheros_search.embedding_jobs TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.embeddings TO {{ATHEROS_SEARCH_ACCOUNT}};
