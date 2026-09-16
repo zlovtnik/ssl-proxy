@@ -18,7 +18,7 @@ images:
 - digest: sha256:6d131120bdd3b2daf96c993cf98dc1f95bb8d219b690213cfe448f5ae1be49bd
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
-- digest: sha256:c2fa4856232a42d3b6de1b3f8acb878798d67e3699c460ba981d141736a93b01
+- digest: sha256:ea02d6ecb07e0216dd6d50ec4fdf5e67c922e0cce778bd2cd1058b678cc43b5b
   name: atheros-search-ui
   newName: 192.168.1.242:5000/atheros-search-ui
 - digest: sha256:a07e3811c8762b4846279311b3d5be2f80621f7f78d067c3385d4c5c084178f6
