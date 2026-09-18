@@ -158,5 +158,7 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: telemetry-blackbox-exporter
+        - ipBlock:
+            cidr: 192.168.0.0/16
       ports:
         - {protocol: TCP, port: 3000}

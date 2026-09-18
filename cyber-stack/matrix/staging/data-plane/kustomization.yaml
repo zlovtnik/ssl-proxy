@@ -27,6 +27,7 @@ patches:
 - path: ../patches/external-schema-executor.yaml
 - path: ../patches/pgbouncer-external-postgres.yaml
 - path: ../../prod/patches/alloy-positions.yaml
+- path: ../patches/grafana-service-clusterip.yaml
 - patch: |-
     - op: replace
       path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
