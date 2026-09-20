@@ -43,4 +43,4 @@ groups:
       - record: pvc:utilization:ratio
         expr: max by (node, namespace, persistentvolumeclaim) (1 - (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes))
       - record: container:memory_limit_utilization:ratio
-        expr: sum by (node, namespace, pod, container) (container_memory_working_set_bytes{container!="",image!=""}) / on (namespace, pod, container) group_left(node) sum by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0)
+        expr: sum by (node, namespace, pod, container) (container_memory_working_set_bytes{container!="",image!=""}) / on (namespace, pod, container) group_left sum by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0)

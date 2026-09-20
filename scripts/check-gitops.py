@@ -140,7 +140,6 @@ OBSERVABILITY_CATALOG_SERVICES = {
     "kube-state-metrics",
     "blackbox-exporter",
     "node-exporter",
-    "cadvisor",
     "jenkins",
     "registry",
 }

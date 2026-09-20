@@ -12,7 +12,7 @@ flowchart LR
     alloy --> loki[Loki]
 
     apps[Application and infrastructure metrics] --> prometheus[Prometheus]
-    exporters[Node Exporter, cAdvisor and service exporters] --> prometheus
+    exporters[Node Exporter, kubelet and service exporters] --> prometheus
 
     instrumented[Instrumented services] -->|OTLP gRPC or HTTP| collector[OpenTelemetry Collector]
     collector -->|OTLP| jaeger[Jaeger]
@@ -41,7 +41,7 @@ ConfigMaps. Declared scrape targets include:
 
 - Prometheus, Loki, the log collector, Jaeger and the OTel Collector;
 - proxy and Atheros Sensor metrics;
-- Redpanda, MinIO, Node Exporter and cAdvisor;
+- Redpanda, MinIO, Node Exporter and kubelet metrics;
 - the Pushgateway and span-metrics exporter;
 - Octopus under its `java-coordinator` Kubernetes identity.
 

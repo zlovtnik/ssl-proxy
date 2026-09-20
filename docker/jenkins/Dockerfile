@@ -15,6 +15,7 @@ RUN apt-get update \
       curl \
       git \
       gnupg \
+      jq \
       make \
       python3 \
       python3-yaml \
