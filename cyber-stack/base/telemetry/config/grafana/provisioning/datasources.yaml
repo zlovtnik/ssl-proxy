@@ -15,7 +15,7 @@ datasources:
     uid: loki
     type: loki
     access: proxy
-    url: http://ssl-proxy-telemetry-loki:3100
+    url: http://ssl-proxy-telemetry-loki-gateway:3100
     basicAuth: true
     basicAuthUser: $LOKI_USERNAME
     editable: false

@@ -8,7 +8,6 @@ resources:
   - jaeger.yaml
   - otel-collector.yaml
   - node-exporter.yaml
-  - cadvisor.yaml
   - pushgateway.yaml
   - alertmanager.yaml
   - kube-state-metrics.yaml
@@ -30,6 +29,7 @@ configMapGenerator:
       - availability.rules.yml=config/prometheus/rules/availability.rules.yml
       - workload.rules.yml=config/prometheus/rules/workload.rules.yml
       - infrastructure.rules.yml=config/prometheus/rules/infrastructure.rules.yml
+      - capacity.alerts.yml=config/prometheus/rules/capacity.alerts.yml
       - data-tracing-jenkins.rules.yml=config/prometheus/rules/data-tracing-jenkins.rules.yml
   - name: ssl-proxy-telemetry-alertmanager-config
     namespace: ssl-proxy
@@ -45,6 +45,9 @@ configMapGenerator:
       - dashboards.yaml=config/grafana/provisioning/dashboards.yaml
   - name: ssl-proxy-telemetry-grafana-dashboards
     namespace: ssl-proxy
+    options:
+      labels:
+        grafana_dashboard: "1"
     files:
       - config/grafana/dashboards/fleet-availability.json
       - config/grafana/dashboards/service-red-sync.json

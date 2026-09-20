@@ -35,12 +35,12 @@ groups:
     interval: 30s
     rules:
       - record: node:cpu_utilization:ratio_rate5m
-        expr: 1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
+        expr: 1 - avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
       - record: node:memory_utilization:ratio
-        expr: 1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+        expr: max by (node) (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
       - record: node:filesystem_utilization:ratio
-        expr: 1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})
+        expr: max by (node, mountpoint, fstype) (1 - (node_filesystem_avail_bytes{fstype!~"vfat|tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"vfat|tmpfs|overlay"}))
       - record: pvc:utilization:ratio
-        expr: 1 - (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes)
+        expr: max by (node, namespace, persistentvolumeclaim) (1 - (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes))
       - record: container:memory_limit_utilization:ratio
-        expr: container_memory_working_set_bytes{container!="",image!=""} / on (namespace, pod, container) clamp_min(kube_pod_container_resource_limits{resource="memory"}, 1)
+        expr: sum by (node, namespace, pod, container) (container_memory_working_set_bytes{container!="",image!=""}) / on (namespace, pod, container) group_left(node) sum by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0)

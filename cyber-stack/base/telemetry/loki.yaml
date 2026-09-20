@@ -136,6 +136,26 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: ssl-proxy-telemetry-loki-gateway
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-loki
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: proxy-http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: ssl-proxy-telemetry-loki
   namespace: ssl-proxy
   labels:

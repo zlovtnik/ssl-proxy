@@ -1,0 +1,57 @@
+groups:
+  - name: capacity-alerts
+    rules:
+      - alert: PVCUtilizationHigh
+        expr: pvc:utilization:ratio > 0.85
+        for: 15m
+        labels: {severity: warning, service: storage}
+        annotations:
+          summary: "PVC {{ $labels.persistentvolumeclaim }} is above 85% utilization"
+          diagnostic: "Persistent volume utilization has remained above 85% for fifteen minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#storage-pressure"
+      - alert: PVCDaysToFull
+        expr: ((kubelet_volume_stats_available_bytes / -deriv(kubelet_volume_stats_available_bytes[6h])) / 86400 and deriv(kubelet_volume_stats_available_bytes[6h]) < 0) < 7
+        for: 15m
+        labels: {severity: warning, service: storage}
+        annotations:
+          summary: "PVC {{ $labels.persistentvolumeclaim }} has less than seven days remaining"
+          diagnostic: "The six-hour storage consumption trend predicts exhaustion within seven days."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#storage-pressure"
+      - alert: NodeMemoryHigh
+        expr: node:memory_utilization:ratio > 0.90
+        for: 10m
+        labels: {severity: warning, service: infrastructure}
+        annotations:
+          summary: "Node {{ $labels.node }} memory utilization is above 90%"
+          diagnostic: "Available memory has remained below 10% for ten minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#node-saturation"
+      - alert: ContainerCPUThrottlingHigh
+        expr: sum by (namespace, pod, container) (rate(container_cpu_cfs_throttled_periods_total{container!=""}[5m])) / clamp_min(sum by (namespace, pod, container) (rate(container_cpu_cfs_periods_total{container!=""}[5m])), 0.001) > 0.25
+        for: 15m
+        labels: {severity: warning, service: kubernetes}
+        annotations:
+          summary: "Container {{ $labels.pod }}/{{ $labels.container }} is throttled above 25%"
+          diagnostic: "CPU throttled periods have remained above 25% for fifteen minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#node-saturation"
+      - alert: ContainerMemoryLimitHigh
+        expr: sum by (namespace, pod, container) (container_memory_working_set_bytes{container!="",image!=""}) / on (namespace, pod, container) sum by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0) > 0.90
+        for: 10m
+        labels: {severity: warning, service: kubernetes}
+        annotations:
+          summary: "Container {{ $labels.pod }}/{{ $labels.container }} exceeds 90% of its memory limit"
+          diagnostic: "Working-set memory has remained above 90% of the configured limit for ten minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#oom"
+      - alert: ContainerOOMKilled
+        expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+        for: 5m
+        labels: {severity: critical, service: kubernetes}
+        annotations:
+          summary: "Container {{ $labels.pod }}/{{ $labels.container }} was OOM-killed"
+          diagnostic: "The current last-termination reason is OOMKilled."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#oom"

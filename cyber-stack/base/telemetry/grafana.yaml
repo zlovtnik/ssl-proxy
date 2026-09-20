@@ -37,6 +37,14 @@ spec:
               value: "/etc/grafana/provisioning"
             - name: GF_SERVER_HTTP_PORT
               value: "3000"
+            - name: GOMEMLIMIT
+              value: "850MiB"
+            - name: GF_PLUGINS_PREINSTALL_AUTO_UPDATE
+              value: "false"
+            - name: GF_LIVE_ALLOWED_ORIGINS
+              value: "https://192.168.1.242:30000"
+            - name: GF_SERVER_ROOT_URL
+              value: "https://192.168.1.242:30000"
             - name: GF_SECURITY_ADMIN_USER
               value: "admin"
             - name: GF_SECURITY_ADMIN_PASSWORD
@@ -73,11 +81,11 @@ spec:
             timeoutSeconds: 5
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 250m
+              memory: 512Mi
             limits:
               cpu: 500m
-              memory: 512Mi
+              memory: 1Gi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

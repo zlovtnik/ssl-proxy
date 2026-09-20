@@ -11,12 +11,12 @@ groups:
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#workload-unavailable"
       - alert: ContainerRestartLoop
-        expr: increase(kube_pod_container_status_restarts_total[10m]) >= 3
+        expr: increase(kube_pod_container_status_restarts_total{namespace="prod-ssl-proxy"}[30m]) > 2
         for: 5m
         labels: {severity: critical, service: kubernetes}
         annotations:
           summary: "Container {{ $labels.container }} is restarting repeatedly"
-          diagnostic: "The container restarted at least three times in ten minutes."
+          diagnostic: "The container restarted more than twice in thirty minutes."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#restart-loop"
       - alert: ContainerOOMKilled
