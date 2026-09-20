@@ -55,14 +55,30 @@ metadata:
   name: ssl-proxy-telemetry-grafana
   namespace: ssl-proxy
 spec:
-  type: NodePort
-  externalTrafficPolicy: Local
+  type: ClusterIP
   ports:
     - name: http
       port: 3000
       targetPort: http
       nodePort: null
       protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-telemetry-grafana-lan
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-grafana
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-grafana
+  ports:
     - name: https
       port: 8443
       targetPort: https
@@ -88,8 +104,10 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: telemetry-blackbox-exporter
+      ports:
+        - {protocol: TCP, port: 3000}
+    - from:
         - ipBlock:
             cidr: 192.168.0.0/16
       ports:
-        - {protocol: TCP, port: 3000}
         - {protocol: TCP, port: 8443}

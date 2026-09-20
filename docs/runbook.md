@@ -176,8 +176,8 @@ The effective host policy must:
 3. allow public IPv4 TCP 80 and preserve the existing WireGuard UDP 443
    host-port exception;
 4. allow HTTPS 443, SSH, Kubernetes API 6443, registry 5000, Argo CD NodePorts,
-   metrics, Grafana NodePort 30000, 3000 and 8080 only from the recorded trusted
-   LAN/WireGuard sources;
+   metrics, 3000 and 8080 only from the recorded trusted LAN/WireGuard sources;
+   allow Grafana NodePort 30000 only from the recorded trusted LAN CIDRs;
 5. deny WAN TCP 443, every other WAN-initiated flow and every unsolicited IPv6
    inbound flow.
 
@@ -231,7 +231,9 @@ The evidence must show:
 
 - `enp2s0f0` has only `192.168.1.242`, with one DHCP default route; the K3s
   node `InternalIP`, API certificate SAN and Traefik `External-IP` are `.242`;
-- every production application Service is `ClusterIP` or headless and the only
+- every production application Service is `ClusterIP` or headless, except
+  `ssl-proxy-telemetry-grafana-lan`, which exposes only HTTPS on fixed NodePort
+  30000 and is allowed only from the recorded trusted LAN CIDRs; the only
   healthy ServiceLB listener is the intended Traefik TCP 80/443 LAN edge;
 - no Ingress, Gateway, HTTPRoute, IngressRoute or Middleware exists;
 - Traefik has no routing-provider, dashboard, HTTP/3, redirect or certificate-

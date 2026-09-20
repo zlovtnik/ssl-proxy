@@ -440,12 +440,11 @@ spec: {type: ClusterIP, clusterIP: None}
     def test_phase_one_allows_only_the_grafana_lan_nodeport(self) -> None:
         rendered = documents(
             """kind: Service
-metadata: {name: ssl-proxy-telemetry-grafana}
+metadata: {name: ssl-proxy-telemetry-grafana-lan}
 spec:
   type: NodePort
   externalTrafficPolicy: Local
   ports:
-    - {name: http, port: 3000, targetPort: http, protocol: TCP}
     - {name: https, port: 8443, targetPort: https, nodePort: 30000, protocol: TCP}
 """
         )
@@ -468,7 +467,9 @@ spec:
         )
 
         rendered[0]["spec"]["externalTrafficPolicy"] = "Local"
-        rendered[0]["spec"]["ports"][0]["nodePort"] = 30000
+        rendered[0]["spec"]["ports"].append(
+            {"name": "http", "port": 3000, "targetPort": "http", "protocol": "TCP"}
+        )
         self.assertEqual(
             [
                 "cyber-stack/matrix/prod/data-plane: Grafana LAN NodePort must preserve its local-only service contract"

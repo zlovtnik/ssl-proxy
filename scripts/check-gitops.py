@@ -166,8 +166,8 @@ STANDARD_LABELED_KINDS = {
 }
 
 GRAFANA_LAN_NODEPORT = {
-    "name": "ssl-proxy-telemetry-grafana",
-    "httpPort": 3000,
+    "name": "ssl-proxy-telemetry-grafana-lan",
+    "workloadName": "ssl-proxy-telemetry-grafana",
     "httpsPort": 8443,
     "nodePort": 30000,
 }
@@ -1142,11 +1142,6 @@ def _check_phase_one_workload_edge(
             ):
                 ports = [_mapping(port) for port in _list(_path(document, "spec", "ports"))]
                 expected_ports = {
-                    "http": {
-                        "port": GRAFANA_LAN_NODEPORT["httpPort"],
-                        "targetPort": "http",
-                        "nodePort": None,
-                    },
                     "https": {
                         "port": GRAFANA_LAN_NODEPORT["httpsPort"],
                         "targetPort": "https",
@@ -1217,7 +1212,7 @@ def _check_grafana_lan_tls(rendered: Documents | str, relative: str) -> list[str
         return []
 
     documents = _documents(rendered)
-    deployments = _find(documents, "Deployment", GRAFANA_LAN_NODEPORT["name"])
+    deployments = _find(documents, "Deployment", GRAFANA_LAN_NODEPORT["workloadName"])
     if len(deployments) != 1:
         return [f"{relative}: Grafana LAN NodePort requires its TLS proxy Deployment"]
 
