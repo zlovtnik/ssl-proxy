@@ -1100,6 +1100,24 @@ def _workload_pod_spec(document: Mapping[str, Any]) -> Mapping[str, Any]:
     return _mapping(_path(document, "spec", "template", "spec"))
 
 
+def _check_clusterip_node_ports(rendered: Documents | str, relative: str) -> list[str]:
+    errors: list[str] = []
+    for document in _documents(rendered):
+        if document.get("kind") != "Service":
+            continue
+        spec = _mapping(document.get("spec"))
+        if spec.get("type") not in (None, "ClusterIP"):
+            continue
+        name = str(_metadata(document).get("name", "<unnamed>"))
+        for port in _list(spec.get("ports")):
+            definition = _mapping(port)
+            if "nodePort" in definition:
+                errors.append(
+                    f"{relative}: ClusterIP Service {name} must not set nodePort"
+                )
+    return errors
+
+
 def _check_phase_one_workload_edge(
     rendered: Documents | str, relative: str
 ) -> list[str]:
@@ -2577,7 +2595,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for image in FIRST_PARTY_IMAGES:
             if any(rendered_image == image or rendered_image.startswith(f"{image}:") for rendered_image in _rendered_images(documents)):
                 errors.append(f"{relative}: rendered workload retains logical image name {image}")
-        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_postgres_waves, _check_postgres_tls_contract, _check_cluster_rbac_names):
+        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_postgres_waves, _check_postgres_tls_contract, _check_cluster_rbac_names, _check_clusterip_node_ports):
             errors.extend(check(documents, relative))
         if relative.startswith("cyber-stack/matrix/"):
             errors.extend(_check_phase_one_workload_edge(documents, relative))

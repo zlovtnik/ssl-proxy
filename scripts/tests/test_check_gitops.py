@@ -437,6 +437,21 @@ spec: {type: ClusterIP, clusterIP: None}
             [], check_gitops._check_phase_one_workload_edge(rendered, "prod")
         )
 
+    def test_rejects_clusterip_service_with_nodeport(self) -> None:
+        rendered = documents(
+            """kind: Service
+metadata: {name: internal}
+spec:
+  type: ClusterIP
+  ports: [{port: 3000, nodePort: 30000}]
+"""
+        )
+
+        self.assertEqual(
+            ["prod: ClusterIP Service internal must not set nodePort"],
+            check_gitops._check_clusterip_node_ports(rendered, "prod"),
+        )
+
 
 class DefaultDenyTraefikTest(unittest.TestCase):
     def values(self) -> dict[str, object]:
