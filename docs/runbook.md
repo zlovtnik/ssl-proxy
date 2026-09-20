@@ -74,7 +74,7 @@ configuration/artifact mismatch.
 | Atheros Search | `GET /readyz` on `8080` | PostgreSQL, schema, vector and embedding readiness |
 | Atheros Search | `GET /v1/etl/health` | Worker/job ETL snapshot |
 | Prometheus | `GET /-/ready` on `9090` | Prometheus ready |
-| Grafana | `GET /api/health` on `3004` | Grafana process ready |
+| Grafana | `GET /api/health` on `https://gateway.rclabs.uk:30000` from the LAN | Grafana process ready |
 
 Atheros Search tracing hooks do not currently initialize an exporter.
 
@@ -176,7 +176,8 @@ The effective host policy must:
 3. allow public IPv4 TCP 80 and preserve the existing WireGuard UDP 443
    host-port exception;
 4. allow HTTPS 443, SSH, Kubernetes API 6443, registry 5000, Argo CD NodePorts,
-   metrics, 3000 and 8080 only from the recorded trusted LAN/WireGuard sources;
+   metrics, Grafana NodePort 30000, 3000 and 8080 only from the recorded trusted
+   LAN/WireGuard sources;
 5. deny WAN TCP 443, every other WAN-initiated flow and every unsolicited IPv6
    inbound flow.
 
@@ -184,6 +185,23 @@ The platform owner must retain a recoverable copy of the previous ruleset and
 verify an independent administrative session before activation. Record the
 post-change ruleset, `ss -lntu` listener inventory and successful K3s pod/Service
 connectivity. If this evidence is absent or ambiguous, the rollout is blocked.
+
+### Grafana LAN access
+
+Grafana is available only to the trusted LAN at
+`https://gateway.rclabs.uk:30000`. The LAN DNS view must resolve
+`gateway.rclabs.uk` to `192.168.1.242`; public DNS and the Cloudflare tunnel do
+not route Grafana. The platform-owned node firewall must allow TCP 30000 only
+from the recorded trusted LAN CIDRs and reject it on WAN-facing and IPv6
+interfaces. Do not add a router forward for TCP 30000.
+
+After Argo CD reports the data-plane Application healthy, verify from a LAN
+client that `curl --fail --cacert <trusted-ca-file> https://gateway.rclabs.uk:30000/api/health`
+returns successfully. Verify from an independent network and every public IPv6
+address that TCP 30000 is closed. The Grafana Service uses
+`externalTrafficPolicy: Local` so the CNI policy receives the LAN client source
+address; retain the Grafana NetworkPolicy and record a successful enforcement
+probe.
 
 ### Router gate
 

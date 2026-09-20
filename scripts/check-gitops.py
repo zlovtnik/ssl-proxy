@@ -165,6 +165,14 @@ STANDARD_LABELED_KINDS = {
     "StatefulSet",
 }
 
+GRAFANA_LAN_NODEPORT = {
+    "name": "ssl-proxy-telemetry-grafana",
+    "httpPort": 3000,
+    "httpsPort": 8443,
+    "nodePort": 30000,
+}
+GRAFANA_LAN_PROXY_IMAGE = "nginxinc/nginx-unprivileged@sha256:62a904036bfc0e4a4f2b556e34cbf17bc136b47fde8cdb4628762725f48c5782"
+
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
@@ -1127,6 +1135,43 @@ def _check_phase_one_workload_edge(
         name = str(_metadata(document).get("name", "<unnamed>"))
         if kind == "Service":
             service_type = _path(document, "spec", "type")
+            if (
+                relative == "cyber-stack/matrix/prod/data-plane"
+                and service_type == "NodePort"
+                and name == GRAFANA_LAN_NODEPORT["name"]
+            ):
+                ports = [_mapping(port) for port in _list(_path(document, "spec", "ports"))]
+                expected_ports = {
+                    "http": {
+                        "port": GRAFANA_LAN_NODEPORT["httpPort"],
+                        "targetPort": "http",
+                        "nodePort": None,
+                    },
+                    "https": {
+                        "port": GRAFANA_LAN_NODEPORT["httpsPort"],
+                        "targetPort": "https",
+                        "nodePort": GRAFANA_LAN_NODEPORT["nodePort"],
+                    },
+                }
+                actual_ports = {
+                    str(port.get("name")): port
+                    for port in ports
+                }
+                if (
+                    _path(document, "spec", "externalTrafficPolicy") != "Local"
+                    or len(ports) != len(expected_ports)
+                    or set(actual_ports) != set(expected_ports)
+                    or any(
+                        port.get("protocol") != "TCP"
+                        or any(port.get(field) != value for field, value in expected.items())
+                        for name, expected in expected_ports.items()
+                        for port in [actual_ports.get(name, {})]
+                    )
+                ):
+                    errors.append(
+                        f"{relative}: Grafana LAN NodePort must preserve its local-only service contract"
+                    )
+                continue
             if service_type not in (None, "ClusterIP"):
                 errors.append(
                     f"{relative}: phase one Service {name} must be ClusterIP or "
@@ -1165,6 +1210,59 @@ def _check_phase_one_workload_edge(
                         f"TCP hostPort {definition.get('hostPort')}"
                     )
     return errors
+
+
+def _check_grafana_lan_tls(rendered: Documents | str, relative: str) -> list[str]:
+    if relative != "cyber-stack/matrix/prod/data-plane":
+        return []
+
+    documents = _documents(rendered)
+    deployments = _find(documents, "Deployment", GRAFANA_LAN_NODEPORT["name"])
+    if len(deployments) != 1:
+        return [f"{relative}: Grafana LAN NodePort requires its TLS proxy Deployment"]
+
+    pod_spec = _mapping(_path(deployments[0], "spec", "template", "spec"))
+    containers = [_mapping(container) for container in _list(pod_spec.get("containers"))]
+    proxy = next((container for container in containers if container.get("name") == "lan-proxy"), {})
+    proxy_ports = [_mapping(port) for port in _list(_mapping(proxy).get("ports"))]
+    proxy_mounts = {
+        str(mount.get("name")): str(mount.get("mountPath"))
+        for mount in (_mapping(value) for value in _list(_mapping(proxy).get("volumeMounts")))
+    }
+    volumes = {
+        str(volume.get("name")): volume
+        for volume in (_mapping(value) for value in _list(pod_spec.get("volumes")))
+    }
+    config_volume = _mapping(_mapping(volumes.get("lan-proxy-config")).get("configMap"))
+    tls_volume = _mapping(_mapping(volumes.get("tls-cert")).get("secret"))
+    if (
+        proxy.get("image") != GRAFANA_LAN_PROXY_IMAGE
+        or proxy_ports != [{"name": "https", "containerPort": 8443}]
+        or proxy_mounts.get("lan-proxy-config") != "/etc/nginx/conf.d"
+        or proxy_mounts.get("tls-cert") != "/etc/nginx/tls"
+        or config_volume.get("name") is None
+        or not str(config_volume.get("name")).startswith("ssl-proxy-telemetry-grafana-lan-proxy-")
+        or tls_volume.get("secretName") != "ssl-proxy-identity-tls"
+    ):
+        return [f"{relative}: Grafana LAN NodePort must terminate TLS in the pinned proxy"]
+
+    config_maps = [
+        document
+        for document in documents
+        if document.get("kind") == "ConfigMap"
+        and _metadata(document).get("name") == config_volume.get("name")
+    ]
+    config = str(_mapping(config_maps[0].get("data")).get("default.conf", "")) if len(config_maps) == 1 else ""
+    required_config = (
+        "listen 8443 ssl;",
+        "server_name gateway.rclabs.uk;",
+        "ssl_certificate /etc/nginx/tls/tls.crt;",
+        "ssl_certificate_key /etc/nginx/tls/tls.key;",
+        "proxy_pass http://127.0.0.1:3000;",
+    )
+    if not all(fragment in config for fragment in required_config):
+        return [f"{relative}: Grafana LAN NodePort TLS proxy configuration is invalid"]
+    return []
 
 
 def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]:
@@ -2609,6 +2707,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
             "cyber-stack/matrix/prod/data-plane",
         }:
             errors.extend(_check_observability_contract(documents, relative))
+            errors.extend(_check_grafana_lan_tls(documents, relative))
 
     errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))
     environment_render_checks = {

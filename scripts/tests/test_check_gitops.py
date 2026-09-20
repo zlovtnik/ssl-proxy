@@ -437,6 +437,64 @@ spec: {type: ClusterIP, clusterIP: None}
             [], check_gitops._check_phase_one_workload_edge(rendered, "prod")
         )
 
+    def test_phase_one_allows_only_the_grafana_lan_nodeport(self) -> None:
+        rendered = documents(
+            """kind: Service
+metadata: {name: ssl-proxy-telemetry-grafana}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  ports:
+    - {name: http, port: 3000, targetPort: http, protocol: TCP}
+    - {name: https, port: 8443, targetPort: https, nodePort: 30000, protocol: TCP}
+"""
+        )
+
+        self.assertEqual(
+            [],
+            check_gitops._check_phase_one_workload_edge(
+                rendered, "cyber-stack/matrix/prod/data-plane"
+            ),
+        )
+
+        rendered[0]["spec"]["externalTrafficPolicy"] = "Cluster"
+        self.assertEqual(
+            [
+                "cyber-stack/matrix/prod/data-plane: Grafana LAN NodePort must preserve its local-only service contract"
+            ],
+            check_gitops._check_phase_one_workload_edge(
+                rendered, "cyber-stack/matrix/prod/data-plane"
+            ),
+        )
+
+        rendered[0]["spec"]["externalTrafficPolicy"] = "Local"
+        rendered[0]["spec"]["ports"][0]["nodePort"] = 30000
+        self.assertEqual(
+            [
+                "cyber-stack/matrix/prod/data-plane: Grafana LAN NodePort must preserve its local-only service contract"
+            ],
+            check_gitops._check_phase_one_workload_edge(
+                rendered, "cyber-stack/matrix/prod/data-plane"
+            ),
+        )
+
+    def test_grafana_lan_nodeport_requires_tls_proxy(self) -> None:
+        rendered = documents(
+            """kind: Deployment
+metadata: {name: ssl-proxy-telemetry-grafana}
+spec: {template: {spec: {containers: []}}}
+"""
+        )
+
+        self.assertEqual(
+            [
+                "cyber-stack/matrix/prod/data-plane: Grafana LAN NodePort must terminate TLS in the pinned proxy"
+            ],
+            check_gitops._check_grafana_lan_tls(
+                rendered, "cyber-stack/matrix/prod/data-plane"
+            ),
+        )
+
     def test_rejects_clusterip_service_with_nodeport(self) -> None:
         rendered = documents(
             """kind: Service

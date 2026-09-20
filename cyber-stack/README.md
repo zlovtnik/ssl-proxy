@@ -77,8 +77,10 @@ The same control-plane Kustomization owns K3s's
 only HTTPS to two in-cluster `cloudflared` replicas, and watches approved CRDs
 only in `prod-ssl-proxy`. The public route admits the middleware OIDC paths,
 Schema Migrator `/api/` except health, and Atheros Search `/v1/`; all other
-paths have no router. Grafana and every administrative or data-plane endpoint
-remain internal. Router and host-firewall state are platform prerequisites documented in the
+paths have no router. Grafana is available only at
+`https://gateway.rclabs.uk:30000` from the trusted LAN through its direct TLS
+NodePort; every other administrative or data-plane endpoint remains internal.
+Router and host-firewall state are platform prerequisites documented in the
 [operations runbook](../docs/runbook.md); they are not managed through
 interactive Kubernetes changes.
 

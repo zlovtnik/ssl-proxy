@@ -50,6 +50,7 @@ services/octopus/.settings/
 !*.conf.example
 !config/templates/*.conf
 !cyber-stack/base/telemetry/config/loki/nginx.conf
+!cyber-stack/matrix/prod/config/grafana-lan-proxy/default.conf
 !docker/postgres/postgresql.conf
 !docker/postgres/pg_hba.conf
 

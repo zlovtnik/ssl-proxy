@@ -16,6 +16,10 @@ configMapGenerator:
   - external-service-catalog.yml=../config/prometheus/external-service-catalog.yml
   name: ssl-proxy-telemetry-prometheus-catalog
   namespace: ssl-proxy
+- files:
+  - default.conf=../config/grafana-lan-proxy/default.conf
+  name: ssl-proxy-telemetry-grafana-lan-proxy
+  namespace: ssl-proxy
 images:
 - digest: sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
   name: grafana/alloy
@@ -35,7 +39,7 @@ patches:
 - path: ../patches/pgbouncer-external-postgres.yaml
 - path: ../patches/alloy-positions.yaml
 - path: ../patches/jaeger-recovery.yaml
-- path: ../patches/grafana-service-clusterip.yaml
+- path: ../patches/grafana-lan-nodeport.yaml
 - patch: |-
     - op: replace
       path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash

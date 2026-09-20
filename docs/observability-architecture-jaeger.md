@@ -87,8 +87,10 @@ collect evidence; do not edit telemetry resources interactively.
 
 ## Security and retention
 
-- Keep Grafana, Prometheus, Loki, collector diagnostics and service metrics
-  cluster-internal unless an approved ingress policy says otherwise.
+- Grafana is available only to the trusted LAN at
+  `https://gateway.rclabs.uk:30000`; Prometheus, Loki, collector diagnostics
+  and service metrics remain cluster-internal. Grafana is not routed through
+  the public ingress or Cloudflare tunnel.
 - Protect Grafana with the platform identity provider and a non-default admin
   credential supplied by the platform secret control plane.
 - Do not use raw user, query, session or device identifiers as unbounded metric

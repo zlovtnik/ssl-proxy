@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-telemetry-grafana
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: grafana
+        - name: lan-proxy
+          image: nginxinc/nginx-unprivileged@sha256:62a904036bfc0e4a4f2b556e34cbf17bc136b47fde8cdb4628762725f48c5782
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: https
+              containerPort: 8443
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: lan-proxy-config
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+            - name: tls-cert
+              mountPath: /etc/nginx/tls
+              readOnly: true
+            - name: lan-proxy-tmp
+              mountPath: /tmp
+      volumes:
+        - name: lan-proxy-config
+          configMap:
+            name: ssl-proxy-telemetry-grafana-lan-proxy
+        - name: tls-cert
+          secret:
+            secretName: ssl-proxy-identity-tls
+        - name: lan-proxy-tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-telemetry-grafana
+  namespace: ssl-proxy
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      nodePort: null
+      protocol: TCP
+    - name: https
+      port: 8443
+      targetPort: https
+      nodePort: 30000
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-telemetry-grafana
+  namespace: ssl-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-grafana
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: telemetry-prometheus
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: telemetry-blackbox-exporter
+        - ipBlock:
+            cidr: 192.168.0.0/16
+      ports:
+        - {protocol: TCP, port: 3000}
+        - {protocol: TCP, port: 8443}

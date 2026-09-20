@@ -179,8 +179,9 @@ complete topology and current instrumentation limits are in
 
 ## Security boundaries
 
-- WireGuard UDP entrypoints are public; admin, database and observability
-  surfaces should remain host-local or cluster-internal.
+- WireGuard UDP entrypoints are public. Admin and database surfaces remain
+  host-local or cluster-internal; Grafana is the sole observability exception,
+  available only to the trusted LAN at `https://gateway.rclabs.uk:30000`.
 - The proxy and sensor have elevated network capabilities. They do not receive
   database credentials.
 - PostgreSQL clients use separate accounts and schemas in the `sync` database, verified TLS and the
