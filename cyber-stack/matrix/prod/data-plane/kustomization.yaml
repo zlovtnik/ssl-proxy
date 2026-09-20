@@ -10,6 +10,7 @@ resources:
 - ../../../base/postgres-pool-readiness
 - ../../../base/postgres-schema-executor
 - ../../../base/telemetry
+- ../patches/grafana-lan-service.yaml
 configMapGenerator:
 - behavior: merge
   files:
