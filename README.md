@@ -110,6 +110,10 @@ README](services/octopus/README.md) for consumer groups, DLQ suffixes, and the
 Delivery is at least once from committed Kafka consumer-group offsets, with durable PostgreSQL
 dedupe and topic/partition/offset evidence.
 
+Trim is irreversible. If a consumer group is added, it must exist before its
+first run or it can lose unread data. See the [Redpanda daily maintenance
+runbook](docs/runbooks/redpanda-maintenance.md).
+
 ## Common checks
 
 ```bash
@@ -128,6 +132,7 @@ python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 - [Jenkins image CI](docs/jenkins-ci.md)
 - [System architecture](docs/architecture.md)
 - [Operations runbook](docs/runbook.md)
+- [Redpanda daily maintenance](docs/runbooks/redpanda-maintenance.md)
 - [Observability architecture](docs/observability-architecture-jaeger.md)
 - [Secret management](docs/secret-management.md)
 - [Threat model](docs/threat-model.md)

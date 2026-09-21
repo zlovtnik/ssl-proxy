@@ -1,0 +1,3 @@
+# topic	keep_days	gate	required_groups	evidence_group
+wireless.audit	3	pg	wireless-audit-postgres-v1	wireless-audit-postgres-v1
+sync.scan.request	3	none	octopus-scan-v1	-

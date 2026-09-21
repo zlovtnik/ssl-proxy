@@ -38,9 +38,11 @@ ATHEROS_SEARCH_UI_KEYCLOAK_URL ?= https://gateway.rclabs.uk
 ATHEROS_SEARCH_UI_KEYCLOAK_REALM ?= middleware
 ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID ?= atheros-search-ui
 
-SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui postgres-runtime-schema
+SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui postgres-runtime-schema redpanda-maint
 # wg-key-rotator is an operational tool, not a long-lived Kubernetes workload.
-DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator,$(SERVICES))
+# redpanda-maint joins the deployable image contract after its first reviewed
+# digest pin; Jenkins publishes the bootstrap image without deploying it.
+DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator redpanda-maint,$(SERVICES))
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
@@ -339,6 +341,7 @@ $(eval $(call service_rules,atheros-search-ui,apps/integration-console/atheros-s
 $(eval $(call service_rules,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,apps/schema-migrator))
 $(eval $(call service_rules,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,apps/schema-migrator))
 $(eval $(call service_rules,postgres-runtime-schema,k8s/postgres-schema-executor/Dockerfile,,postgres-runtime-schema,.))
+$(eval $(call service_rules,redpanda-maint,cyber-stack/base/redpanda-maintenance/Dockerfile,,redpanda-maint,cyber-stack/base/redpanda-maintenance))
 
 ifneq ($(BUILDX_READY),1)
 $(BUILD_TARGETS) $(PUBLISH_TARGETS): buildx-ready

@@ -40,6 +40,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: redpanda-init
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: redpanda-maintenance
       ports:
         - protocol: TCP
           port: 9092

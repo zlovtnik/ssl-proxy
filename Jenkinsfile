@@ -88,6 +88,10 @@ pipeline {
             sh '''
               set -eu
               jq empty cyber-stack/base/telemetry/config/grafana/dashboards/*.json
+              bash -n cyber-stack/base/redpanda-maintenance/redpanda-daily-clean.sh
+              python3 scripts/check_redpanda_maintenance.py
+              docker run --rm -v "$PWD:/mnt:ro" koalaman/shellcheck-alpine:v0.10.0 \
+                /mnt/cyber-stack/base/redpanda-maintenance/redpanda-daily-clean.sh
               awk -F'|' '
                 /^[[:space:]]+[[:alnum:]._-]+\|/ && (NF != 5 || $5 == "") {
                   print "topic manifest row is missing retention.bytes: " $0 > "/dev/stderr"
@@ -226,8 +230,17 @@ pipeline {
           echo
           echo '=== Manual production digest update report ==='
           cat "$BUMP_COMMANDS_REPORT"
+          env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+            DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make --no-print-directory publish-redpanda-maint \
+            TAG="$build_tag" BUILD_DATE="$build_date" BUILDER="$BUILDER" PLATFORM=linux/amd64 \
+            REGISTRY="$REGISTRY" REGISTRY_PLAIN_HTTP="$REGISTRY_PLAIN_HTTP" \
+            PUBLISH_REPOSITORY="$REGISTRY/redpanda-maint" \
+            PUBLISH_METADATA_FILE=artifacts/redpanda-maint-buildx.json
+          redpanda_maint_digest="$(python3 scripts/image_contract.py buildx-digest artifacts/redpanda-maint-buildx.json)"
+          echo "redpanda-maint pushed digest: $redpanda_maint_digest"
+          echo 'Pin that digest and add ../../../base/redpanda-maintenance to the reviewed prod data-plane slice only after the platform Secret exists.'
         '''
-        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt', fingerprint: true
+        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt,artifacts/redpanda-maint-buildx.json', fingerprint: true
       }
     }
   }

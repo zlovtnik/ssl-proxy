@@ -1,0 +1,95 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redpanda-daily-clean
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app.kubernetes.io/name: redpanda-daily-clean
+    app.kubernetes.io/component: redpanda-maintenance
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  schedule: "30 6 * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 1800
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: redpanda-daily-clean
+            app.kubernetes.io/component: redpanda-maintenance
+            ssl-proxy.io/metrics-producer: "true"
+            ssl-proxy.io/postgres-client: "true"
+        spec:
+          serviceAccountName: ssl-proxy
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: clean
+              image: redpanda-maint:latest
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/bash", "/config/redpanda-daily-clean.sh"]
+              envFrom:
+                - configMapRef:
+                    name: redpanda-maint-env
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: redpanda-maint-pg
+                      key: username
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: redpanda-maint-pg
+                      key: password
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: pgbouncer-tls
+                  mountPath: /var/run/pgbouncer-tls
+                  readOnly: true
+          volumes:
+            - name: config
+              configMap:
+                name: redpanda-maint-config
+                defaultMode: 0555
+            - name: tmp
+              emptyDir: {}
+            - name: pgbouncer-tls
+              secret:
+                secretName: pgbouncer-listener-tls
+                items:
+                  - key: ca.crt
+                    path: ca.crt

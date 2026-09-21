@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redpanda-maintenance
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: redpanda-daily-clean
+    app.kubernetes.io/component: redpanda-maintenance
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redpanda-daily-clean
+      app.kubernetes.io/component: redpanda-maintenance
+  policyTypes:
+    - Ingress
+  ingress: []
