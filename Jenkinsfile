@@ -99,7 +99,7 @@ pipeline {
                 }
                 END { exit invalid }
               ' cyber-stack/base/platform-config/configmap.yaml
-              tar -cf - cyber-stack/base/telemetry/config/prometheus/rules | docker run --rm -i -w /workspace \
+              tar -cf - cyber-stack/base/telemetry/config/prometheus/rules | docker run --rm -i \
                 --entrypoint sh \
                 prom/prometheus:v3.2.1@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69 \
                 -c 'tar --no-same-owner -xf - && promtool check rules cyber-stack/base/telemetry/config/prometheus/rules/*.yml'
