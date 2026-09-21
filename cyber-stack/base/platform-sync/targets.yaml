@@ -61,6 +61,12 @@ type: kubernetes.io/tls
 apiVersion: v1
 kind: Secret
 metadata:
+  name: vault-server-ca
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
   name: postgres-atheros-search
 type: Opaque
 ---

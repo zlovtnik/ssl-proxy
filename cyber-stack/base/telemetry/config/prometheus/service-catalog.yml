@@ -32,7 +32,7 @@
   labels: {service: alloy, module: http_2xx}
 - targets: ["http://ssl-proxy-telemetry-otel-collector:13133/"]
   labels: {service: otel-collector, module: http_2xx}
-- targets: ["http://ssl-proxy-telemetry-jaeger:13133/"]
+- targets: ["http://ssl-proxy-telemetry-jaeger:13133/health/status"]
   labels: {service: jaeger, module: http_2xx}
 - targets: ["http://ssl-proxy-telemetry-pushgateway:9091/-/ready"]
   labels: {service: pushgateway, module: http_2xx}

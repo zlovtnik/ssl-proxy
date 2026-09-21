@@ -48,9 +48,15 @@ spec:
             readOnlyRootFilesystem: true
           volumeMounts:
             - {name: config, mountPath: /etc/blackbox, readOnly: true}
+            - {name: vault-ca, mountPath: /etc/blackbox/vault-ca, readOnly: true}
       volumes:
         - name: config
           configMap: {name: ssl-proxy-telemetry-blackbox-config}
+        - name: vault-ca
+          secret:
+            secretName: vault-server-ca
+            items:
+              - {key: ca.crt, path: ca.crt}
 ---
 apiVersion: v1
 kind: Service

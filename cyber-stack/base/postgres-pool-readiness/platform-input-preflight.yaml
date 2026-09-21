@@ -39,7 +39,7 @@ spec:
               echo "validated platform inputs are ready"
           env:
             - name: EXPECTED_CONTRACT_SHA256
-              value: "24c6c69843f89b8005f9c8792134733f3ca88bc679f06693e9cccbc3ea591f3a"
+              value: "9516aa0d26a309d92d27d994ae295555f886c0d3d93f51f1c6d854a2234ca8ed"
             - name: PLATFORM_READY
               valueFrom:
                 configMapKeyRef:

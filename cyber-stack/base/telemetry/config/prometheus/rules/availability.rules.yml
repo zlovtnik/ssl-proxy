@@ -28,6 +28,15 @@ groups:
           diagnostic: "Vault did not return an unsealed health response."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#probe-failed"
+      - alert: OctopusProcessorTerminalFailure
+        expr: coordinator_processor_lifecycle_value{state="failed_terminal"} == 1
+        for: 2m
+        labels: {severity: critical, service: octopus}
+        annotations:
+          summary: "Octopus processor {{ $labels.processor }} failed terminally"
+          diagnostic: "The processor cannot recover automatically; inspect octopus_core.processor_state.last_error and processor_runs.error_text."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#probe-failed"
       - alert: TelemetryPipelineUnavailable
         expr: |
           absent(up{service="prometheus"}) or

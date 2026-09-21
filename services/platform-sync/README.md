@@ -17,7 +17,7 @@ Host-side Vault-to-Kubernetes secret synchronization for the ssl-proxy productio
                     └─────────────┘
 ```
 
-The platform sync program reads all 20 required inputs from Vault, retains only contract-declared keys, validates them (TLS chains, key pairs, DNS identities including the PgBouncer listener, live PostgreSQL identity/grants, Loki, PgBouncer, and WireGuard), and performs Kubernetes server-side dry runs before applying. If a later apply fails, it restores objects already changed in that run from its in-memory preflight snapshot.
+The platform sync program reads all 21 required inputs from Vault, retains only contract-declared keys, validates them (TLS chains, key pairs, DNS identities including the PgBouncer listener, live PostgreSQL identity/grants, Loki, PgBouncer, and WireGuard), and performs Kubernetes server-side dry runs before applying. If a later apply fails, it restores objects already changed in that run from its in-memory preflight snapshot.
 
 ## Prerequisites
 
@@ -25,6 +25,7 @@ The platform sync program reads all 20 required inputs from Vault, retains only 
 - Kubernetes cluster with the `ssl-proxy-platform-sync` ServiceAccount (Phase 1 RBAC)
 - Renewable read-only Vault token created by `scripts/bootstrap-vault-platform-sync.sh`
 - Vault CA certificate available as a host file
+- The same CA at `secret/ssl-proxy/prod/vault-server-ca` with key `ca.crt` for the in-cluster Vault availability probe
 - Ubuntu server with systemd
 - Go 1.25+ or Docker. When Go is absent, the installer uses a pinned, hardened
   Go builder container and installs only the resulting static binaries.

@@ -143,6 +143,12 @@ spec:
         - tls.crt
         - tls.key
     - kind: Secret
+      name: vault-server-ca
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/vault-server-ca
+      keys:
+        - ca.crt
+    - kind: Secret
       name: postgres-atheros-search
       type: Opaque
       vaultPath: secret/ssl-proxy/prod/postgres-atheros-search

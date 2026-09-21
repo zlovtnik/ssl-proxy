@@ -1846,6 +1846,8 @@ def _check_observability_contract(
             documents, "observability-credentials", key
         ):
             errors.append(f"{relative}: required observability Secret key {key} is not mounted")
+    if not _workloads_source_secret_key(documents, "vault-server-ca", "ca.crt"):
+        errors.append(f"{relative}: required Vault CA key ca.crt is not mounted")
     return errors
 
 

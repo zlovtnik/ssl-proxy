@@ -752,12 +752,16 @@ spec:
             secretName: observability-credentials
             items:
               - key: jenkins-prometheus-password
+        - secret:
+            secretName: vault-server-ca
+            items:
+              - key: ca.crt
 """
             )
         )
         errors = check_gitops._check_observability_contract(rendered, "test")
         self.assertFalse(
-            any("required observability Secret key" in error for error in errors)
+            any("required " in error and "key" in error for error in errors)
         )
 
     def test_requires_external_postgres_probe_only_in_production(self) -> None:
