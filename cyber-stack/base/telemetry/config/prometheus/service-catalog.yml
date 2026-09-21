@@ -46,3 +46,5 @@
   labels: {service: jenkins, module: tcp_connect, external: "true"}
 - targets: ["192.168.1.242:5000"]
   labels: {service: registry, module: tcp_connect, external: "true"}
+- targets: ["https://192.168.1.242:8200/v1/sys/health"]
+  labels: {service: vault, module: http_vault_health, external: "true"}

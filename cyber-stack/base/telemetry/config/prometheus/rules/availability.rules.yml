@@ -19,6 +19,15 @@ groups:
           diagnostic: "Blackbox exporter cannot complete the configured {{ $labels.module }} probe to {{ $labels.instance }}."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#probe-failed"
+      - alert: VaultHealthProbeFailed
+        expr: probe_success{job="blackbox-service-catalog",service="vault"} == 0
+        for: 5m
+        labels: {severity: critical, service: vault}
+        annotations:
+          summary: "Vault health probe has failed for five minutes"
+          diagnostic: "Vault did not return an unsealed health response."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#probe-failed"
       - alert: TelemetryPipelineUnavailable
         expr: |
           absent(up{service="prometheus"}) or

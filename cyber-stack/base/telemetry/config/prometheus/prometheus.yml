@@ -148,6 +148,13 @@ scrape_configs:
         target_label: node
       - target_label: service
         replacement: kubelet-cadvisor
+    metric_relabel_configs:
+      - source_labels: [container_label_io_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [container_label_io_kubernetes_pod_namespace]
+        target_label: namespace
+      - source_labels: [container_label_io_kubernetes_container_name]
+        target_label: container
 
   - job_name: kubelet-volume-stats
     scheme: https

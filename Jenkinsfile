@@ -88,9 +88,16 @@ pipeline {
             sh '''
               set -eu
               jq empty cyber-stack/base/telemetry/config/grafana/dashboards/*.json
-              docker run --rm -v "$PWD:/workspace:ro" -w /workspace \
+              awk -F'|' '
+                /^[[:space:]]+[[:alnum:]._-]+\|/ && (NF != 5 || $5 == "") {
+                  print "topic manifest row is missing retention.bytes: " $0 > "/dev/stderr"
+                  invalid = 1
+                }
+                END { exit invalid }
+              ' cyber-stack/base/platform-config/configmap.yaml
+              docker run --rm --entrypoint /bin/promtool -v "$PWD:/workspace:ro" -w /workspace \
                 prom/prometheus:v3.2.1@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69 \
-                promtool check rules cyber-stack/base/telemetry/config/prometheus/rules/*.yml
+                check rules cyber-stack/base/telemetry/config/prometheus/rules/*.yml
             '''
             sh 'make jenkins-plugin-audit'
             sh "python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v"

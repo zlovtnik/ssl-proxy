@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh ssl-proxy host storage usage metrics
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=45m
+RandomizedDelaySec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

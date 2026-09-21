@@ -47,11 +47,46 @@ groups:
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#oom"
       - alert: ContainerOOMKilled
-        expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
-        for: 5m
+        expr: (time() - kube_pod_container_status_last_terminated_timestamp < 1800) and on (namespace, pod, container) kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
         labels: {severity: critical, service: kubernetes}
         annotations:
           summary: "Container {{ $labels.pod }}/{{ $labels.container }} was OOM-killed"
           diagnostic: "The current last-termination reason is OOMKilled."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#oom"
+      - alert: NodeFilesystemWillFillWithinSevenDays
+        expr: predict_linear(node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}[24h], 7 * 86400) < 0
+        for: 1h
+        labels: {severity: warning, service: storage}
+        annotations:
+          summary: "Node {{ $labels.node }} root filesystem will fill within seven days"
+          diagnostic: "The 24-hour free-space trend predicts root filesystem exhaustion within seven days."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#storage-pressure"
+      - alert: ContainerRestartLoop
+        expr: sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total[30m])) > 2
+        for: 5m
+        labels: {severity: warning, service: kubernetes}
+        annotations:
+          summary: "Container {{ $labels.pod }}/{{ $labels.container }} restarted more than twice in thirty minutes"
+          diagnostic: "Repeated container restarts can precede an availability incident."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#oom"
+      - alert: RedpandaConsumerLagHigh
+        expr: max by (topic, consumer_group) (coordinator_redpanda_consumer_lag_records{service="octopus"}) > 5000
+        for: 10m
+        labels: {severity: warning, service: redpanda}
+        annotations:
+          summary: "Coordinator lag exceeds 5,000 records for {{ $labels.topic }}"
+          diagnostic: "The coordinator has not caught up with a Redpanda topic for ten minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbook.md#coordinator-and-stream-recovery"
+      - alert: CoordinatorLagMetricsStale
+        expr: max(coordinator_redpanda_lag_stale_seconds{service="octopus"}) > 900
+        for: 15m
+        labels: {severity: warning, service: octopus}
+        annotations:
+          summary: "Coordinator Redpanda lag metrics have been stale for over fifteen minutes"
+          diagnostic: "Pipeline freshness cannot be established while the coordinator lag refresh is stale."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbook.md#coordinator-and-stream-recovery"

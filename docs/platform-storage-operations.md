@@ -195,6 +195,25 @@ be referenced only by digest.
 
 ## PVC and controller hygiene
 
+### Host storage metrics
+
+The node exporter textfile collector publishes host Docker-volume, K3s PVC and
+Redpanda topic sizes. Install the tracked collector and timer on Wiretrap as
+root; the service runs with idle I/O priority every 45 minutes:
+
+```bash
+install -m 0755 scripts/pv-usage-textfile.sh /usr/local/sbin/ssl-proxy-pv-usage-textfile
+install -m 0644 scripts/systemd/ssl-proxy-pv-usage-textfile.service /etc/systemd/system/
+install -m 0644 scripts/systemd/ssl-proxy-pv-usage-textfile.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now ssl-proxy-pv-usage-textfile.timer
+systemctl start ssl-proxy-pv-usage-textfile.service
+```
+
+Verify that `/var/lib/node_exporter/textfile_collector/ssl_proxy_storage.prom`
+exists, then use the Infrastructure Capacity dashboard to inspect the emitted
+`docker_volume_used_bytes` and `redpanda_topic_log_bytes` metrics.
+
 `make pvc-audit` reports only claims that simultaneously have no owner
 reference, no Argo tracking annotation and no pod reference. It never deletes:
 

@@ -168,6 +168,7 @@ spec:
             - |
               brokers=ssl-proxy-redpanda:9092
               until rpk cluster info --brokers "$brokers" </dev/null >/dev/null 2>&1; do sleep 2; done
+              rpk cluster config set retention_bytes 2147483648 --brokers "$brokers" </dev/null >/dev/null
               while IFS='|' read -r topic partitions replicas retention_ms retention_bytes || [ -n "$topic$partitions$replicas$retention_ms$retention_bytes" ]; do
                 case "$topic" in ''|'#'*) continue ;; esac
                 attempts=0

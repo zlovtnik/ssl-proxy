@@ -69,7 +69,7 @@ metadata:
 data:
   topics.manifest: |
     # topic|partitions|replicas|retention.ms|retention.bytes
-    sync.scan.request|24|1|2592000000|-1
+    sync.scan.request|24|1|2592000000|2147483648
     sync.scan.request.dlq|24|1|2592000000|-1
     sync.oracle.load|24|1|2592000000|-1
     sync.oracle.load.dlq|24|1|2592000000|-1

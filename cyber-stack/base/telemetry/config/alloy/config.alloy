@@ -1,3 +1,7 @@
+logging {
+  level = "warn"
+}
+
 loki.write "default" {
   endpoint {
     url = "http://ssl-proxy-telemetry-loki-gateway:3100/loki/api/v1/push"
@@ -39,7 +43,7 @@ loki.relabel "containers" {
     source_labels = ["filename"]
     regex = "^.*/([^_]+)_([^_]+)_(.+)-[a-f0-9]+\\.log$"
     replacement = "$1"
-    target_label = "pod_name"
+    target_label = "pod"
   }
   rule {
     source_labels = ["filename"]

@@ -1,0 +1,8 @@
+[Unit]
+Description=Publish ssl-proxy host storage usage for node_exporter
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ssl-proxy-pv-usage-textfile
+Nice=19
+IOSchedulingClass=idle
