@@ -56,6 +56,15 @@ spec:
       ports:
         - protocol: TCP
           port: 9644
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: telemetry-redpanda-topic-metrics
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9644
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

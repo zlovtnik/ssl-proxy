@@ -10,26 +10,26 @@ groups:
           diagnostic: "Prometheus cannot scrape the broker administration endpoint."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda"
-      - alert: RedpandaUnderReplicatedPartitions
-        expr: sum(vectorized_cluster_partition_under_replicated_replicas) > 0
+      - alert: RedpandaUnavailablePartitions
+        expr: max(redpanda_cluster_unavailable_partitions) > 0
         for: 5m
         labels: {severity: critical, service: redpanda}
         annotations:
-          summary: "Redpanda has under-replicated partitions"
-          diagnostic: "At least one partition replica has remained under-replicated for five minutes."
+          summary: "Redpanda has unavailable partitions"
+          diagnostic: "A single-broker cluster has no replica redundancy, so unavailable partitions require immediate investigation."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-replication"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda"
       - alert: RedpandaRequestErrors
-        expr: sum(rate(vectorized_kafka_rpc_dispatch_handler_error_total[5m])) > 0
+        expr: sum by (redpanda_server) (rate(redpanda_rpc_request_errors_total[5m])) > 0
         for: 5m
         labels: {severity: warning, service: redpanda}
         annotations:
           summary: "Redpanda request errors are increasing"
-          diagnostic: "Kafka RPC handlers are recording sustained errors."
+          diagnostic: "Redpanda RPC handlers are recording sustained errors."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-errors"
       - alert: RedpandaReactorStalls
-        expr: increase(vectorized_reactor_stalls_total[5m]) > 0
+        expr: increase(vectorized_stall_detector_reported[5m]) > 0
         labels: {severity: warning, service: redpanda}
         annotations:
           summary: "Redpanda reactor stalls detected"
@@ -37,21 +37,39 @@ groups:
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-stalls"
       - alert: RedpandaRequestLatencyHigh
-        expr: histogram_quantile(0.95, sum by (le) (rate(vectorized_kafka_rpc_dispatch_handler_latency_seconds_bucket[5m]))) > 1
+        expr: histogram_quantile(0.99, sum by (le, redpanda_request) (rate(redpanda_kafka_request_latency_seconds_bucket[5m]))) > 1
         for: 10m
         labels: {severity: warning, service: redpanda}
         annotations:
-          summary: "Redpanda request p95 latency exceeds one second"
-          diagnostic: "Kafka RPC dispatch latency has remained elevated for ten minutes."
+          summary: "Redpanda request p99 latency exceeds one second"
+          diagnostic: "Kafka request latency has remained elevated for ten minutes."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-latency"
       - alert: RedpandaResourcePressure
-        expr: (1 - vectorized_storage_disk_free_space_bytes / clamp_min(vectorized_storage_disk_total_space_bytes, 1) > 0.85) or (vectorized_memory_allocated_memory / clamp_min(vectorized_memory_total_memory, 1) > 0.85)
+        expr: redpanda_storage_disk_free_space_alert > 0
         for: 10m
         labels: {severity: warning, service: redpanda}
         annotations:
-          summary: "Redpanda disk or memory utilization exceeds 85%"
-          diagnostic: "A broker resource has remained above the warning saturation threshold."
+          summary: "Redpanda reports low disk space on the shared host filesystem"
+          diagnostic: "The Redpanda storage free-space alert has remained active for ten minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-capacity"
+      - alert: RedpandaWirelessAuditProducerSilent
+        expr: sum(rate(redpanda_kafka_request_bytes_total{redpanda_topic="wireless.audit",redpanda_request="produce"}[10m])) == 0
+        for: 15m
+        labels: {severity: warning, service: redpanda}
+        annotations:
+          summary: "wireless.audit has not received producer traffic for fifteen minutes"
+          diagnostic: "The wireless sensor or its producer path may be unavailable."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda"
+      - alert: RedpandaContainerMemoryHigh
+        expr: max by (namespace, pod) (container_memory_working_set_bytes{namespace="prod-ssl-proxy",pod=~"ssl-proxy-redpanda-.*",container="",image="",id=~".*pod.*"}) / on (namespace, pod) sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="prod-ssl-proxy",pod=~"ssl-proxy-redpanda-.*",container="redpanda",resource="memory",unit="byte"} > 0) > 0.90
+        for: 10m
+        labels: {severity: warning, service: redpanda}
+        annotations:
+          summary: "Redpanda pod cgroup exceeds 90% of its memory limit"
+          diagnostic: "Pod working-set memory is close to the cgroup limit; verify Redpanda memory and reserve-memory settings."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-capacity"
       - alert: PostgreSQLUnavailable

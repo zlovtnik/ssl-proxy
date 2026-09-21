@@ -1,0 +1,97 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ssl-proxy-redpanda-topic-metrics
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-redpanda-topic-metrics
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ssl-proxy
+            app.kubernetes.io/component: telemetry-redpanda-topic-metrics
+            ssl-proxy.io/metrics-producer: "true"
+        spec:
+          serviceAccountName: ssl-proxy
+          automountServiceAccountToken: false
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+            fsGroup: 101
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: publish-topic-metrics
+              image: redpandadata/redpanda:v24.2.7@sha256:82a69763bef8d8b55ea5a520fa1b38f993908ef68946819ca1aed43541824c48
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  brokers=ssl-proxy-redpanda:9092
+                  pushgateway=http://ssl-proxy-telemetry-pushgateway:9091
+                  workdir="$(mktemp -d)"
+                  trap 'rm -rf "$workdir"' EXIT
+                  metrics="$workdir/redpanda-topic-metrics.prom"
+
+                  printf '%s\n' \
+                    '# HELP redpanda_topic_log_bytes Bytes written to each Redpanda topic according to rpk logdirs.' \
+                    '# TYPE redpanda_topic_log_bytes gauge' \
+                    '# HELP redpanda_topic_retention_bytes Configured per-partition retention-bytes for each topic; -1 means unlimited.' \
+                    '# TYPE redpanda_topic_retention_bytes gauge' > "$metrics"
+
+                  # Redpanda v24.2's rpk has no JSON output for logdirs or topic
+                  # describe. Its stable tabular columns are broker, directory, topic,
+                  # bytes, and optional error; reject rows with errors.
+                  rpk -X brokers="$brokers" cluster logdirs describe --aggregate-into topic > "$workdir/logdirs"
+                  awk 'NR > 1 && NF == 4 && $1 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {
+                    topic = $3
+                    gsub(/\\/, "\\\\", topic)
+                    gsub(/\"/, "\\\"", topic)
+                    printf "redpanda_topic_log_bytes{topic=\"%s\"} %s\n", topic, $4
+                  }' "$workdir/logdirs" >> "$metrics"
+
+                  rpk -X brokers="$brokers" topic list > "$workdir/topics"
+                  awk 'NR > 1 { print $1 }' "$workdir/topics" |
+                    while IFS= read -r topic; do
+                      rpk -X brokers="$brokers" topic describe "$topic" -c > "$workdir/topic-config"
+                      retention_bytes="$(awk '$1 == "retention.bytes" { print $2; exit }' "$workdir/topic-config")"
+                      case "$retention_bytes" in
+                        -[0-9]*|[0-9]*)
+                          printf 'redpanda_topic_retention_bytes{topic="%s"} %s\n' "$topic" "$retention_bytes" >> "$metrics"
+                          ;;
+                      esac
+                    done
+
+                  printf 'redpanda_topic_inventory_last_success_unixtime %s\n' "$(date +%s)" >> "$metrics"
+                  curl --fail --silent --show-error --data-binary "@$metrics" "$pushgateway/metrics/job/redpanda_topic_inventory"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}

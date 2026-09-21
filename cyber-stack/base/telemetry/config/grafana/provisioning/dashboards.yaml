@@ -3,6 +3,7 @@ providers:
   - name: ssl-proxy-observability
     orgId: 1
     folder: ssl-proxy
+    folderUid: dfyvgmaktckjkb
     type: file
     disableDeletion: false
     allowUiUpdates: false

@@ -73,13 +73,22 @@ groups:
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#oom"
       - alert: RedpandaConsumerLagHigh
-        expr: max by (topic, consumer_group) (coordinator_redpanda_consumer_lag_records{service="octopus"}) > 5000
-        for: 10m
+        expr: |
+          max by (redpanda_group, redpanda_topic) (
+            clamp_min(
+              -(
+                redpanda_kafka_consumer_group_committed_offset - on (redpanda_topic, redpanda_partition) group_left
+                redpanda_kafka_max_offset{redpanda_namespace="kafka"}
+              ),
+              0
+            )
+          ) > 5000
+        for: 15m
         labels: {severity: warning, service: redpanda}
         annotations:
-          summary: "Coordinator lag exceeds 5,000 records for {{ $labels.topic }}"
-          diagnostic: "The coordinator has not caught up with a Redpanda topic for ten minutes."
-          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          summary: "Redpanda group {{ $labels.redpanda_group }} lags {{ $labels.redpanda_topic }} by over 5,000 records"
+          diagnostic: "The committed offset has remained behind the partition max offset for fifteen minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbook.md#coordinator-and-stream-recovery"
       - alert: CoordinatorLagMetricsStale
         expr: max(coordinator_redpanda_lag_stale_seconds{service="octopus"}) > 900

@@ -35,6 +35,18 @@ scrape_configs:
       - targets: ["ssl-proxy-redpanda:9644"]
         labels: {service: redpanda}
 
+  # The public endpoint is the source for broker, Kafka, disk, and consumer
+  # metrics. Keep the legacy endpoint narrowly scoped to reactor diagnostics.
+  - job_name: ssl-proxy-redpanda-internal
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ssl-proxy-redpanda:9644"]
+        labels: {service: redpanda}
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: vectorized_(reactor|stall_detector|memory_(allocated|total))_.*
+        action: keep
+
   - job_name: ssl-proxy-minio
     metrics_path: /minio/v2/metrics/cluster
     authorization:
@@ -150,10 +162,13 @@ scrape_configs:
         replacement: kubelet-cadvisor
     metric_relabel_configs:
       - source_labels: [container_label_io_kubernetes_pod_name]
+        regex: (.+)
         target_label: pod
       - source_labels: [container_label_io_kubernetes_pod_namespace]
+        regex: (.+)
         target_label: namespace
       - source_labels: [container_label_io_kubernetes_container_name]
+        regex: (.+)
         target_label: container
 
   - job_name: kubelet-volume-stats

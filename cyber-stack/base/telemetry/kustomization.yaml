@@ -12,6 +12,7 @@ resources:
   - alertmanager.yaml
   - kube-state-metrics.yaml
   - blackbox-exporter.yaml
+  - redpanda-topic-metrics.yaml
 
 configMapGenerator:
   - name: ssl-proxy-telemetry-prometheus-config
