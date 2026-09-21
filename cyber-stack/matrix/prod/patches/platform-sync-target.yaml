@@ -26,6 +26,7 @@ rules:
   - schema-migrator-bootstrap
   - schema-migrator-keycloak
   - ssl-proxy-identity-tls
+  - vault-server-ca
   - wireguard-config
   verbs:
   - get
