@@ -119,8 +119,24 @@ jobs:
       - name: Verify Octopus source identity
         run: make octopus-source-integrity
 
-      - name: Test Octopus
-        run: cd services/octopus && sbt test
+      - name: Test Octopus with JaCoCo and Cucumber reports
+        env:
+          OCTOPUS_REQUIRE_DOCKER: "true"
+        run: |
+          cd services/octopus
+          sbt scalafmtCheckAll "scalafixAll --check" test jacoco
+          python3 scripts/check_coverage.py target/scala-3.3.8/jacoco/report/jacoco.xml
+
+      - name: Upload Octopus JaCoCo and Cucumber reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: octopus-test-reports
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            services/octopus/target/scala-3.3.8/jacoco/report/
+            services/octopus/target/cucumber/
 
       - name: Assemble and inspect Octopus artifact
         run: |
