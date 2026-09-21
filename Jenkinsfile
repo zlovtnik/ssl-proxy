@@ -87,7 +87,7 @@ pipeline {
             sh 'make gitops-check'
             sh '''
               set -eu
-              jq empty cyber-stack/base/telemetry/config/grafana/dashboards/*.json
+              python3 -c "import json, glob; [json.load(open(f)) for f in glob.glob('cyber-stack/base/telemetry/config/grafana/dashboards/*.json')]"
               bash -n cyber-stack/base/redpanda-maintenance/redpanda-daily-clean.sh
               python3 scripts/check_redpanda_maintenance.py
               docker run --rm -v "$PWD:/mnt:ro" koalaman/shellcheck-alpine:v0.10.0 \
