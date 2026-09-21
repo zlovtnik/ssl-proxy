@@ -75,6 +75,7 @@ EXPECTED_INPUTS = {
         "publickey-peer2",
         "presharedkey-peer2",
     },
+    ("Secret", "vault-server-ca"): {"ca.crt"},
     ("ConfigMap", "ssl-proxy-prod-postgres-endpoint"): {
         "POSTGRES_HOST",
         "POSTGRES_PORT",
@@ -217,7 +218,7 @@ class PlatformInputContractTest(unittest.TestCase):
         }
 
         self.assertEqual(EXPECTED_INPUTS, actual)
-        self.assertEqual(19, sum(entry.kind == "Secret" for entry in contract.inputs))
+        self.assertEqual(20, sum(entry.kind == "Secret" for entry in contract.inputs))
         self.assertEqual(1, sum(entry.kind == "ConfigMap" for entry in contract.inputs))
         for entry in contract.inputs:
             self.assertEqual(

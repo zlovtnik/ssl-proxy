@@ -115,7 +115,7 @@ class PlatformSyncRbacTest(unittest.TestCase):
 
         secrets_rule = next(r for r in rules if "secrets" in r["resources"])
         self.assertEqual(["get", "update"], secrets_rule["verbs"])
-        self.assertEqual(19, len(secrets_rule["resourceNames"]))
+        self.assertEqual(20, len(secrets_rule["resourceNames"]))
 
         configmaps_rule = next(r for r in rules if "configmaps" in r["resources"])
         self.assertEqual(["get", "update"], configmaps_rule["verbs"])

@@ -393,7 +393,7 @@ plan_topic() {
 
 main() {
   local topic days gate groups evidence extra
-  for command in bash curl date jq psql rpk timeout; do command -v "$command" >/dev/null || die "missing command: $command"; done
+  for command in bash curl date psql rpk timeout; do command -v "$command" >/dev/null || die "missing command: $command"; done
   case "$DRY_RUN" in
     true|TRUE|1|yes|YES|false|FALSE|0|no|NO) ;;
     *) die "invalid boolean: $DRY_RUN" ;;
