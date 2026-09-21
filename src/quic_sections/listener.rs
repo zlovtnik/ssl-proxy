@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Bytes;
-use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;

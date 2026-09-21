@@ -30,6 +30,7 @@ pub struct EmitPayload {
 
 #[derive(Serialize)]
 struct EventEnvelope<'a> {
+    event_id: String,
     #[serde(rename = "type")]
     event: &'a str,
     host: &'a str,
@@ -214,8 +215,25 @@ pub(crate) fn emit_serializable<T>(
         sanitize_extra_host_fields(&mut extra);
     }
 
+    let classification = extra
+        .get("classification")
+        .or_else(|| extra.get("category"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| {
+            matches!(
+                *value,
+                "ads_tracker" | "analytics" | "cdn" | "essential_api" | "auth" | "unknown"
+            )
+        })
+        .unwrap_or_else(|| crate::tunnel::classify(&event_host, 443, None));
+    extra.insert(
+        "classification".to_string(),
+        serde_json::Value::String(classification.to_string()),
+    );
+
     let observed_at = crate::time::now_rfc3339();
     let raw = match serde_json::to_string(&EventEnvelope {
+        event_id: uuid::Uuid::new_v4().to_string(),
         event,
         host: &event_host,
         time: observed_at.clone(),

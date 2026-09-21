@@ -133,10 +133,12 @@ pub async fn handler(
     if hostname.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    state.record_classification(crate::tunnel::classify(&hostname, target_port, None));
+    let classification = crate::tunnel::classify(&hostname, target_port, None);
+    state.record_classification(classification);
     if blocklist::is_blocked(&hostname, &state) {
         #[derive(Serialize)]
         struct HttpBlockedExtra {
+            classification: &'static str,
             method: String,
             uri: String,
             duration_ms: u128,
@@ -200,6 +202,7 @@ pub async fn handler(
             true,
             None,
             HttpBlockedExtra {
+                classification,
                 method: req.method().as_str().to_string(),
                 uri: scrubbed,
                 duration_ms,
@@ -371,6 +374,7 @@ pub async fn handler(
                         Some(profile.as_str().to_string())
                     },
                     extra: serde_json::json!({
+                        "classification": classification,
                         "method": method.as_str(),
                         "uri":    scrubbed_uri,
                         "status": status,
@@ -433,6 +437,7 @@ pub async fn handler(
                     blocked: false,
                     obfuscation_profile: None,
                     extra: serde_json::json!({
+                        "classification": classification,
                         "method": method.as_str(),
                         "uri":    scrubbed_uri,
                         "error_kind": if e.is_connect() { "connect" }

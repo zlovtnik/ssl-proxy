@@ -217,6 +217,13 @@ async fn emit_serializable_uses_one_timestamp_and_top_level_identity_fields() {
     assert_eq!(envelope["identity_source"], "registered");
     assert_eq!(envelope["peer_hostname"], "phone.local");
     assert_eq!(envelope["client_ua"], "ExampleUA/1.0");
+    assert!(uuid::Uuid::parse_str(
+        envelope["event_id"]
+            .as_str()
+            .expect("event_id should be a string")
+    )
+    .is_ok());
+    assert_eq!(envelope["classification"], "essential_api");
 
     let published = state.publisher.published_messages();
     assert_eq!(published.len(), 1);

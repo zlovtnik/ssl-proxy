@@ -98,14 +98,10 @@ async fn handle_h3_request(
 
     // Parse host with proper IPv6 support
     let (hostname, port) = parse_host_port(&host);
+    let initial_category = classify(&hostname, port, None);
 
     // Blocklist check — same logic as tunnel::handle (lines 801-935)
     if blocklist::is_blocked(&hostname, &state) {
-        #[derive(Serialize)]
-        struct QuicBlockExtra {
-            kind: &'static str,
-        }
-
         state.record_blocked();
         let approx_bytes = (50 + hostname.len()) as u64;
         state.record_host_block(&hostname, approx_bytes, "quic");
@@ -132,7 +128,10 @@ async fn handle_h3_request(
             None,
             true,
             None,
-            QuicBlockExtra { kind: "quic-h3" },
+            serde_json::json!({
+                "kind": "quic-h3",
+                "classification": initial_category,
+            }),
         );
 
         // Return 200 OK then immediately close (fast drop)
