@@ -74,7 +74,7 @@ groups:
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#oom"
       - alert: RedpandaConsumerLagHigh
         expr: |
-          max by (redpanda_group, redpanda_topic) (
+          sum by (redpanda_group, redpanda_topic) (
             clamp_min(
               -(
                 redpanda_kafka_consumer_group_committed_offset - on (redpanda_topic, redpanda_partition) group_left

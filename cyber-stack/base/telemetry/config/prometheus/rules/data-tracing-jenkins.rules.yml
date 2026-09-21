@@ -55,7 +55,9 @@ groups:
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-capacity"
       - alert: RedpandaWirelessAuditProducerSilent
-        expr: sum(rate(redpanda_kafka_request_bytes_total{redpanda_topic="wireless.audit",redpanda_request="produce"}[10m])) == 0
+        expr: |
+          (sum(rate(redpanda_kafka_request_bytes_total{redpanda_topic="wireless.audit",redpanda_request="produce"}[10m])) == 0)
+          or absent_over_time(redpanda_kafka_request_bytes_total{redpanda_topic="wireless.audit",redpanda_request="produce"}[10m])
         for: 15m
         labels: {severity: warning, service: redpanda}
         annotations:
