@@ -90,8 +90,8 @@ pipeline {
               python3 -c "import json, glob; [json.load(open(f)) for f in glob.glob('cyber-stack/base/telemetry/config/grafana/dashboards/*.json')]"
               bash -n cyber-stack/base/redpanda-maintenance/redpanda-daily-clean.sh
               python3 scripts/check_redpanda_maintenance.py
-              docker run --rm -v "$PWD:/mnt:ro" koalaman/shellcheck-alpine:v0.10.0 \
-                /mnt/cyber-stack/base/redpanda-maintenance/redpanda-daily-clean.sh
+              tar -cf - cyber-stack/base/redpanda-maintenance/redpanda-daily-clean.sh | docker run --rm -i koalaman/shellcheck-alpine:v0.10.0 \
+                sh -c 'tar --no-same-owner -xf - && shellcheck /cyber-stack/base/redpanda-maintenance/redpanda-daily-clean.sh'
               awk -F'|' '
                 /^[[:space:]]+[[:alnum:]._-]+\\|/ && (NF != 5 || $5 == "") {
                   print "topic manifest row is missing retention.bytes: " $0 > "/dev/stderr"
@@ -99,9 +99,9 @@ pipeline {
                 }
                 END { exit invalid }
               ' cyber-stack/base/platform-config/configmap.yaml
-              docker run --rm --entrypoint /bin/promtool -v "$PWD:/workspace:ro" -w /workspace \
+              tar -cf - cyber-stack/base/telemetry/config/prometheus/rules | docker run --rm -i -w /workspace --entrypoint /bin/promtool \
                 prom/prometheus:v3.2.1@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69 \
-                check rules cyber-stack/base/telemetry/config/prometheus/rules/*.yml
+                sh -c 'tar --no-same-owner -xf - && check rules /workspace/cyber-stack/base/telemetry/config/prometheus/rules/*.yml'
             '''
             sh 'make jenkins-plugin-audit'
             sh "python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v"
