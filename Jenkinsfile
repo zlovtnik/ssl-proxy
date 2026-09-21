@@ -93,7 +93,7 @@ pipeline {
               docker run --rm -v "$PWD:/mnt:ro" koalaman/shellcheck-alpine:v0.10.0 \
                 /mnt/cyber-stack/base/redpanda-maintenance/redpanda-daily-clean.sh
               awk -F'|' '
-                /^[[:space:]]+[[:alnum:]._-]+\|/ && (NF != 5 || $5 == "") {
+                /^[[:space:]]+[[:alnum:]._-]+\\|/ && (NF != 5 || $5 == "") {
                   print "topic manifest row is missing retention.bytes: " $0 > "/dev/stderr"
                   invalid = 1
                 }
