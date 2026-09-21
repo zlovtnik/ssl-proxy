@@ -99,9 +99,10 @@ pipeline {
                 }
                 END { exit invalid }
               ' cyber-stack/base/platform-config/configmap.yaml
-              tar -cf - cyber-stack/base/telemetry/config/prometheus/rules | docker run --rm -i -w /workspace --entrypoint /bin/promtool \
+              tar -cf - cyber-stack/base/telemetry/config/prometheus/rules | docker run --rm -i -w /workspace \
+                --entrypoint sh \
                 prom/prometheus:v3.2.1@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69 \
-                sh -c 'tar --no-same-owner -xf - && check rules /workspace/cyber-stack/base/telemetry/config/prometheus/rules/*.yml'
+                -c 'tar --no-same-owner -xf - && promtool check rules cyber-stack/base/telemetry/config/prometheus/rules/*.yml'
             '''
             sh 'make jenkins-plugin-audit'
             sh "python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v"
