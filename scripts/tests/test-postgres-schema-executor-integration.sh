@@ -40,12 +40,16 @@ docker exec --interactive "${database_container}" psql \
 CREATE EXTENSION pgcrypto;
 CREATE EXTENSION vector;
 CREATE EXTENSION pg_stat_statements;
-CREATE ROLE schema_owner LOGIN PASSWORD 'integration-schema-owner' CREATEROLE;
+CREATE ROLE schema_owner LOGIN PASSWORD 'integration-schema-owner';
 CREATE ROLE octopus_runtime LOGIN;
 CREATE ROLE atheros_search_runtime LOGIN;
 CREATE ROLE schema_migrator_runtime LOGIN;
 CREATE ROLE keycloak_runtime LOGIN;
 GRANT CREATE ON DATABASE sync TO schema_owner;
+ALTER ROLE octopus_runtime IN DATABASE sync SET search_path TO octopus_core, atheros_search;
+ALTER ROLE atheros_search_runtime IN DATABASE sync SET search_path TO atheros_search;
+ALTER ROLE schema_migrator_runtime IN DATABASE sync SET search_path TO schema_migrator;
+ALTER ROLE keycloak_runtime IN DATABASE sync SET search_path TO keycloak;
 SQL
 
 run_executor() {

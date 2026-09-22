@@ -301,7 +301,10 @@ apply_domain() {
       { echo "checksum mismatch: ${domain}/${relative}" >&2; exit 1; }
     apply_tracked_file "${domain}" "${relative}" "${expected}" "${sql_file}"
   done
-  domain_required_objects_exist "${domain}" || exit 1
+  case "${domain}" in
+    keycloak) ;;
+    *) domain_required_objects_exist "${domain}" || exit 1 ;;
+  esac
   case "${domain}" in
     keycloak) assert_domain_ownership "${domain}" false ;;
     *) assert_domain_ownership "${domain}" true ;;

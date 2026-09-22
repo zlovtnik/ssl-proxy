@@ -45,7 +45,10 @@ class PostgresSchemaExecutorTest(unittest.TestCase):
 
         self.assertIn("domain_required_objects_exist()", script)
         self.assertIn("SELECT to_regclass('${object}') IS NOT NULL", script)
-        self.assertIn('domain_required_objects_exist "${domain}" || exit 1', script)
+        self.assertIn(
+            '*) domain_required_objects_exist "${domain}" || exit 1 ;;', script
+        )
+        self.assertIn("keycloak) ;;", script)
 
     def test_role_defaults_are_checked_before_privileged_alter(self) -> None:
         script = ENTRYPOINT.read_text(encoding="utf-8")
