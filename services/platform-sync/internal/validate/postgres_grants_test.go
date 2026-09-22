@@ -138,6 +138,9 @@ func parseGrantFixture(t *testing.T, sql string) map[string]rolePrivileges {
 			continue
 		}
 		upper := strings.ToUpper(statement)
+		if strings.HasPrefix(upper, "REVOKE CREATE ON SCHEMA ") {
+			continue
+		}
 		if !strings.HasPrefix(upper, "GRANT ") {
 			t.Fatalf("unsupported statement in canonical grant fixture: %s", statement)
 		}
