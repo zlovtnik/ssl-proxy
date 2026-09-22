@@ -197,10 +197,10 @@ func validateAccountGrants(ctx context.Context, connection *pgx.Conn, user strin
 		if err := requireSchemaPrivileges(ctx, connection, "octopus_core", "USAGE"); err != nil {
 			return err
 		}
-		if err := requireAllTablePrivileges(ctx, connection, "octopus_core", "SELECT", "INSERT", "UPDATE", "DELETE"); err != nil {
+		if err := requireTableGrants(ctx, connection, octopusCoreGrants()); err != nil {
 			return err
 		}
-		if err := requireAllSequencePrivileges(ctx, connection, "octopus_core", "USAGE", "SELECT"); err != nil {
+		if err := requireSequenceGrants(ctx, connection, octopusCoreSequenceGrants()); err != nil {
 			return err
 		}
 		if err := requireSchemaPrivileges(ctx, connection, "atheros_search", "USAGE"); err != nil {
@@ -322,6 +322,47 @@ func atherosSearchSequenceGrants() []sequenceGrant {
 		{sequence: "atheros_search.search_vectors_sequence_vector_id_seq", privileges: privileges},
 		{sequence: "atheros_search.search_queries_query_id_seq", privileges: privileges},
 	}
+}
+
+func octopusCoreGrants() []tableGrant {
+	crud := []string{"SELECT", "INSERT", "UPDATE", "DELETE"}
+	grants := []tableGrant{
+		{table: "octopus_core.schema_readiness", privileges: []string{"SELECT"}},
+	}
+	for _, table := range []string{
+		"registered_devices", "authorized_networks", "consumer_checkpoints", "ingestion_receipts",
+		"work_items", "dead_letters", "outbox_events", "outbox_attempts", "processor_runs",
+		"processor_checkpoints", "proxy_events", "wireless_observations", "wireless_alerts", "sensors",
+		"payload_archives", "maintenance_runs", "maintenance_findings", "sync_cursors", "consumer_offsets",
+		"sync_jobs", "sync_batches", "sync_errors", "sync_backlog", "ingestion_evidence", "sync_events",
+		"sync_event_payload_archives", "sync_event_tombstones", "devices", "wireless_authorized_networks",
+		"wireless_clients", "wireless_shadow_alerts", "wireless_frames", "wireless_frame_radio",
+		"wireless_frame_qos", "wireless_frame_network", "wireless_frame_app_signals",
+		"wireless_frame_identity", "wireless_frame_security", "wireless_inventory_projection_inputs",
+		"wireless_shadow_alert_inputs", "wireless_sensors", "wireless_audit_frames",
+		"wireless_bandwidth_windows", "wireless_client_inventory", "wireless_probe_requests",
+		"proxy_blocked_host_rollups", "proxy_payload_audit", "work_leases", "processor_state",
+		"retention_runs", "reconciliation_findings", "outbox_publish_attempts",
+	} {
+		grants = append(grants, tableGrant{table: "octopus_core." + table, privileges: crud})
+	}
+	return grants
+}
+
+func octopusCoreSequenceGrants() []sequenceGrant {
+	grants := make([]sequenceGrant, 0, 9)
+	for _, sequence := range []string{
+		"sync_errors_id_seq", "wireless_authorized_networks_id_seq", "wireless_sensors_sensor_pk_seq",
+		"wireless_audit_frames_frame_pk_seq", "wireless_bandwidth_windows_bw_pk_seq",
+		"wireless_client_inventory_inventory_pk_seq", "wireless_probe_requests_probe_pk_seq",
+		"proxy_blocked_host_rollups_id_seq", "proxy_payload_audit_id_seq",
+	} {
+		grants = append(grants, sequenceGrant{
+			sequence:   "octopus_core." + sequence,
+			privileges: []string{"USAGE"},
+		})
+	}
+	return grants
 }
 
 func octopusAtherosGrants() []tableGrant {

@@ -82,7 +82,31 @@ func TestAtherosSearchRuntimeExcludesCoordinatorAndUnknownTables(t *testing.T) {
 	}
 }
 
+func TestOctopusCoreGrantMatrixMatchesCanonicalSQL(t *testing.T) {
+	t.Parallel()
+
+	fixture, err := os.ReadFile(canonicalGrantFixture(t, "octopus_core"))
+	if err != nil {
+		t.Fatalf("read canonical grant fixture: %v", err)
+	}
+	want, ok := parseGrantFixture(t, string(fixture))["{{OCTOPUS_ACCOUNT}}"]
+	if !ok {
+		t.Fatal("canonical fixture has no grants for {{OCTOPUS_ACCOUNT}}")
+	}
+	got := rolePrivileges{
+		tables:    tablePrivilegeMap(octopusCoreGrants()),
+		sequences: sequencePrivilegeMap(octopusCoreSequenceGrants()),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Go grant matrix differs from canonical SQL\nGo:  %#v\nSQL: %#v", got, want)
+	}
+}
+
 func canonicalAtherosGrantFixture(t *testing.T) string {
+	return canonicalGrantFixture(t, "atheros_search")
+}
+
+func canonicalGrantFixture(t *testing.T, schema string) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
@@ -91,7 +115,7 @@ func canonicalAtherosGrantFixture(t *testing.T) string {
 	return filepath.Clean(filepath.Join(
 		filepath.Dir(filename),
 		"..", "..", "..", "..",
-		"sql", "postgres", "atheros_search", "grants", "least_privilege.sql.tmpl",
+		"sql", "postgres", schema, "grants", "least_privilege.sql.tmpl",
 	))
 }
 
