@@ -186,15 +186,6 @@ git cat-file -e "${reviewed_sha}^{commit}"
 release_root="$(mktemp -d /tmp/platform-sync-release.XXXXXX)"
 git worktree add --detach "$release_root/worktree" "$reviewed_sha"
 
-sudo /bin/bash -ceu '
-  set -a
-  source /etc/platform-sync/platform-sync.conf
-  set +a
-  export VAULT_CACERT=/etc/platform-sync/vault-ca.crt
-  export VAULT_TOKEN="$(</etc/platform-sync/vault-token)"
-  vault status
-'
-
 sudo systemctl stop vault-k8s-sync.timer
 sudo systemctl is-active --quiet vault-k8s-sync.service && {
   echo 'vault-k8s-sync.service is still active' >&2
@@ -207,17 +198,23 @@ test "$(sudo sha256sum /opt/platform-sync/contract/platform-input-contract.yaml 
 ```
 
 Do not pass `VAULT_TOKEN_SOURCE` or `VAULT_CA_SOURCE` during this reinstall;
-the installer retains the existing `/etc/platform-sync` files. Before the
-one-shot run, capture the prior success timestamp. Then require the run to load
-21 inputs, pass every validation, and publish the exact current contract:
+the installer retains the existing `/etc/platform-sync` files. Do not read
+those files directly to test Vault connectivity; the one-shot service below
+validates connectivity with the token and CA supplied through systemd
+`LoadCredential=`. Before the one-shot run, capture the prior success timestamp.
+Then require the run to load 21 inputs, pass every validation, and publish the
+exact current contract:
 
 ```bash
+set -e
 previous_success="$(sudo env KUBECONFIG=/run/platform-sync/kubeconfig \
   kubectl get configmap platform-ready -n prod-ssl-proxy \
   -o jsonpath='{.data.last-success-unix}')"
 sudo systemctl start vault-k8s-sync.service
-sudo journalctl -u vault-k8s-sync.service -n 100 --no-pager \
-  | rg '"inputs":21|"count":21|all validations passed|sync complete'
+recovery_log="$(sudo journalctl -u vault-k8s-sync.service -n 100 --no-pager)"
+printf '%s\n' "$recovery_log" | rg -q '"inputs":21|"count":21'
+printf '%s\n' "$recovery_log" | rg -q 'all validations passed'
+printf '%s\n' "$recovery_log" | rg -q 'sync complete'
 
 read -r ready digest last_success <<EOF
 $(sudo env KUBECONFIG=/run/platform-sync/kubeconfig \
@@ -226,6 +223,7 @@ $(sudo env KUBECONFIG=/run/platform-sync/kubeconfig \
 EOF
 test "$ready" = true
 test "$digest" = 9516aa0d26a309d92d27d994ae295555f886c0d3d93f51f1c6d854a2234ca8ed
+case "$previous_success" in ''|*[!0-9]*) exit 1 ;; esac
 case "$last_success" in ''|*[!0-9]*) exit 1 ;; esac
 test "$last_success" -gt "$previous_success"
 sudo systemctl start vault-k8s-sync.timer

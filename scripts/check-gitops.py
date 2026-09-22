@@ -2024,10 +2024,10 @@ def _check_postgres_pool_readiness(
             script = "\n".join(str(arg) for arg in _list(container.get("args")))
             for required in (
                 '"$PLATFORM_READY" != "true"',
-                "readiness is not true (observed: %s)",
+                "printf 'platform input preflight: readiness is not true (observed: %s)\\n' \"$PLATFORM_READY\" >&2",
                 '"$PLATFORM_CONTRACT_SHA256" != "$EXPECTED_CONTRACT_SHA256"',
-                "contract digest mismatch (expected: %s, observed: %s)",
-                "invalid last-success-unix (observed: %s)",
+                "printf 'platform input preflight: contract digest mismatch (expected: %s, observed: %s)\\n' \"$EXPECTED_CONTRACT_SHA256\" \"$PLATFORM_CONTRACT_SHA256\" >&2",
+                "printf 'platform input preflight: invalid last-success-unix (observed: %s)\\n' \"$PLATFORM_LAST_SUCCESS_UNIX\" >&2",
             ):
                 if required not in script:
                     errors.append(
