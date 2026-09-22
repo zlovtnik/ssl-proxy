@@ -112,9 +112,11 @@ spec:
                   name: ssl-proxy-platform-config
                   key: SYNC_PAYLOAD_AUDIT_CONSUMER
             - name: SYNC_SCAN_CONSUMERS_COUNT
-              value: "1"
+              value: "4"
+            - name: SYNC_LOAD_CONSUMERS_COUNT
+              value: "4"
             - name: SYNC_RESULT_CONSUMERS_COUNT
-              value: "1"
+              value: "4"
             - name: WIRELESS_CONSUMERS_COUNT
               value: "1"
             - name: WIRELESS_MAX_POLL_RECORDS
