@@ -16,8 +16,10 @@ class PostgresSchemaExecutorTest(unittest.TestCase):
         self.assertIn("schema_migrator.state_schema_migrations", script)
         self.assertIn("pg_advisory_xact_lock", script)
         self.assertIn("migration_checksum_mismatch", script)
+        self.assertIn("RAISE EXCEPTION 'migration checksum drift", script)
         self.assertIn("migration_already_applied", script)
         self.assertIn("migration applied: :migration_key", script)
+        self.assertNotIn("\\quit 3", script)
         self.assertNotIn('psql_run --file="${sql_file}"', script)
 
     def test_pre_ledger_attestations_require_an_explicit_trusted_baseline(self) -> None:

@@ -127,9 +127,7 @@ apply_tracked_file() {
     printf '%s\n' "SELECT pg_advisory_xact_lock(hashtextextended('ssl-proxy-postgres-schema-executor', 0));"
     printf '%s\n' "SELECT EXISTS (SELECT 1 FROM schema_migrator.state_schema_migrations WHERE version = :'migration_key' AND checksum <> :'migration_checksum') AS migration_checksum_mismatch \\gset"
     printf '%s\n' '\if :migration_checksum_mismatch'
-    printf '%s\n' '\echo migration checksum drift for :migration_key'
-    printf '%s\n' 'ROLLBACK;'
-    printf '%s\n' '\quit 3'
+    printf '%s\n' "DO \$\$ BEGIN RAISE EXCEPTION 'migration checksum drift for ${key}'; END \$\$;"
     printf '%s\n' '\endif'
     printf '%s\n' "SELECT EXISTS (SELECT 1 FROM schema_migrator.state_schema_migrations WHERE version = :'migration_key' AND checksum = :'migration_checksum') AS migration_already_applied \\gset"
     printf '%s\n' '\if :migration_already_applied'

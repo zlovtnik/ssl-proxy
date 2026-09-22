@@ -195,6 +195,12 @@ class PostgresSearchUpgradeTest(unittest.TestCase):
               '00000000-0000-0000-0000-000000000002',
               '00000000-0000-0000-0000-000000000001', 'merge', CURRENT_TIMESTAMP
             );
+            INSERT INTO atheros_search.merge_decisions (
+              decision_id, candidate_id, decision, decided_at
+            ) VALUES (
+              '00000000-0000-0000-0000-000000000004',
+              '00000000-0000-0000-0000-000000000005', 'merge', CURRENT_TIMESTAMP
+            );
             INSERT INTO atheros_search.identity_clusters (
               cluster_id, cluster_name, first_seen, last_seen
             ) VALUES (
@@ -240,8 +246,56 @@ class PostgresSearchUpgradeTest(unittest.TestCase):
         self.assertEqual(self.sql("""
             SELECT count(*) FROM pg_constraint
             WHERE conrelid = 'atheros_search.merge_decisions'::regclass
-              AND conname = 'merge_decisions_fk' AND convalidated
+              AND conname = 'merge_decisions_fk' AND convalidated AND confdeltype = 'c'
         """), "1")
+        self.assertEqual(self.sql("""
+            SELECT count(*) FROM pg_constraint
+            WHERE conrelid = 'atheros_search.merge_decisions'::regclass
+              AND contype = 'p'
+              AND pg_get_constraintdef(oid) = 'PRIMARY KEY (candidate_id)'
+        """), "1")
+        self.assertEqual(self.sql("""
+            SELECT count(*) FROM information_schema.columns
+            WHERE table_schema = 'atheros_search'
+              AND table_name = 'merge_decisions'
+              AND column_name = 'decision_id'
+        """), "0")
+        self.assertEqual(self.sql("""
+            SELECT count(*) FROM information_schema.columns
+            WHERE table_schema = 'atheros_search'
+              AND table_name = 'merge_decisions'
+              AND column_name = 'decided_at'
+              AND column_default IS NOT NULL
+        """), "1")
+        self.assertEqual(self.sql("SELECT count(*) FROM atheros_search.merge_decisions"), "1")
+        self.assertEqual(self.sql("""
+            SELECT count(*) FROM information_schema.columns
+            WHERE table_schema = 'atheros_search'
+              AND table_name = 'graph_nodes'
+              AND column_name IN ('label', 'location_id', 'sensor_id', 'normalized_mac',
+                                  'normalized_ssid', 'is_threat')
+        """), "6")
+        self.assertEqual(self.sql("""
+            SELECT character_maximum_length FROM information_schema.columns
+            WHERE table_schema = 'atheros_search'
+              AND table_name = 'graph_nodes' AND column_name = 'node_kind'
+        """), "64")
+        self.assertEqual(self.sql("""
+            SELECT count(*) FROM information_schema.columns
+            WHERE table_schema = 'atheros_search'
+              AND table_name = 'graph_edges'
+              AND column_name IN ('label', 'observed_at')
+        """), "2")
+        self.assertEqual(self.sql("""
+            SELECT count(*) FROM information_schema.columns
+            WHERE table_schema = 'atheros_search'
+              AND is_nullable = 'YES'
+              AND (
+                (table_name = 'identity_clusters' AND column_name IN ('first_seen', 'last_seen'))
+                OR (table_name = 'identity_cluster_members' AND column_name IN ('first_seen', 'last_seen'))
+                OR (table_name = 'graph_nodes' AND column_name = 'observed_at')
+              )
+        """), "5")
         self.assertIn("computed_at", self.sql("""
             SELECT indexdef FROM pg_indexes
             WHERE schemaname = 'atheros_search'

@@ -81,6 +81,30 @@ BEGIN
     ALTER TABLE atheros_search.merge_decisions
       ALTER COLUMN candidate_id TYPE text USING candidate_id::text;
   END IF;
+END $$;
+
+ALTER TABLE atheros_search.merge_decisions
+  ALTER COLUMN decided_at SET DEFAULT CURRENT_TIMESTAMP,
+  DROP COLUMN IF EXISTS decision_id;
+
+DELETE FROM atheros_search.merge_decisions decision
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM atheros_search.merge_candidates candidate
+  WHERE candidate.candidate_id = decision.candidate_id
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'atheros_search.merge_decisions'::regclass
+      AND contype = 'p'
+  ) THEN
+    ALTER TABLE atheros_search.merge_decisions
+      ADD CONSTRAINT merge_decisions_pkey PRIMARY KEY (candidate_id);
+  END IF;
   IF NOT EXISTS (
     SELECT 1
     FROM pg_constraint
@@ -134,6 +158,8 @@ UPDATE atheros_search.identity_clusters
 SET projection_run_id = COALESCE(projection_run_id, cluster_id)
 WHERE projection_run_id IS NULL;
 ALTER TABLE atheros_search.identity_clusters
+  ALTER COLUMN first_seen DROP NOT NULL,
+  ALTER COLUMN last_seen DROP NOT NULL,
   ALTER COLUMN projection_run_id SET NOT NULL;
 
 CREATE INDEX IF NOT EXISTS identity_clusters_status_idx ON atheros_search.identity_clusters (status, last_seen);
@@ -169,7 +195,9 @@ UPDATE atheros_search.identity_cluster_members
 SET evidence = COALESCE(evidence, '{}'::jsonb)
 WHERE evidence IS NULL;
 ALTER TABLE atheros_search.identity_cluster_members
-  ALTER COLUMN evidence SET NOT NULL;
+  ALTER COLUMN evidence SET NOT NULL,
+  ALTER COLUMN first_seen DROP NOT NULL,
+  ALTER COLUMN last_seen DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS identity_cluster_members_cluster_idx ON atheros_search.identity_cluster_members (cluster_id);
 
@@ -188,6 +216,14 @@ CREATE TABLE IF NOT EXISTS atheros_search.graph_nodes (
   updated_at       timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (node_id)
 );
+
+ALTER TABLE atheros_search.graph_nodes
+  ADD COLUMN IF NOT EXISTS label TEXT DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS location_id VARCHAR(128) DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS sensor_id VARCHAR(64) DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS normalized_mac VARCHAR(17) DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS normalized_ssid VARCHAR(256) DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS is_threat boolean NOT NULL DEFAULT false;
 
 DO $$
 BEGIN
@@ -213,7 +249,9 @@ BEGIN
   END IF;
 END $$;
 ALTER TABLE atheros_search.graph_nodes
-  ALTER COLUMN node_payload SET DEFAULT '{}'::jsonb;
+  ALTER COLUMN node_kind TYPE VARCHAR(64) USING node_kind::VARCHAR(64),
+  ALTER COLUMN node_payload SET DEFAULT '{}'::jsonb,
+  ALTER COLUMN observed_at DROP NOT NULL;
 UPDATE atheros_search.graph_nodes
 SET node_payload = COALESCE(node_payload, '{}'::jsonb),
     projection_run_id = COALESCE(projection_run_id, node_id)
@@ -238,6 +276,10 @@ CREATE TABLE IF NOT EXISTS atheros_search.graph_edges (
   PRIMARY KEY (edge_id)
 );
 
+ALTER TABLE atheros_search.graph_edges
+  ADD COLUMN IF NOT EXISTS label TEXT DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS observed_at timestamptz DEFAULT NULL;
+
 DO $$
 DECLARE
   column_name text;
@@ -261,8 +303,7 @@ BEGIN
 END $$;
 ALTER TABLE atheros_search.graph_edges
   ALTER COLUMN weight SET DEFAULT 0,
-  ALTER COLUMN evidence SET DEFAULT '{}'::jsonb,
-  ALTER COLUMN projection_run_id SET DEFAULT NULL;
+  ALTER COLUMN evidence SET DEFAULT '{}'::jsonb;
 UPDATE atheros_search.graph_edges
 SET evidence = COALESCE(evidence, '{}'::jsonb),
     projection_run_id = COALESCE(projection_run_id, edge_id)

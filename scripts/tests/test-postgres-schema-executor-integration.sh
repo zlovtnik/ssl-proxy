@@ -86,10 +86,19 @@ second_count="$(docker exec "${database_container}" psql --username postgres --d
 
 docker exec "${database_container}" psql --username postgres --dbname sync --set=ON_ERROR_STOP=1 \
   --command="UPDATE schema_migrator.state_schema_migrations SET checksum = repeat('0', 64) WHERE version = 'runtime/global/00_extensions/001_runtime_extensions.sql'" >/dev/null
-if checksum_output="$(run_executor 2>&1)"; then
+set +e
+checksum_output="$(run_executor 2>&1)"
+checksum_status=$?
+set -e
+if [ "${checksum_status}" -eq 0 ]; then
   echo "executor accepted a changed checksum for an applied migration" >&2
   exit 1
 fi
+[ "${checksum_status}" -eq 3 ] || {
+  echo "checksum drift exited ${checksum_status}, expected 3" >&2
+  printf '%s\n' "${checksum_output}" >&2
+  exit 1
+}
 printf '%s\n' "${checksum_output}" | grep -q "migration checksum drift"
 docker exec "${database_container}" psql --username postgres --dbname sync --set=ON_ERROR_STOP=1 \
   --command="UPDATE schema_migrator.state_schema_migrations SET checksum = 'b823aa4ad731c1284f02cb38a617b834590ece5327a17525bf6362a9953189bd' WHERE version = 'runtime/global/00_extensions/001_runtime_extensions.sql'" >/dev/null

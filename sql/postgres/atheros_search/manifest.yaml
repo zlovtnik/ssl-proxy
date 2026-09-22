@@ -4,7 +4,7 @@ database: sync
 schema_version: 006
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: 64bbdb2faed60b49917b068693eefcc94d09abc5b4d6262d521a6d74f5906f25
+manifest_sha256: 57cea4933ec8627e3dc6d2f9fc8f5102e7229fd94c405dd44cbd081f6c1ed372
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:
