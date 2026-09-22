@@ -30,6 +30,8 @@ type sequenceGrant struct {
 	privileges []string
 }
 
+const pgvectorTypeProbeQuery = "select null::public.vector is null"
+
 func validatePostgres(ctx context.Context, c *contract.Contract, data map[string]map[string][]byte) error {
 	pg := c.Validation.Postgres
 	endpoint, ok := data[pg.EndpointConfigMapName]
@@ -147,9 +149,12 @@ func validatePgvector(ctx context.Context, connection *pgx.Conn) error {
 	if !available {
 		return errors.New("pgvector extension is not installed")
 	}
-	var vectorType string
-	if err := connection.QueryRow(ctx, "select '[]'::public.vector::text").Scan(&vectorType); err != nil {
+	var resolved bool
+	if err := connection.QueryRow(ctx, pgvectorTypeProbeQuery).Scan(&resolved); err != nil {
 		return fmt.Errorf("resolve public.vector type: %w", err)
+	}
+	if !resolved {
+		return errors.New("public.vector type did not resolve")
 	}
 	return nil
 }
