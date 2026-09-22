@@ -142,6 +142,105 @@ If the sync fails to write secrets:
    kubectl get configmap platform-sync-lock -n prod-ssl-proxy -o yaml
    ```
 
+## Contract Digest or PostgreSQL Grant Failure
+
+Treat a contract digest mismatch and a missing PostgreSQL privilege as separate
+failures. Do not bypass either check and do not issue an ad hoc `GRANT`.
+
+1. Read the platform-sync failure without printing input values:
+
+   ```bash
+   sudo journalctl -u vault-k8s-sync.service -n 100 --no-pager
+   sudo sha256sum --check /opt/platform-sync/contract/platform-input-contract.sha256
+   ```
+
+2. For a digest mismatch, reinstall the reviewed binary and contract together
+   using the procedure below. Never copy only the contract into `/opt`.
+
+3. For a grant failure, record the role, object, and privilege from the
+   object-specific error, such as
+   `missing SELECT on atheros_search.search_documents`. Compare the reviewed
+   validator matrix with
+   `sql/postgres/atheros_search/grants/least_privilege.sql.tmpl` by running:
+
+   ```bash
+   make platform-sync-lint
+   ```
+
+4. If the reviewed validator and canonical grant fixture agree but the live
+   privilege is absent, treat that as database drift. Reconcile it through the
+   Git-owned schema executor path. Do not repair it with interactive SQL.
+
+### Approved host reinstall from an exact revision
+
+On `wiretrap`, the checkout at `/home/wiretrap/git/ssl-proxy` may contain dirty
+submodules. Leave that checkout and every submodule untouched. Fetch the merged
+revision, install from a clean detached temporary worktree at that exact SHA,
+and preserve the existing root-owned Vault token, CA, and configuration:
+
+```bash
+cd /home/wiretrap/git/ssl-proxy
+git fetch origin main
+reviewed_sha=<merged-commit-sha>
+git cat-file -e "${reviewed_sha}^{commit}"
+release_root="$(mktemp -d /tmp/platform-sync-release.XXXXXX)"
+git worktree add --detach "$release_root/worktree" "$reviewed_sha"
+
+sudo /bin/bash -ceu '
+  set -a
+  source /etc/platform-sync/platform-sync.conf
+  set +a
+  export VAULT_CACERT=/etc/platform-sync/vault-ca.crt
+  export VAULT_TOKEN="$(</etc/platform-sync/vault-token)"
+  vault status
+'
+
+sudo systemctl stop vault-k8s-sync.timer
+sudo systemctl is-active --quiet vault-k8s-sync.service && {
+  echo 'vault-k8s-sync.service is still active' >&2
+  exit 1
+}
+sudo "$release_root/worktree/scripts/install-platform-sync.sh"
+sudo sha256sum --check /opt/platform-sync/contract/platform-input-contract.sha256
+test "$(sudo sha256sum /opt/platform-sync/contract/platform-input-contract.yaml | awk '{print $1}')" = \
+  9516aa0d26a309d92d27d994ae295555f886c0d3d93f51f1c6d854a2234ca8ed
+```
+
+Do not pass `VAULT_TOKEN_SOURCE` or `VAULT_CA_SOURCE` during this reinstall;
+the installer retains the existing `/etc/platform-sync` files. Before the
+one-shot run, capture the prior success timestamp. Then require the run to load
+21 inputs, pass every validation, and publish the exact current contract:
+
+```bash
+previous_success="$(sudo env KUBECONFIG=/run/platform-sync/kubeconfig \
+  kubectl get configmap platform-ready -n prod-ssl-proxy \
+  -o jsonpath='{.data.last-success-unix}')"
+sudo systemctl start vault-k8s-sync.service
+sudo journalctl -u vault-k8s-sync.service -n 100 --no-pager \
+  | rg '"inputs":21|"count":21|all validations passed|sync complete'
+
+read -r ready digest last_success <<EOF
+$(sudo env KUBECONFIG=/run/platform-sync/kubeconfig \
+  kubectl get configmap platform-ready -n prod-ssl-proxy \
+  -o jsonpath='{.data.ready}{" "}{.data.contract-sha256}{" "}{.data.last-success-unix}{"\n"}')
+EOF
+test "$ready" = true
+test "$digest" = 9516aa0d26a309d92d27d994ae295555f886c0d3d93f51f1c6d854a2234ca8ed
+case "$last_success" in ''|*[!0-9]*) exit 1 ;; esac
+test "$last_success" -gt "$previous_success"
+sudo systemctl start vault-k8s-sync.timer
+```
+
+If the run fails, leave the timer stopped and diagnose the failure. If an input
+is missing, including `vault-server-ca`, provision it through the approved Vault
+workflow before retrying. After a successful run, remove only the temporary
+worktree and its empty parent; never reset or clean the host checkout:
+
+```bash
+git worktree remove "$release_root/worktree"
+rmdir "$release_root"
+```
+
 ## Credential Updated but Workload Is Stale
 
 If `platform-ready` reports success but a workload still behaves as though it

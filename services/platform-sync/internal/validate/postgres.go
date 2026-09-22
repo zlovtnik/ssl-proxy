@@ -25,6 +25,11 @@ type tableGrant struct {
 	privileges []string
 }
 
+type sequenceGrant struct {
+	sequence   string
+	privileges []string
+}
+
 func validatePostgres(ctx context.Context, c *contract.Contract, data map[string]map[string][]byte) error {
 	pg := c.Validation.Postgres
 	endpoint, ok := data[pg.EndpointConfigMapName]
@@ -173,13 +178,10 @@ func validateAccountGrants(ctx context.Context, connection *pgx.Conn, user strin
 		if err := requireSchemaPrivileges(ctx, connection, "atheros_search", "USAGE"); err != nil {
 			return err
 		}
-		if err := requireAllTablePrivileges(ctx, connection, "atheros_search", "SELECT"); err != nil {
+		if err := requireTableGrants(ctx, connection, atherosSearchGrants()); err != nil {
 			return err
 		}
-		if err := requireAllSequencePrivileges(ctx, connection, "atheros_search", "USAGE", "SELECT"); err != nil {
-			return err
-		}
-		return requireTableGrants(ctx, connection, atherosSearchGrants())
+		return requireSequenceGrants(ctx, connection, atherosSearchSequenceGrants())
 	case "octopus_runtime":
 		if err := validatePgvector(ctx, connection); err != nil {
 			return err
@@ -197,12 +199,6 @@ func validateAccountGrants(ctx context.Context, connection *pgx.Conn, user strin
 			return err
 		}
 		if err := requireSchemaPrivileges(ctx, connection, "atheros_search", "USAGE"); err != nil {
-			return err
-		}
-		if err := requireAllTablePrivileges(ctx, connection, "atheros_search", "SELECT"); err != nil {
-			return err
-		}
-		if err := requireAllSequencePrivileges(ctx, connection, "atheros_search", "USAGE", "SELECT"); err != nil {
 			return err
 		}
 		return requireTableGrants(ctx, connection, octopusAtherosGrants())
@@ -279,34 +275,65 @@ func requireTableGrants(ctx context.Context, connection *pgx.Conn, grants []tabl
 	return nil
 }
 
+func requireSequenceGrants(ctx context.Context, connection *pgx.Conn, grants []sequenceGrant) error {
+	for _, grant := range grants {
+		for _, privilege := range grant.privileges {
+			var allowed bool
+			query := `select case when to_regclass($1) is null then false else has_sequence_privilege(current_user, to_regclass($1), $2) end`
+			if err := connection.QueryRow(ctx, query, grant.sequence, privilege).Scan(&allowed); err != nil {
+				return fmt.Errorf("check %s on %s: %w", privilege, grant.sequence, err)
+			}
+			if !allowed {
+				return fmt.Errorf("missing %s on %s", privilege, grant.sequence)
+			}
+		}
+	}
+	return nil
+}
+
 func atherosSearchGrants() []tableGrant {
 	return []tableGrant{
-		{table: "atheros_search.embedding_jobs", privileges: []string{"UPDATE"}},
-		{table: "atheros_search.search_vectors_event", privileges: []string{"INSERT", "UPDATE"}},
-		{table: "atheros_search.search_vectors_device", privileges: []string{"INSERT", "UPDATE"}},
-		{table: "atheros_search.search_vectors_behaviour", privileges: []string{"INSERT", "UPDATE"}},
-		{table: "atheros_search.search_vectors_sequence", privileges: []string{"INSERT", "UPDATE"}},
-		{table: "atheros_search.worker_heartbeat", privileges: []string{"INSERT", "UPDATE"}},
-		{table: "atheros_search.search_queries", privileges: []string{"INSERT", "UPDATE"}},
-		{table: "atheros_search.search_query_results", privileges: []string{"INSERT", "UPDATE"}},
-		{table: "atheros_search.search_feedback", privileges: []string{"INSERT", "UPDATE"}},
-		{table: "atheros_search.merge_decisions", privileges: []string{"INSERT"}},
+		{table: "atheros_search.schema_readiness", privileges: []string{"SELECT"}},
+		{table: "atheros_search.search_documents", privileges: []string{"SELECT"}},
+		{table: "atheros_search.embedding_jobs", privileges: []string{"SELECT", "UPDATE"}},
+		{table: "atheros_search.embeddings", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
+		{table: "atheros_search.search_vectors_event", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
+		{table: "atheros_search.search_vectors_device", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
+		{table: "atheros_search.search_vectors_behaviour", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
+		{table: "atheros_search.search_vectors_sequence", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
+		{table: "atheros_search.devices", privileges: []string{"SELECT"}},
+		{table: "atheros_search.search_queries", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
+		{table: "atheros_search.worker_heartbeat", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
+	}
+}
+
+func atherosSearchSequenceGrants() []sequenceGrant {
+	privileges := []string{"USAGE", "SELECT"}
+	return []sequenceGrant{
+		{sequence: "atheros_search.embeddings_embedding_id_seq", privileges: privileges},
+		{sequence: "atheros_search.search_vectors_event_vector_id_seq", privileges: privileges},
+		{sequence: "atheros_search.search_vectors_device_vector_id_seq", privileges: privileges},
+		{sequence: "atheros_search.search_vectors_behaviour_vector_id_seq", privileges: privileges},
+		{sequence: "atheros_search.search_vectors_sequence_vector_id_seq", privileges: privileges},
+		{sequence: "atheros_search.search_queries_query_id_seq", privileges: privileges},
 	}
 }
 
 func octopusAtherosGrants() []tableGrant {
-	crud := []string{"INSERT", "UPDATE", "DELETE"}
-	deleteOnly := []string{"DELETE"}
+	crud := []string{"SELECT", "INSERT", "UPDATE", "DELETE"}
+	selectDelete := []string{"SELECT", "DELETE"}
 	grants := []tableGrant{
+		{table: "atheros_search.schema_readiness", privileges: []string{"SELECT"}},
 		{table: "atheros_search.search_documents", privileges: crud},
+		{table: "atheros_search.embedding_jobs", privileges: crud},
 		{table: "atheros_search.search_document_tokens", privileges: crud},
 		{table: "atheros_search.search_document_tags", privileges: crud},
-		{table: "atheros_search.search_filter_values", privileges: crud},
-		{table: "atheros_search.embedding_jobs", privileges: crud},
-		{table: "atheros_search.search_vectors_event", privileges: deleteOnly},
-		{table: "atheros_search.search_vectors_device", privileges: deleteOnly},
-		{table: "atheros_search.search_vectors_behaviour", privileges: deleteOnly},
-		{table: "atheros_search.search_vectors_sequence", privileges: deleteOnly},
+		{table: "atheros_search.devices", privileges: crud},
+		{table: "atheros_search.embeddings", privileges: selectDelete},
+		{table: "atheros_search.search_vectors_event", privileges: selectDelete},
+		{table: "atheros_search.search_vectors_device", privileges: selectDelete},
+		{table: "atheros_search.search_vectors_behaviour", privileges: selectDelete},
+		{table: "atheros_search.search_vectors_sequence", privileges: selectDelete},
 	}
 	for _, table := range []string{
 		"behaviour_snapshots", "baseline_profiles", "frame_sequences", "sequence_transitions",
@@ -316,5 +343,6 @@ func octopusAtherosGrants() []tableGrant {
 	} {
 		grants = append(grants, tableGrant{table: "atheros_search." + table, privileges: crud})
 	}
+	grants = append(grants, tableGrant{table: "atheros_search.merge_decisions", privileges: []string{"SELECT"}})
 	return grants
 }

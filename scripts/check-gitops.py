@@ -2023,9 +2023,11 @@ def _check_postgres_pool_readiness(
             container = containers[0]
             script = "\n".join(str(arg) for arg in _list(container.get("args")))
             for required in (
-                '"$PLATFORM_READY" = "true"',
-                '"$PLATFORM_CONTRACT_SHA256" = "$EXPECTED_CONTRACT_SHA256"',
-                "PLATFORM_LAST_SUCCESS_UNIX",
+                '"$PLATFORM_READY" != "true"',
+                "readiness is not true (observed: %s)",
+                '"$PLATFORM_CONTRACT_SHA256" != "$EXPECTED_CONTRACT_SHA256"',
+                "contract digest mismatch (expected: %s, observed: %s)",
+                "invalid last-success-unix (observed: %s)",
             ):
                 if required not in script:
                     errors.append(
@@ -2120,6 +2122,31 @@ def _check_postgres_pool_readiness(
     for volume, secret in expected_secrets.items():
         if _mapping(volumes.get(volume)).get("secretName") != secret:
             errors.append(f"{relative}: pooled PostgreSQL readiness {volume} must use {secret}")
+    return errors
+
+
+def _check_redpanda_topic_metrics_history(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    documents = _documents(rendered)
+    cronjobs = _find(documents, "CronJob", "ssl-proxy-redpanda-topic-metrics")
+    if len(cronjobs) != 1:
+        return [f"{relative}: expected one Redpanda topic metrics CronJob"]
+    spec = _mapping(cronjobs[0].get("spec"))
+    errors: list[str] = []
+    if spec.get("successfulJobsHistoryLimit") != 2:
+        errors.append(
+            f"{relative}: Redpanda topic metrics must retain two successful Jobs"
+        )
+    if spec.get("failedJobsHistoryLimit") != 0:
+        errors.append(
+            f"{relative}: Redpanda topic metrics must retain zero failed Jobs"
+        )
+    job_spec = _mapping(_mapping(spec.get("jobTemplate")).get("spec"))
+    if "ttlSecondsAfterFinished" in job_spec:
+        errors.append(
+            f"{relative}: Redpanda topic metrics must rely on CronJob history, not a Job TTL"
+        )
     return errors
 
 
@@ -2738,6 +2765,11 @@ def check_repository(root: Path, executable: str) -> list[str]:
     if prod_data_plane in rendered_kustomizations:
         errors.extend(
             _check_prod_jaeger_recovery(
+                rendered_kustomizations[prod_data_plane], prod_data_plane
+            )
+        )
+        errors.extend(
+            _check_redpanda_topic_metrics_history(
                 rendered_kustomizations[prod_data_plane], prod_data_plane
             )
         )

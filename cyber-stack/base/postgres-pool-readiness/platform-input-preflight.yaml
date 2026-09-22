@@ -33,9 +33,20 @@ spec:
           command: ["/bin/sh", "-ceu"]
           args:
             - |
-              [ "$PLATFORM_READY" = "true" ]
-              [ "$PLATFORM_CONTRACT_SHA256" = "$EXPECTED_CONTRACT_SHA256" ]
-              case "$PLATFORM_LAST_SUCCESS_UNIX" in ''|*[!0-9]*) exit 1 ;; esac
+              if [ "$PLATFORM_READY" != "true" ]; then
+                printf 'platform input preflight: readiness is not true (observed: %s)\n' "$PLATFORM_READY" >&2
+                exit 1
+              fi
+              if [ "$PLATFORM_CONTRACT_SHA256" != "$EXPECTED_CONTRACT_SHA256" ]; then
+                printf 'platform input preflight: contract digest mismatch (expected: %s, observed: %s)\n' "$EXPECTED_CONTRACT_SHA256" "$PLATFORM_CONTRACT_SHA256" >&2
+                exit 1
+              fi
+              case "$PLATFORM_LAST_SUCCESS_UNIX" in
+                ''|*[!0-9]*)
+                  printf 'platform input preflight: invalid last-success-unix (observed: %s)\n' "$PLATFORM_LAST_SUCCESS_UNIX" >&2
+                  exit 1
+                  ;;
+              esac
               echo "validated platform inputs are ready"
           env:
             - name: EXPECTED_CONTRACT_SHA256

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sys
 import tempfile
@@ -8,6 +9,7 @@ from pathlib import Path
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "check-gitops.py"
+REPOSITORY_ROOT = MODULE_PATH.parent.parent
 SPEC = importlib.util.spec_from_file_location("check_gitops", MODULE_PATH)
 assert SPEC and SPEC.loader
 check_gitops = importlib.util.module_from_spec(SPEC)
@@ -337,6 +339,64 @@ spec:
 """
         )
         self.assertEqual(1, len(check_gitops._check_redpanda_topic_replication(rendered, "test")))
+
+    def test_redpanda_topic_metrics_retains_only_successful_jobs(self) -> None:
+        valid = documents(
+            """apiVersion: batch/v1
+kind: CronJob
+metadata: {name: ssl-proxy-redpanda-topic-metrics}
+spec:
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 0
+  jobTemplate: {spec: {template: {spec: {containers: []}}}}
+"""
+        )
+        self.assertEqual(
+            [], check_gitops._check_redpanda_topic_metrics_history(valid, "test")
+        )
+
+        valid[0]["spec"]["failedJobsHistoryLimit"] = 1
+        valid[0]["spec"]["jobTemplate"]["spec"]["ttlSecondsAfterFinished"] = 60
+        errors = check_gitops._check_redpanda_topic_metrics_history(valid, "test")
+        self.assertTrue(any("zero failed Jobs" in error for error in errors))
+        self.assertTrue(any("not a Job TTL" in error for error in errors))
+
+    def test_platform_preflight_requires_failure_diagnostics(self) -> None:
+        preflight_path = REPOSITORY_ROOT / (
+            "cyber-stack/base/postgres-pool-readiness/platform-input-preflight.yaml"
+        )
+        readiness_path = REPOSITORY_ROOT / (
+            "cyber-stack/base/postgres-pool-readiness/pooled-login-job.yaml"
+        )
+        contract_path = REPOSITORY_ROOT / "cyber-stack/platform-input-contract.yaml"
+        rendered = documents(
+            preflight_path.read_text(encoding="utf-8")
+            + "\n---\n"
+            + readiness_path.read_text(encoding="utf-8")
+        )
+        digest = hashlib.sha256(contract_path.read_bytes()).hexdigest()
+        errors = check_gitops._check_postgres_pool_readiness(
+            rendered, "test", digest
+        )
+        self.assertFalse(
+            any("platform input preflight" in error for error in errors), errors
+        )
+
+        script = rendered[0]["spec"]["template"]["spec"]["containers"][0]["args"][0]
+        container = rendered[0]["spec"]["template"]["spec"]["containers"][0]
+        container["args"][0] = script.replace(
+            "contract digest mismatch (expected: %s, observed: %s)",
+            "contract digest mismatch",
+        )
+        errors = check_gitops._check_postgres_pool_readiness(
+            rendered, "test", digest
+        )
+        self.assertTrue(
+            any(
+                "contract digest mismatch (expected: %s, observed: %s)" in error
+                for error in errors
+            )
+        )
 
     def test_identity_hostname_and_traefik_policies(self) -> None:
         rendered = {
