@@ -251,7 +251,7 @@ baseline_domain_ledger() {
   checksums="$3"
   recorded_count="$(psql_run --tuples-only --no-align --command="
     SELECT count(*) FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/${domain}/%'")"
-  [ "${recorded_count}" = "0" ] || return
+  [ "${recorded_count}" = "0" ] || return 0
 
   attested_checksum="$(domain_attested_checksum "${domain}" || true)"
   [ -n "${attested_checksum}" ] || {

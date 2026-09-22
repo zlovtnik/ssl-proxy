@@ -26,6 +26,7 @@ class PostgresSchemaExecutorTest(unittest.TestCase):
         script = ENTRYPOINT.read_text(encoding="utf-8")
 
         self.assertIn("baseline_domain_ledger()", script)
+        self.assertIn('[ "${recorded_count}" = "0" ] || return 0', script)
         self.assertIn("legacy-manifest-attestation", script)
         self.assertIn('baselines/${attested_checksum}.sha256', script)
         self.assertIn("refusing to replay historical schema files", script)
