@@ -1,6 +1,7 @@
 -- Runtime roles are provisioned outside schema migration. Grants are
 -- deliberately table-specific so new relations are inaccessible by default.
 
+REVOKE CREATE ON SCHEMA octopus_core FROM PUBLIC, {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT USAGE ON SCHEMA octopus_core TO {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.registered_devices TO {{OCTOPUS_ACCOUNT}};

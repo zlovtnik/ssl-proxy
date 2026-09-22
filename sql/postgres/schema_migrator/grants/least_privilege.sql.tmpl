@@ -1,6 +1,7 @@
 -- Provision the state account and its credential outside schema migration.
 -- External target credentials are separate and receive no grants here.
 
+REVOKE CREATE ON SCHEMA schema_migrator FROM PUBLIC, {{SCHEMA_MIGRATOR_STATE_ACCOUNT}};
 GRANT USAGE ON SCHEMA schema_migrator TO {{SCHEMA_MIGRATOR_STATE_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA schema_migrator
   TO {{SCHEMA_MIGRATOR_STATE_ACCOUNT}};

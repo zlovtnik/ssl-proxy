@@ -9,33 +9,38 @@ ENTRYPOINT = ROOT / "k8s/postgres-schema-executor/entrypoint.sh"
 
 
 class PostgresSchemaExecutorTest(unittest.TestCase):
-    def test_only_intact_attested_domains_are_not_reapplied(self) -> None:
+    def test_manifest_files_are_applied_once_through_the_migration_ledger(self) -> None:
         script = ENTRYPOINT.read_text(encoding="utf-8")
 
-        self.assertIn(
-            'if domain_is_attested "${domain}" "${expected_version}" "${expected_manifest}" && domain_required_objects_exist "${domain}"; then',
-            script,
-        )
-        self.assertIn('echo "schema domain already attested: ${domain}"', script)
-        self.assertIn(
-            'echo "schema domain attested but required objects are missing; reconciling: ${domain}" >&2',
-            script,
-        )
-        self.assertIn("SELECT to_regclass('${domain}.schema_readiness') IS NOT NULL", script)
-        self.assertIn("AND required_checksum = '${expected_manifest}'", script)
-        self.assertIn("AND applied_checksum = '${expected_manifest}'", script)
-        self.assertIn('applied_domains="${applied_domains} ${domain}"', script)
-        self.assertIn('for domain in ${applied_domains}; do', script)
-        self.assertIn('case "${domain}" in', script)
+        self.assertIn("apply_tracked_file()", script)
+        self.assertIn("schema_migrator.state_schema_migrations", script)
+        self.assertIn("pg_advisory_xact_lock", script)
+        self.assertIn("migration_checksum_mismatch", script)
+        self.assertIn("migration_already_applied", script)
+        self.assertIn("migration applied: :migration_key", script)
+        self.assertNotIn('psql_run --file="${sql_file}"', script)
 
-    def test_attested_domains_verify_every_manifest_table(self) -> None:
+    def test_pre_ledger_attestations_require_an_explicit_trusted_baseline(self) -> None:
+        script = ENTRYPOINT.read_text(encoding="utf-8")
+
+        self.assertIn("baseline_domain_ledger()", script)
+        self.assertIn("legacy-manifest-attestation", script)
+        self.assertIn('baselines/${attested_checksum}.sha256', script)
+        self.assertIn("refusing to replay historical schema files", script)
+
+    def test_ownership_drift_fails_before_migration(self) -> None:
+        script = ENTRYPOINT.read_text(encoding="utf-8")
+
+        self.assertIn("assert_domain_ownership()", script)
+        self.assertIn("relation.relowner", script)
+        self.assertIn("schema ownership drift detected before migration", script)
+        self.assertIn('assert_domain_ownership "${domain}" true', script)
+        self.assertNotIn("OWNER TO", script)
+
+    def test_attested_domains_still_verify_every_manifest_table(self) -> None:
         script = ENTRYPOINT.read_text(encoding="utf-8")
 
         self.assertIn("domain_required_objects_exist()", script)
-        self.assertIn(
-            "grep -hioE 'CREATE TABLE IF NOT EXISTS [a-z_]+\\.[a-z0-9_]+'",
-            script,
-        )
         self.assertIn("SELECT to_regclass('${object}') IS NOT NULL", script)
         self.assertIn('domain_required_objects_exist "${domain}" || exit 1', script)
 

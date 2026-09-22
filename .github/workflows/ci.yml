@@ -78,6 +78,9 @@ jobs:
       - name: Validate four-domain PostgreSQL schema
         run: scripts/check-postgres-schema-contract.py
 
+      - name: Exercise schema executor ledger and replay safety
+        run: scripts/tests/test-postgres-schema-executor-integration.sh
+
   schema-column-limits:
     name: Schema column limits
     runs-on: ubuntu-latest

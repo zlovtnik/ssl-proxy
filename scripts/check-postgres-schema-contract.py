@@ -11,6 +11,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 ROOT = REPO / "sql" / "postgres"
 DOMAINS = ("octopus_core", "atheros_search", "schema_migrator", "keycloak")
+CHECKSUM_LINE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9_./-]+)$")
 
 
 def scalar(text: str, key: str) -> str:
@@ -40,9 +41,23 @@ def main() -> int:
         recorded: dict[str, str] = {}
         checksums = directory / "checksums.sha256"
         if checksums.is_file():
-            for line in checksums.read_text().splitlines():
-                digest, _, relative = line.partition("  ")
+            for number, line in enumerate(checksums.read_text().splitlines(), start=1):
+                match = CHECKSUM_LINE.fullmatch(line)
+                if match is None:
+                    failures.append(f"{domain}: invalid checksum row {number}")
+                    continue
+                digest, relative = match.groups()
+                if relative in recorded:
+                    failures.append(f"{domain}: duplicate checksum path {relative}")
                 recorded[relative] = digest
+        if set(recorded) != set(ordered):
+            failures.append(f"{domain}: checksums must match apply_order exactly")
+        sql_paths = {
+            str(path.relative_to(directory))
+            for path in directory.rglob("*.sql")
+        }
+        if sql_paths != set(ordered):
+            failures.append(f"{domain}: every SQL file must appear exactly once in apply_order")
         digest = hashlib.sha256()
         for relative in ordered:
             path = directory / relative
@@ -59,6 +74,42 @@ def main() -> int:
             digest.update(b"\0")
         if digest.hexdigest() != scalar(text, "manifest_sha256"):
             failures.append(f"{domain}: manifest checksum mismatch")
+
+        baselines = directory / "baselines"
+        if baselines.is_dir():
+            for baseline in baselines.glob("*.sha256"):
+                if not re.fullmatch(r"[0-9a-f]{64}\.sha256", baseline.name):
+                    failures.append(f"{domain}: invalid baseline filename {baseline.name}")
+                seen: set[str] = set()
+                for number, line in enumerate(baseline.read_text().splitlines(), start=1):
+                    match = CHECKSUM_LINE.fullmatch(line)
+                    if match is None:
+                        failures.append(
+                            f"{domain}/{baseline.name}: invalid baseline row {number}"
+                        )
+                        continue
+                    _, relative = match.groups()
+                    if relative in seen:
+                        failures.append(
+                            f"{domain}/{baseline.name}: duplicate path {relative}"
+                        )
+                    seen.add(relative)
+                    key = f"runtime/{domain}/{relative}"
+                    if len(key) > 128:
+                        failures.append(f"{domain}: migration key exceeds 128 characters: {relative}")
+
+    extension_checksums = ROOT / "00_extensions" / "checksums.sha256"
+    extension_sql = ROOT / "00_extensions" / "001_runtime_extensions.sql"
+    expected_extension = ""
+    if extension_checksums.is_file():
+        for line in extension_checksums.read_text().splitlines():
+            match = CHECKSUM_LINE.fullmatch(line)
+            if match and match.group(2) == extension_sql.name:
+                expected_extension = match.group(1)
+    if not extension_sql.is_file() or expected_extension != hashlib.sha256(
+        extension_sql.read_bytes() if extension_sql.is_file() else b""
+    ).hexdigest():
+        failures.append("00_extensions: checksum mismatch")
 
     sql = "\n".join(path.read_text() for path in ROOT.rglob("*.sql"))
     for label, pattern in {
