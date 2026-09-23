@@ -73,7 +73,29 @@ pipeline {
           readFile('artifacts/changed-paths.env').split('\n').each { line ->
             if (line) {
               def fields = line.split('=', 2)
-              env[fields[0]] = fields[1]
+              switch (fields[0]) {
+                case 'CHANGED_SERVICES':
+                  env.CHANGED_SERVICES = fields[1]
+                  break
+                case 'SHOULD_RUN_PLATFORM_SYNC':
+                  env.SHOULD_RUN_PLATFORM_SYNC = fields[1]
+                  break
+                case 'SHOULD_RUN_ATHEROS_SEARCH':
+                  env.SHOULD_RUN_ATHEROS_SEARCH = fields[1]
+                  break
+                case 'SHOULD_RUN_SCHEMA_MIGRATOR':
+                  env.SHOULD_RUN_SCHEMA_MIGRATOR = fields[1]
+                  break
+                case 'SHOULD_RUN_OCTOPUS':
+                  env.SHOULD_RUN_OCTOPUS = fields[1]
+                  break
+                case 'SHOULD_RUN_SENSOR':
+                  env.SHOULD_RUN_SENSOR = fields[1]
+                  break
+                case 'SHOULD_PUBLISH_REDPANDA_MAINT':
+                  env.SHOULD_PUBLISH_REDPANDA_MAINT = fields[1]
+                  break
+              }
             }
           }
         }

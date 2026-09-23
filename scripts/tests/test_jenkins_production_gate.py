@@ -124,6 +124,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertLess(pipeline.index("stage('Classify changes')"), pipeline.index("stage('Validate and test')"))
         self.assertIn("scripts/classify_changes.py --base \"$GIT_PREVIOUS_SUCCESSFUL_COMMIT\"", pipeline)
         self.assertIn("scripts/classify_changes.py --full", pipeline)
+        self.assertNotIn("env[fields[0]]", pipeline)
         for name in ("PLATFORM_SYNC", "ATHEROS_SEARCH", "SCHEMA_MIGRATOR", "OCTOPUS", "SENSOR"):
             self.assertIn(f'"$SHOULD_RUN_{name}" != true', pipeline)
         self.assertIn('--only "$CHANGED_SERVICES"', pipeline)
