@@ -302,6 +302,9 @@ pipeline {
     }
 
     stage('Publish immutable images') {
+      when {
+        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' }
+      }
       options { timeout(time: 75, unit: 'MINUTES') }
       steps {
         sh '''
