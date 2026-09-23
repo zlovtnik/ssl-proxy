@@ -168,37 +168,58 @@ spec:
                 exit 1
               fi
 
-              stage="configuring application administrator"
-              echo "Configuring Keycloak application administrator..."
-              user_id="$($KCADM get users --config "$ADMIN_CONFIG" -r "$REALM" \
-                -q "username=$APP_USERNAME" -q exact=true --fields id --format csv --noquotes \
-                | grep -v '^id$' | head -n 1)"
-              if [ -z "$user_id" ]; then
-                "$KCADM" create users --config "$ADMIN_CONFIG" -r "$REALM" \
-                  -s "username=$APP_USERNAME" -s enabled=true -s emailVerified=true >/dev/null
-                user_id="$($KCADM get users --config "$ADMIN_CONFIG" -r "$REALM" \
-                  -q "username=$APP_USERNAME" -q exact=true --fields id --format csv --noquotes \
-                  | grep -v '^id$' | head -n 1)"
-              fi
-              if [ -z "$user_id" ]; then
-                echo "Keycloak user $APP_USERNAME was not found after creation" >&2
-                exit 1
-              fi
-              "$KCADM" set-password --config "$ADMIN_CONFIG" -r "$REALM" \
-                --username "$APP_USERNAME" --new-password - >/dev/null \
-                <<< "$APP_PASSWORD"
-
               stage="configuring application client and roles"
-              echo "Configuring Keycloak client $CLIENT_ID and administrator role..."
+              echo "Configuring Keycloak client $CLIENT_ID..."
               "$KCADM" update "clients/$client_uuid" --config "$ADMIN_CONFIG" -r "$REALM" \
                 -s "redirectUris=[\"$PUBLIC_ORIGIN/callback\"]" -s "webOrigins=[\"$UI_ORIGIN\"]" >/dev/null
 
-              existing_roles="$($KCADM get "users/$user_id/role-mappings/clients/$client_uuid" \
-                --config "$ADMIN_CONFIG" -r "$REALM" --fields name --format csv --noquotes)"
-              if ! printf '%s\n' "$existing_roles" | grep -Fxq "$ADMIN_ROLE"; then
-                "$KCADM" add-roles --config "$ADMIN_CONFIG" -r "$REALM" \
-                  --uusername "$APP_USERNAME" --cclientid "$CLIENT_ID" --rolename "$ADMIN_ROLE"
+              provision_user() {
+                username="$1"
+                password="$2"
+                role="$3"
+                user_id="$($KCADM get users --config "$ADMIN_CONFIG" -r "$REALM" \
+                  -q "username=$username" -q exact=true --fields id --format csv --noquotes \
+                  | grep -v '^id$' | head -n 1)"
+                if [ -z "$user_id" ]; then
+                  "$KCADM" create users --config "$ADMIN_CONFIG" -r "$REALM" \
+                    -s "username=$username" -s enabled=true -s emailVerified=true >/dev/null
+                  user_id="$($KCADM get users --config "$ADMIN_CONFIG" -r "$REALM" \
+                    -q "username=$username" -q exact=true --fields id --format csv --noquotes \
+                    | grep -v '^id$' | head -n 1)"
+                fi
+                if [ -z "$user_id" ]; then
+                  echo "Keycloak user $username was not found after creation" >&2
+                  exit 1
+                fi
+                "$KCADM" set-password --config "$ADMIN_CONFIG" -r "$REALM" \
+                  --username "$username" --new-password - >/dev/null <<< "$password"
+
+                existing_roles="$($KCADM get "users/$user_id/role-mappings/clients/$client_uuid" \
+                  --config "$ADMIN_CONFIG" -r "$REALM" --fields name --format csv --noquotes)"
+                if ! printf '%s\n' "$existing_roles" | grep -Fxq "$role"; then
+                  "$KCADM" add-roles --config "$ADMIN_CONFIG" -r "$REALM" \
+                    --uusername "$username" --cclientid "$CLIENT_ID" --rolename "$role"
+                fi
+              }
+
+              stage="configuring Schema Migrator administrator"
+              echo "Configuring Keycloak Schema Migrator administrator..."
+              provision_user "$SCHEMA_ADMIN_USERNAME" "$SCHEMA_ADMIN_PASSWORD" "$ADMIN_ROLE"
+
+              stage="configuring Atheros Search users"
+              echo "Configuring Keycloak Atheros Search users..."
+              search_client_ids="$($KCADM get clients --config "$ADMIN_CONFIG" -r "$REALM" \
+                -q "clientId=$SEARCH_CLIENT_ID" --fields id --format csv --noquotes)"
+              search_client_uuid="$(printf '%s\n' "$search_client_ids" | grep -v '^id$' | head -n 1)"
+              if [ -z "$search_client_uuid" ]; then
+                echo "Keycloak client $SEARCH_CLIENT_ID was not found in realm $REALM" >&2
+                exit 1
               fi
+              client_uuid="$search_client_uuid"
+              CLIENT_ID="$SEARCH_CLIENT_ID"
+              provision_user "$SEARCH_ADMIN_USERNAME" "$SEARCH_ADMIN_PASSWORD" "$ADMIN_ROLE"
+              provision_user "$SEARCH_OPERATOR_USERNAME" "$SEARCH_OPERATOR_PASSWORD" "$OPERATOR_ROLE"
+              provision_user "$SEARCH_VIEWER_USERNAME" "$SEARCH_VIEWER_PASSWORD" "$VIEWER_ROLE"
 
               if [ "$used_recovery" = true ]; then
                 stage="removing recovery client"
@@ -237,13 +258,40 @@ spec:
                   key: SCHEMA_MIGRATOR_CORS_ORIGIN
             - name: ADMIN_ROLE
               value: "admin"
-            - name: APP_USERNAME
+            - name: SCHEMA_ADMIN_USERNAME
               value: "schema-admin"
-            - name: APP_PASSWORD
+            - name: SCHEMA_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: schema-migrator-bootstrap
                   key: application-admin-password
+            - name: SEARCH_CLIENT_ID
+              value: "atheros-search-ui"
+            - name: SEARCH_ADMIN_USERNAME
+              value: "search-admin"
+            - name: SEARCH_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: atheros-search-bootstrap
+                  key: admin-password
+            - name: SEARCH_OPERATOR_USERNAME
+              value: "search-operator"
+            - name: SEARCH_OPERATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: atheros-search-bootstrap
+                  key: operator-password
+            - name: SEARCH_VIEWER_USERNAME
+              value: "search-viewer"
+            - name: SEARCH_VIEWER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: atheros-search-bootstrap
+                  key: viewer-password
+            - name: OPERATOR_ROLE
+              value: "operator"
+            - name: VIEWER_ROLE
+              value: "viewer"
           resources:
             requests:
               cpu: 50m

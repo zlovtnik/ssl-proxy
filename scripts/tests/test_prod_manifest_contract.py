@@ -205,9 +205,10 @@ mock_kcadm() {
         *) printf 'id\nclient-uuid\n' ;;
       esac ;;
     "get users") printf 'id\nuser-uuid\n' ;;
-    "get users/user-uuid/role-mappings/clients/client-uuid") printf 'name\nadmin\n' ;;
+    "get users/user-uuid/role-mappings/clients/client-uuid") printf 'name\n' ;;
     "set-password --config") cat >/dev/null ;;
     "update clients/client-uuid") return 0 ;;
+    "add-roles --config") return 0 ;;
     *) echo 'Unexpected admin command' >&2; return 98 ;;
   esac
 }
@@ -230,6 +231,9 @@ mock_kcadm() {
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("bootstrap completed successfully", result.stdout)
         self.assertIn('redirectUris=["https://migrator.example.internal/callback"]', calls)
+        self.assertIn("--uusername search-admin --cclientid atheros-search-ui --rolename admin", calls)
+        self.assertIn("--uusername search-operator --cclientid atheros-search-ui --rolename operator", calls)
+        self.assertIn("--uusername search-viewer --cclientid atheros-search-ui --rolename viewer", calls)
         self.assertNotIn("test-secret", result.stdout + result.stderr)
 
     def test_bootstrap_missing_client_fails_before_user_changes(self) -> None:

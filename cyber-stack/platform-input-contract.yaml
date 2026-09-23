@@ -129,6 +129,14 @@ spec:
       keys:
         - application-admin-password
     - kind: Secret
+      name: atheros-search-bootstrap
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/atheros-search-bootstrap
+      keys:
+        - admin-password
+        - operator-password
+        - viewer-password
+    - kind: Secret
       name: schema-migrator-keycloak
       type: Opaque
       vaultPath: secret/ssl-proxy/prod/schema-migrator-keycloak

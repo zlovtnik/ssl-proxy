@@ -51,6 +51,11 @@ EXPECTED_INPUTS = {
         "api-bearer-token",
     },
     ("Secret", "schema-migrator-bootstrap"): {"application-admin-password"},
+    ("Secret", "atheros-search-bootstrap"): {
+        "admin-password",
+        "operator-password",
+        "viewer-password",
+    },
     ("Secret", "schema-migrator-keycloak"): {"bootstrap-admin-password"},
     ("Secret", "ssl-proxy-identity-tls"): {"ca.crt", "tls.crt", "tls.key"},
     ("Secret", "postgres-atheros-search"): {"password"},
@@ -218,7 +223,7 @@ class PlatformInputContractTest(unittest.TestCase):
         }
 
         self.assertEqual(EXPECTED_INPUTS, actual)
-        self.assertEqual(20, sum(entry.kind == "Secret" for entry in contract.inputs))
+        self.assertEqual(21, sum(entry.kind == "Secret" for entry in contract.inputs))
         self.assertEqual(1, sum(entry.kind == "ConfigMap" for entry in contract.inputs))
         for entry in contract.inputs:
             self.assertEqual(

@@ -49,6 +49,12 @@ type: Opaque
 apiVersion: v1
 kind: Secret
 metadata:
+  name: atheros-search-bootstrap
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
   name: schema-migrator-keycloak
 type: Opaque
 ---

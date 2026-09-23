@@ -12,6 +12,7 @@ rules:
   resources:
   - secrets
   resourceNames:
+  - atheros-search-bootstrap
   - cloudflared-tunnel-credentials
   - minio-credentials
   - observability-credentials
