@@ -31,7 +31,7 @@ unclassified:
 jobs:
   - script: |
       pipelineJob('ssl-proxy-images') {
-        description('Builds and publishes every first-party image from the pinned superproject revision.')
+        description('Validates the superproject and publishes changed first-party images.')
         logRotator {
           numToKeep(20)
           artifactNumToKeep(5)
@@ -64,6 +64,74 @@ jobs:
             }
             scriptPath('Jenkinsfile')
             lightweight(false)
+          }
+        }
+      }
+  - script: |
+      multibranchPipelineJob('octopus-validation') {
+        triggers {
+          periodicFolderTrigger { interval('5m') }
+        }
+        branchSources {
+          git {
+            id('octopus-validation')
+            remote('https://github.com/zlovtnik/octopus')
+          }
+        }
+        factory {
+          workflowBranchProjectFactory {
+            scriptPath('Jenkinsfile')
+          }
+        }
+      }
+  - script: |
+      multibranchPipelineJob('integration-console-images') {
+        triggers {
+          periodicFolderTrigger { interval('5m') }
+        }
+        branchSources {
+          git {
+            id('integration-console-images')
+            remote('https://github.com/zlovtnik/integration-console.git')
+          }
+        }
+        factory {
+          workflowBranchProjectFactory {
+            scriptPath('Jenkinsfile')
+          }
+        }
+      }
+  - script: |
+      multibranchPipelineJob('schema-migrator-images') {
+        triggers {
+          periodicFolderTrigger { interval('5m') }
+        }
+        branchSources {
+          git {
+            id('schema-migrator-images')
+            remote('https://github.com/zlovtnik/schema-migrator.git')
+          }
+        }
+        factory {
+          workflowBranchProjectFactory {
+            scriptPath('Jenkinsfile')
+          }
+        }
+      }
+  - script: |
+      multibranchPipelineJob('wg-key-rotator-images') {
+        triggers {
+          periodicFolderTrigger { interval('5m') }
+        }
+        branchSources {
+          git {
+            id('wg-key-rotator-images')
+            remote('https://github.com/zlovtnik/wg-key-rotator.git')
+          }
+        }
+        factory {
+          workflowBranchProjectFactory {
+            scriptPath('Jenkinsfile')
           }
         }
       }

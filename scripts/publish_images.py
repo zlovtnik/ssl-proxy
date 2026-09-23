@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
+from classify_changes import SUBMODULE_IMAGES
 from image_contract import (
     ENVIRONMENTS,
+    FIRST_PARTY_SERVICES,
     ImageContract,
     ImageContractError,
     load_buildx_digest,
@@ -25,6 +27,12 @@ from image_contract import (
 
 
 RunCommand = Callable[[Sequence[str], Path], int]
+SUBMODULE_SERVICE_PATHS = {
+    service: path
+    for path, services in SUBMODULE_IMAGES.items()
+    for service in services
+    if path.startswith("apps/")
+}
 
 
 @dataclass(frozen=True)
@@ -67,6 +75,32 @@ def make_publish_command(
         f"ATHEROS_SEARCH_UI_KEYCLOAK_URL={settings.atheros_search_ui_keycloak_url}",
         f"ATHEROS_SEARCH_UI_KEYCLOAK_REALM={settings.atheros_search_ui_keycloak_realm}",
         f"ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID={settings.atheros_search_ui_keycloak_client_id}",
+    ]
+
+
+def submodule_revision(repository_root: Path, path: str) -> str:
+    result = subprocess.run(
+        ("git", "ls-tree", "HEAD", "--", path),
+        cwd=repository_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    fields = result.stdout.split(None, 3)
+    if result.returncode or len(fields) != 4 or fields[:2] != ["160000", "commit"]:
+        raise ImageContractError(f"cannot read pinned gitlink for {path}")
+    return fields[2]
+
+
+def make_reuse_command(
+    contract: ImageContract, metadata_path: Path, settings: PublishSettings, revision: str
+) -> list[str]:
+    return [
+        "docker", "buildx", "imagetools", "create", "--builder", settings.builder,
+        "--tag", f"{contract.repository}:{settings.tag}",
+        "--tag", f"{contract.repository}:latest",
+        "--metadata-file", str(metadata_path),
+        f"{contract.repository}:{revision}",
     ]
 
 
@@ -126,10 +160,18 @@ def publish_environment(
     max_workers: int = 1,
     manifest_out: Path | None = None,
     commands_out: Path | None = None,
+    only: Sequence[str] | None = None,
+    reuse_submodules: bool = False,
 ) -> int:
     if max_workers < 1 or max_workers > 3:
         raise ImageContractError("max workers must be between 1 and 3")
     contracts = load_image_contracts(repository_root, settings.environment)
+    if only is not None:
+        unknown = set(only) - set(FIRST_PARTY_SERVICES)
+        if unknown:
+            raise ImageContractError("unknown service(s): " + ", ".join(sorted(unknown)))
+        selected = set(only)
+        contracts = tuple(contract for contract in contracts if contract.service in selected)
     output(
         f"Publishing {len(contracts)} Kubernetes images for ENV={settings.environment}; "
         "repositories and pins come from canonical Kustomize"
@@ -140,7 +182,14 @@ def publish_environment(
             contract: ImageContract,
         ) -> tuple[int, str, dict[str, str] | None, str | None]:
             metadata_path = metadata_root / f"{contract.service}.json"
-            command = make_publish_command(contract, metadata_path, settings)
+            source_revision = settings.source_revision
+            if reuse_submodules and contract.service in SUBMODULE_SERVICE_PATHS:
+                source_revision = submodule_revision(
+                    repository_root, SUBMODULE_SERVICE_PATHS[contract.service]
+                )
+                command = make_reuse_command(contract, metadata_path, settings, source_revision)
+            else:
+                command = make_publish_command(contract, metadata_path, settings)
             returncode = run_command(command, repository_root)
             if returncode != 0:
                 return (
@@ -171,7 +220,7 @@ def publish_environment(
                     "slice": contract.slice_name,
                     "repository": contract.repository,
                     "digest": pushed_digest,
-                    "sourceRevision": settings.source_revision,
+                    "sourceRevision": source_revision,
                 },
                 command,
             )
@@ -244,6 +293,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-workers", type=int, default=1)
     parser.add_argument("--manifest-out", type=Path)
     parser.add_argument("--commands-out", type=Path)
+    parser.add_argument("--only", help="comma-separated services; an empty value publishes none")
+    parser.add_argument("--reuse-submodules", choices=("true", "false"), default="false")
     return parser
 
 
@@ -273,6 +324,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_workers=arguments.max_workers,
             manifest_out=arguments.manifest_out,
             commands_out=arguments.commands_out,
+            only=None if arguments.only is None else tuple(filter(None, arguments.only.split(","))),
+            reuse_submodules=arguments.reuse_submodules == "true",
         )
     except ImageContractError as error:
         print(f"image contract error: {error}", file=sys.stderr)

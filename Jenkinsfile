@@ -16,10 +16,11 @@ pipeline {
     REGISTRY_PLAIN_HTTP = '1'
     RELEASE_MANIFEST = 'artifacts/release-manifest.json'
     BUMP_COMMANDS_REPORT = 'artifacts/bump-digest-commands.txt'
+    SUBMODULE_CI_READY = 'false'
   }
 
   stages {
-    stage('Checkout and classify') {
+    stage('Checkout') {
       options { timeout(time: 10, unit: 'MINUTES') }
       steps {
         deleteDir()
@@ -44,9 +45,6 @@ pipeline {
         script {
           env.REGISTRY = env.CI_REGISTRY
         }
-        sh 'git submodule sync --recursive'
-        sh 'git submodule update --init --recursive'
-        sh 'make octopus-source-integrity'
         script {
           env.IS_MAIN = sh(
             script: 'test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/main)" && printf true || printf false',
@@ -56,6 +54,39 @@ pipeline {
             error('Image publication is restricted to origin/main')
           }
         }
+      }
+    }
+
+    stage('Classify changes') {
+      steps {
+        sh '''
+          set -eu
+          if [ -n "${GIT_PREVIOUS_SUCCESSFUL_COMMIT:-}" ]; then
+            python3 scripts/classify_changes.py --base "$GIT_PREVIOUS_SUCCESSFUL_COMMIT" \
+              --json-out artifacts/changed-paths.json --env-out artifacts/changed-paths.env
+          else
+            python3 scripts/classify_changes.py --full \
+              --json-out artifacts/changed-paths.json --env-out artifacts/changed-paths.env
+          fi
+        '''
+        script {
+          readFile('artifacts/changed-paths.env').split('\n').each { line ->
+            if (line) {
+              def fields = line.split('=', 2)
+              env[fields[0]] = fields[1]
+            }
+          }
+        }
+        archiveArtifacts artifacts: 'artifacts/changed-paths.json', fingerprint: true
+      }
+    }
+
+    stage('Prepare pinned submodules') {
+      steps {
+        // Delivery contracts inspect every pinned submodule's documentation.
+        sh 'git submodule sync --recursive'
+        sh 'git submodule update --init --recursive'
+        sh 'make octopus-source-integrity'
       }
     }
 
@@ -71,8 +102,12 @@ pipeline {
             --docker "host=$DOCKER_HOST,ca=$DOCKER_CERT_PATH/ca.pem,cert=$DOCKER_CERT_PATH/cert.pem,key=$DOCKER_CERT_PATH/key.pem" >/dev/null
            env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
              DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker version
-           env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
-             DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker pull pgvector/pgvector:pg16
+           if [ "$SUBMODULE_CI_READY" != true ] && {
+             [ "$SHOULD_RUN_OCTOPUS" = true ] || [ "$SHOULD_RUN_SCHEMA_MIGRATOR" = true ];
+           }; then
+             env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+               DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker pull pgvector/pgvector:pg16
+           fi
         '''
       }
     }
@@ -108,11 +143,12 @@ pipeline {
             sh "python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v"
           }
         }
-        stage('Platform and search') {
+        stage('Platform sync') {
           options { timeout(time: 30, unit: 'MINUTES') }
           steps {
             sh '''
               set -eu
+              if [ "$SHOULD_RUN_PLATFORM_SYNC" != true ]; then echo 'skipped: no platform-sync changes'; exit 0; fi
               docker_cmd() {
                 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
                   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
@@ -120,17 +156,31 @@ pipeline {
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 golang:1.26-bookworm \
                 sh -c 'tar --no-same-owner -xf - && make platform-sync-lint'
+            '''
+          }
+        }
+        stage('Atheros search') {
+          options { timeout(time: 30, unit: 'MINUTES') }
+          steps {
+            sh '''
+              set -eu
+              if [ "$SUBMODULE_CI_READY" = true ] || [ "$SHOULD_RUN_ATHEROS_SEARCH" != true ]; then echo 'skipped: delegated or no integration-console bump'; exit 0; fi
+              docker_cmd() {
+                env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+                  DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
+              }
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 golang:1.26-bookworm \
                 sh -c 'tar --no-same-owner -xf - && make atheros-search-test'
             '''
           }
         }
-        stage('Scala services') {
+        stage('Schema migrator') {
           options { timeout(time: 60, unit: 'MINUTES') }
           steps {
             sh '''
               set -eu
+              if [ "$SUBMODULE_CI_READY" = true ] || [ "$SHOULD_RUN_SCHEMA_MIGRATOR" != true ]; then echo 'skipped: delegated or no schema-migrator bump'; exit 0; fi
               docker_cmd() {
                 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
                   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
@@ -139,6 +189,19 @@ pipeline {
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 azul/zulu-openjdk:21 \
                 sh -c 'tar --no-same-owner -xf - && cd apps/schema-migrator && apt-get -o Dir::Etc::sourceparts="-" update && apt-get install -y --no-install-recommends curl bash && curl -fsSL https://github.com/sbt/sbt/releases/download/v1.12.14/sbt-1.12.14.tgz | tar xz -C /opt && ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt && sbt -Dsbt.supershell=false "Test / testFull"'
+            '''
+          }
+        }
+        stage('Octopus') {
+          options { timeout(time: 60, unit: 'MINUTES') }
+          steps {
+            sh '''
+              set -eu
+              if [ "$SUBMODULE_CI_READY" = true ] || [ "$SHOULD_RUN_OCTOPUS" != true ]; then echo 'skipped: delegated or no Octopus bump'; exit 0; fi
+              docker_cmd() {
+                env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+                  DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
+              }
               coverage_container="octopus-coverage-${BUILD_NUMBER}"
               cleanup_coverage_container() {
                 docker_cmd rm --force "$coverage_container" >/dev/null 2>&1 || true
@@ -154,7 +217,7 @@ pipeline {
               cleanup_coverage_container
               trap - EXIT
             '''
-            archiveArtifacts artifacts: 'artifacts/octopus-coverage/**', fingerprint: true
+            archiveArtifacts artifacts: 'artifacts/octopus-coverage/**', allowEmptyArchive: true, fingerprint: true
           }
         }
         stage('Sensor') {
@@ -162,6 +225,7 @@ pipeline {
           steps {
             sh '''
               set -eu
+              if [ "$SHOULD_RUN_SENSOR" != true ]; then echo 'skipped: no sensor changes'; exit 0; fi
               docker_cmd() {
                 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
                   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
@@ -179,6 +243,9 @@ pipeline {
     }
 
     stage('Registry and Buildx preflight') {
+      when {
+        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' }
+      }
       options { timeout(time: 10, unit: 'MINUTES') }
       steps {
         sh '''
@@ -223,7 +290,8 @@ pipeline {
           build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
             DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" python3 scripts/publish_images.py \
-            --environment prod --tag "$build_tag" --build-date "$build_date" \
+            --environment prod --only "$CHANGED_SERVICES" --reuse-submodules "$SUBMODULE_CI_READY" \
+            --tag "$build_tag" --build-date "$build_date" \
             --source-revision "$source_revision" --builder "$BUILDER" \
             --platform linux/amd64 --registry-plain-http "$REGISTRY_PLAIN_HTTP" \
             --max-workers 3 --manifest-out "$RELEASE_MANIFEST" \
@@ -231,8 +299,9 @@ pipeline {
           echo
           echo '=== Manual production digest update report ==='
           cat "$BUMP_COMMANDS_REPORT"
-          env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
-            DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make --no-print-directory publish-redpanda-maint \
+          if [ "$SHOULD_PUBLISH_REDPANDA_MAINT" = true ]; then
+            env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+              DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make --no-print-directory publish-redpanda-maint \
             TAG="$build_tag" BUILD_DATE="$build_date" BUILDER="$BUILDER" PLATFORM=linux/amd64 \
             REGISTRY="$REGISTRY" REGISTRY_PLAIN_HTTP="$REGISTRY_PLAIN_HTTP" \
             PUBLISH_REPOSITORY="$REGISTRY/redpanda-maint" \
@@ -240,6 +309,9 @@ pipeline {
           redpanda_maint_digest="$(python3 scripts/image_contract.py buildx-digest artifacts/redpanda-maint-buildx.json)"
           echo "redpanda-maint pushed digest: $redpanda_maint_digest"
           echo 'Pin that digest and add ../../../base/redpanda-maintenance to the reviewed prod data-plane slice only after the platform Secret exists.'
+          else
+            echo 'skipped: no redpanda-maintenance changes'
+          fi
         '''
         archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt,artifacts/redpanda-maint-buildx.json', fingerprint: true
       }

@@ -68,7 +68,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
             compose.index("  jenkins-docker:\n") : compose.index("\n  jenkins:\n")
         ]
         scala = pipeline[
-            pipeline.index("stage('Scala services')") : pipeline.index(
+            pipeline.index("stage('Schema migrator')") : pipeline.index(
                 "stage('Sensor')"
             )
         ]
@@ -118,6 +118,30 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn('--commands-out "$BUMP_COMMANDS_REPORT"', pipeline[publication:])
         self.assertIn('cat "$BUMP_COMMANDS_REPORT"', pipeline[publication:])
         self.assertIn("artifacts/bump-digest-commands.txt", pipeline[publication:])
+
+    def test_classification_drives_tests_and_publication(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        self.assertLess(pipeline.index("stage('Classify changes')"), pipeline.index("stage('Validate and test')"))
+        self.assertIn("scripts/classify_changes.py --base \"$GIT_PREVIOUS_SUCCESSFUL_COMMIT\"", pipeline)
+        self.assertIn("scripts/classify_changes.py --full", pipeline)
+        for name in ("PLATFORM_SYNC", "ATHEROS_SEARCH", "SCHEMA_MIGRATOR", "OCTOPUS", "SENSOR"):
+            self.assertIn(f'"$SHOULD_RUN_{name}" != true', pipeline)
+        self.assertIn('--only "$CHANGED_SERVICES"', pipeline)
+        self.assertIn('--reuse-submodules "$SUBMODULE_CI_READY"', pipeline)
+        self.assertIn("SUBMODULE_CI_READY = 'false'", pipeline)
+        self.assertIn('"$SUBMODULE_CI_READY" = true ] || [ "$SHOULD_RUN_OCTOPUS" != true', pipeline)
+        self.assertIn('"$SHOULD_PUBLISH_REDPANDA_MAINT" = true', pipeline)
+
+    def test_external_multibranch_jobs_are_declared(self) -> None:
+        config = (REPOSITORY_ROOT / "docker/jenkins/casc/jenkins.yaml").read_text(encoding="utf-8")
+        for name, url in (
+            ("octopus-validation", "https://github.com/zlovtnik/octopus"),
+            ("integration-console-images", "https://github.com/zlovtnik/integration-console.git"),
+            ("schema-migrator-images", "https://github.com/zlovtnik/schema-migrator.git"),
+            ("wg-key-rotator-images", "https://github.com/zlovtnik/wg-key-rotator.git"),
+        ):
+            self.assertIn(f"multibranchPipelineJob('{name}')", config)
+            self.assertIn(f"remote('{url}')", config)
 
     def test_delivery_validation_is_fail_closed(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")

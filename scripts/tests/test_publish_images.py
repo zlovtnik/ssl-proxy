@@ -8,6 +8,7 @@ from io import StringIO
 from pathlib import Path
 
 import sys
+from unittest.mock import patch
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -197,6 +198,58 @@ class PublishImagesTest(unittest.TestCase):
             "No digest updates are required.",
             bump_commands_report(()),
         )
+
+    def test_only_selects_requested_images_and_empty_selection(self) -> None:
+        commands: list[list[str]] = []
+
+        def fake_run(command: list[str], _root: Path) -> int:
+            commands.append(command)
+            metadata_argument = next(argument for argument in command if argument.startswith("PUBLISH_METADATA_FILE="))
+            Path(metadata_argument.split("=", 1)[1]).write_text(
+                json.dumps({"containerimage.digest": PIN}), encoding="utf-8"
+            )
+            return 0
+
+        manifest = self.root / "manifest.json"
+        self.assertEqual(0, publish_environment(
+            self.root, settings(), run_command=fake_run, only=("java-coordinator",),
+            manifest_out=manifest, output=lambda _line: None,
+        ))
+        self.assertEqual(1, len(commands))
+        self.assertIn("publish-java-coordinator", commands[0])
+        self.assertEqual("java-coordinator", json.loads(manifest.read_text())["images"][0]["service"])
+        self.assertEqual(0, publish_environment(
+            self.root, settings(), run_command=fake_run, only=(),
+            manifest_out=manifest, output=lambda _line: None,
+        ))
+        self.assertEqual(1, len(commands))
+        self.assertEqual([], json.loads(manifest.read_text())["images"])
+
+    def test_reuses_published_submodule_image_by_pinned_revision(self) -> None:
+        commands: list[list[str]] = []
+        manifest = self.root / "manifest.json"
+
+        def fake_run(command: list[str], _root: Path) -> int:
+            commands.append(command)
+            metadata = Path(command[command.index("--metadata-file") + 1])
+            metadata.write_text(
+                json.dumps({"containerimage.descriptor": {"digest": NEW_DIGEST}}),
+                encoding="utf-8",
+            )
+            return 0
+
+        with patch("publish_images.submodule_revision", return_value="f" * 40):
+            self.assertEqual(0, publish_environment(
+                self.root, settings(), run_command=fake_run, output=lambda _line: None,
+                only=("atheros-search",), reuse_submodules=True, manifest_out=manifest,
+            ))
+
+        self.assertEqual("docker", commands[0][0])
+        self.assertIn("imagetools", commands[0])
+        self.assertIn("registry.test:5000/releases/atheros-search:" + "f" * 40, commands[0])
+        image = json.loads(manifest.read_text())["images"][0]
+        self.assertEqual("f" * 40, image["sourceRevision"])
+        self.assertEqual(NEW_DIGEST, image["digest"])
 
 
 if __name__ == "__main__":
