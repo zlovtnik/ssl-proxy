@@ -1,0 +1,46 @@
+-- NOT FOR EXECUTION.
+--
+-- Proposal only: time partitioning for octopus_core.sync_batches and
+-- octopus_core.sync_events. This file is intentionally outside sql/postgres/,
+-- is referenced by no manifest, and is not applied by the schema executor.
+-- Nothing here has been tested against a live copy of the data.
+--
+-- Blocking decisions before this becomes a migration:
+--   1. Retention windows (hot days per table) and whether rows are archived to
+--      MinIO before the drop. Octopus already owns retention today through the
+--      event-retention processor (SYNC_EVENT_ROW_RETENTION_DAYS,
+--      SYNC_EVENT_TOMBSTONE_RETENTION_DAYS, WIRELESS_RAW_PAYLOAD_HOT_DAYS and
+--      the payload archiver); partitioning must not create a second owner.
+--   2. Unique constraints. The current tables rely on
+--      UNIQUE (dedupe_key, stream_name) and UNIQUE (job_id, batch_no).
+--      PostgreSQL requires the partition key in every unique index, so these
+--      become unique per partition. Dedupe and batch numbering then need a new
+--      design (global sequence, or uniqueness enforced in the coordinator).
+--   3. Every query that addresses these tables by primary key must also supply
+--      created_at, because the partition key becomes part of the key.
+--   4. Ingestion evidence and retention evidence rows that reference batch or
+--      event identity must survive a DROP PARTITION for their compliance
+--      window, or be copied out first.
+--
+-- Sketch, once the decisions above are made and a rehearsal on a restore of
+-- the production database has passed:
+--
+--   CREATE TABLE octopus_core.sync_batches_new (
+--     -- same columns as octopus_core.sync_batches
+--   ) PARTITION BY RANGE (created_at);
+--
+--   CREATE TABLE octopus_core.sync_batches_default
+--     PARTITION OF octopus_core.sync_batches_new DEFAULT;
+--
+--   -- Backfill in bounded batches so the migration does not hold one long
+--   -- transaction, then rename:
+--   ALTER TABLE octopus_core.sync_batches RENAME TO sync_batches_legacy;
+--   ALTER TABLE octopus_core.sync_batches_new RENAME TO sync_batches;
+--
+--   -- Retention becomes metadata-only and releases space immediately:
+--   --   DROP TABLE octopus_core.sync_batches_2026_09_01;
+--
+-- Until decisions 1-4 are recorded, use the read-only diagnosis
+-- (ops/sql/pg-size-report.sh) plus the existing Octopus retention processors
+-- and tune SYNC_EVENT_ROW_RETENTION_DAYS / WIRELESS_RAW_PAYLOAD_HOT_DAYS in
+-- cyber-stack/base/java-coordinator/deployment.yaml instead.

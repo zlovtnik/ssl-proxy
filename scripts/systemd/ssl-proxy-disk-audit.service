@@ -1,0 +1,9 @@
+[Unit]
+Description=Capture an ssl-proxy host storage audit snapshot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ssl-proxy-disk-audit weekly
+Environment=AUDIT_OUTPUT_DIR=/var/lib/ssl-proxy-storage-audit
+Nice=19
+IOSchedulingClass=idle

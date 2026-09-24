@@ -89,7 +89,7 @@ groups:
           summary: "Redpanda group {{ $labels.redpanda_group }} lags {{ $labels.redpanda_topic }} by over 5,000 records"
           diagnostic: "The committed offset has remained behind the partition max offset for fifteen minutes."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbook.md#coordinator-and-stream-recovery"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbook.md#data-plane-checks"
       - alert: CoordinatorLagMetricsStale
         expr: max(coordinator_redpanda_lag_stale_seconds{service="octopus"}) > 900
         for: 15m
@@ -98,4 +98,4 @@ groups:
           summary: "Coordinator Redpanda lag metrics have been stale for over fifteen minutes"
           diagnostic: "Pipeline freshness cannot be established while the coordinator lag refresh is stale."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbook.md#coordinator-and-stream-recovery"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbook.md#data-plane-checks"

@@ -1,0 +1,66 @@
+groups:
+  - name: storage-capacity-alerts
+    rules:
+      - alert: RedpandaTopicLogBytesHigh
+        expr: redpanda_topic_log_bytes{topic="wireless.audit"} > 67108864000
+        for: 30m
+        labels: {severity: warning, service: redpanda}
+        annotations:
+          summary: "Topic wireless.audit retains more than 63 GiB"
+          diagnostic: "Topic retention has outgrown the 7-day byte budget for the Redpanda data volume."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#redpanda-topic-oversize"
+      - alert: RedpandaTopicLogBytesCritical
+        expr: redpanda_topic_log_bytes{topic="wireless.audit"} > 96636764160
+        for: 15m
+        labels: {severity: critical, service: redpanda}
+        annotations:
+          summary: "Topic wireless.audit retains more than 90 GiB"
+          diagnostic: "Topic data is at the size that fills the Redpanda data volume and risks node-wide disk exhaustion."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#redpanda-topic-oversize"
+      - alert: RegistryVolumeHigh
+        expr: docker_volume_used_bytes{volume="ssl-proxy-ci_registry-data"} > 16106127360
+        for: 30m
+        labels: {severity: warning, service: infrastructure}
+        annotations:
+          summary: "CI registry volume {{ $labels.volume }} exceeds 15 GiB"
+          diagnostic: "Registry blob storage has outgrown its retention budget; review the retention plan before garbage collection."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#ci-registry-volume"
+      - alert: JenkinsDinDVolumeHigh
+        expr: docker_volume_used_bytes{volume="ssl-proxy-ci_jenkins-docker-data"} > 32212254720
+        for: 30m
+        labels: {severity: warning, service: infrastructure}
+        annotations:
+          summary: "Jenkins Docker-in-Docker volume {{ $labels.volume }} exceeds 30 GiB"
+          diagnostic: "Build cache has outgrown its budget; prune with ops/ci/dind-prune.sh."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#jenkins-docker-in-docker-volume"
+      - alert: PostgresDatabaseSizeHigh
+        expr: ssl_proxy_postgres_database_bytes{datname="sync"} > 161061273600
+        for: 30m
+        labels: {severity: warning, service: octopus}
+        annotations:
+          summary: "PostgreSQL database {{ $labels.datname }} exceeds 150 GiB"
+          diagnostic: "The platform database is approaching the disk budget; run the read-only size report before deciding on retention changes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#postgresql-growth"
+      - alert: PostgresRelationSizeHigh
+        expr: ssl_proxy_postgres_relation_bytes > 53687091200
+        for: 30m
+        labels: {severity: warning, service: octopus}
+        annotations:
+          summary: "PostgreSQL relation {{ $labels.schema }}.{{ $labels.relation }} exceeds 50 GiB"
+          diagnostic: "A single relation has outgrown expectations; check dead tuples and retention before reclaiming space."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#postgresql-growth"
+      - alert: StorageTextfileStale
+        expr: time() - ssl_proxy_storage_textfile_timestamp_seconds > 7200
+        for: 15m
+        labels: {severity: warning, service: infrastructure}
+        annotations:
+          summary: "Host storage textfile metrics have not been published for over two hours"
+          diagnostic: "Volume and topic size alerts cannot fire while the node_exporter textfile collector is stale."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#storage-metrics-are-stale"

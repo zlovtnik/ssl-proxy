@@ -49,7 +49,7 @@ BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health pvc-audit argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry registry-clean-plan registry-clean registry-recreate registry-gc octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health pvc-audit argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry registry-clean-plan registry-clean registry-recreate registry-gc octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check gitops-check topics-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 
@@ -114,11 +114,16 @@ recover-stack: kube-context-check
 pvc-audit: kube-context-check
 	python3 scripts/pvc_audit.py --kubectl "$(KUBECTL)" $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: storage-audit postgres-status postgres-config-check postgres-clean postgres-reset-all
+.PHONY: storage-audit disk-audit postgres-status postgres-config-check postgres-clean postgres-reset-all
 storage-audit:
 	df -h /
 	docker system df -v
 	docker exec ssl-proxy-platform-postgres du -h -d 1 /var/lib/postgresql/data
+
+# Read-only storage snapshot for the workmap evidence trail. It only writes a
+# report under ops/disk/snapshots (override with AUDIT_OUTPUT_DIR).
+disk-audit:
+	bash ops/disk/audit.sh
 
 # Read-only host inspection; it never starts, stops, or recreates PostgreSQL.
 postgres-status:
@@ -213,10 +218,16 @@ docs-check:
 	python3 scripts/check-docs.py
 
 gitops-check:
+	python3 scripts/check_redpanda_maintenance.py
 	python3 scripts/image_contract.py contract --environment prod >/dev/null
 	python3 scripts/gen_contract_digest.py --check
 	python3 scripts/gen_platform_sync_rbac.py --check
 	python3 scripts/check-gitops.py --kustomize "$(KUSTOMIZE_EDITOR)"
+
+# Read-only topic retention contract check. Add TOPICS_LIVE=1 to also compare
+# the tracked manifest with a reachable cluster.
+topics-check:
+	bash ops/redpanda/check-topics.sh $(if $(TOPICS_LIVE),--live,)
 
 test:
 	cargo test -p sync-plane
@@ -297,10 +308,15 @@ buildx-ready: require-registry
 			configured_registry="$$(sed -n '1p' "$$stamp")"; \
 			configured_mode="$$(sed -n '2p' "$$stamp")"; \
 			configured_network="$$(sed -n '3p' "$$stamp")"; \
+			configured_cache="$$(sed -n '4p' "$$stamp")"; \
 			if [ "$$configured_mode" != "$(REGISTRY_PLAIN_HTTP)" ] || { [ "$(REGISTRY_PLAIN_HTTP)" = "1" ] && [ "$$configured_registry" != "$$registry_host" ]; } || [ "$$configured_network" != "$(BUILDER_NETWORK)" ]; then \
 				echo "Buildx builder $(BUILDER) uses REGISTRY_PLAIN_HTTP=$$configured_mode for $$configured_registry with BUILDER_NETWORK=$${configured_network:-default}, but REGISTRY_PLAIN_HTTP=$(REGISTRY_PLAIN_HTTP) and BUILDER_NETWORK=$(if $(strip $(BUILDER_NETWORK)),$(BUILDER_NETWORK),default) were requested for $$registry_host." >&2; \
 				echo "Use an unused dedicated builder (for example BUILDER=$(BUILDER)-http) or remove and recreate $(BUILDER) after confirming it is safe." >&2; \
 				exit 2; \
+			elif [ "$$configured_cache" != "gc=21474836480" ]; then \
+				echo "Buildx builder $(BUILDER) predates the build cache ceiling; removing and recreating." >&2; \
+				docker buildx rm "$(BUILDER)" >/dev/null 2>&1 || { echo "Failed to remove $(BUILDER). Remove it manually and retry." >&2; exit 2; }; \
+				recreate=1; \
 			fi; \
 		elif [ "$(REGISTRY_PLAIN_HTTP)" = "1" ] || [ -n "$(BUILDER_NETWORK)" ]; then \
 			echo "Buildx builder $(BUILDER) already exists with unverified configuration; removing and recreating." >&2; \
@@ -315,12 +331,15 @@ buildx-ready: require-registry
 		if [ -n "$(BUILDER_NETWORK)" ]; then \
 			set -- "$$@" --driver-opt "network=$(BUILDER_NETWORK)"; \
 		fi; \
-		if [ "$(REGISTRY_PLAIN_HTTP)" = "1" ]; then \
-			printf '[registry."%s"]\n  http = true\n' "$$registry_host" > "$$config"; \
-			set -- "$$@" --buildkitd-config "$$config"; \
-		fi; \
+		{ \
+			printf '[worker.oci]\n  gc = true\n  gckeepstorage = 21474836480\n'; \
+			if [ "$(REGISTRY_PLAIN_HTTP)" = "1" ]; then \
+				printf '\n[registry."%s"]\n  http = true\n' "$$registry_host"; \
+			fi; \
+		} > "$$config"; \
+		set -- "$$@" --buildkitd-config "$$config"; \
 		"$$@" >/dev/null; \
-		printf '%s\n%s\n%s\n' "$$registry_host" "$(REGISTRY_PLAIN_HTTP)" "$(BUILDER_NETWORK)" > "$$stamp"; \
+		printf '%s\n%s\n%s\n%s\n' "$$registry_host" "$(REGISTRY_PLAIN_HTTP)" "$(BUILDER_NETWORK)" "gc=21474836480" > "$$stamp"; \
 	fi
 	@docker buildx inspect "$(BUILDER)" --bootstrap >/dev/null
 

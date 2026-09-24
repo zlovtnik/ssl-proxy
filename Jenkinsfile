@@ -342,4 +342,20 @@ pipeline {
       }
     }
   }
+
+  post {
+    always {
+      sh label: 'Reclaim the buildx cache', script: '''
+        set -u
+        if ! docker context inspect "$DOCKER_CONTEXT_NAME" >/dev/null 2>&1; then
+          echo "skipped: docker context $DOCKER_CONTEXT_NAME is unavailable"
+          exit 0
+        fi
+        env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+          DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker buildx prune \
+          --builder "$BUILDER" --filter until=168h --keep-storage 20GB --force \
+          || echo "buildx cache prune failed; continuing"
+      '''
+    }
+  }
 }

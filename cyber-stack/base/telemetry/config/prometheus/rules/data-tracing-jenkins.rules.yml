@@ -82,7 +82,7 @@ groups:
           summary: "PostgreSQL metrics endpoint is unavailable"
           diagnostic: "Neither the bundled endpoint nor the production host bridge is delivering PostgreSQL metrics."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/postgres-data-services"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgres"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgresql"
       - alert: PostgreSQLConnectionsHigh
         expr: postgres_server_connections / clamp_min(postgres_server_max_connections, 1) > 0.8
         for: 10m
@@ -91,7 +91,7 @@ groups:
           summary: "PostgreSQL connection utilization is above 80%"
           diagnostic: "Active database connections are approaching the configured limit."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/postgres-data-services"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgres-connections"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgresql-connections"
       - alert: PostgreSQLQueryLatencyHigh
         expr: histogram_quantile(0.95, sum by (le) (rate(postgres_server_handle_query_duration_seconds_bucket[5m]))) > 1
         for: 10m
@@ -100,7 +100,7 @@ groups:
           summary: "PostgreSQL p95 query latency exceeds one second"
           diagnostic: "Query handling latency has remained elevated for ten minutes."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/postgres-data-services"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgres-latency"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgresql-latency"
       - alert: PostgreSQLErrorsOrDeadlocks
         expr: sum(rate(postgres_server_query_total{result!="OK"}[5m])) > 0 or sum(rate(postgres_server_deadlock_total[5m])) > 0
         for: 10m
@@ -109,7 +109,7 @@ groups:
           summary: "PostgreSQL errors or deadlocks are elevated"
           diagnostic: "PostgreSQL has reported unsuccessful queries or deadlocks for ten minutes."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/postgres-data-services"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgres-errors"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#postgresql-errors"
 
   - name: tracing-and-jaeger
     rules:

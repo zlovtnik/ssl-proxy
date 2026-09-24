@@ -1,0 +1,10 @@
+[Unit]
+Description=Prune build cache in the Jenkins Docker-in-Docker engine
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ssl-proxy-dind-prune $DIND_PRUNE_MODE
+Environment=DIND_PRUNE_MODE=--apply
+EnvironmentFile=-/etc/default/ssl-proxy-storage
+Nice=10
+IOSchedulingClass=idle

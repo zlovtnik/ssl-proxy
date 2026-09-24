@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the ssl-proxy CI registry garbage-collection plan weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 04:37:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -87,7 +87,7 @@ class MakeBuildxReadyTest(unittest.TestCase):
             self.log.read_text(encoding="utf-8"),
         )
         self.assertEqual(
-            "registry.test:5000\n1\nhost\n",
+            "registry.test:5000\n1\nhost\ngc=21474836480\n",
             (self.root / "ssl-proxy-buildkitd-test-publisher.mode").read_text(
                 encoding="utf-8"
             ),
@@ -108,7 +108,7 @@ class MakeBuildxReadyTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertNotIn("--driver-opt", self.log.read_text(encoding="utf-8"))
         self.assertEqual(
-            "registry.test:5000\n0\n\n",
+            "registry.test:5000\n0\n\ngc=21474836480\n",
             (self.root / "ssl-proxy-buildkitd-test-publisher.mode").read_text(
                 encoding="utf-8"
             ),
@@ -128,11 +128,50 @@ class MakeBuildxReadyTest(unittest.TestCase):
             log,
         )
         self.assertEqual(
-            "registry.test:5000\n1\nhost\n",
+            "registry.test:5000\n1\nhost\ngc=21474836480\n",
             (self.root / "ssl-proxy-buildkitd-test-publisher.mode").read_text(
                 encoding="utf-8"
             ),
         )
+
+
+    def test_writes_the_build_cache_ceiling_into_the_builder_config(self) -> None:
+        result = self.run_make("1", "host")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        config = (
+            self.root / "ssl-proxy-buildkitd-test-publisher.toml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("[worker.oci]", config)
+        self.assertIn("gc = true", config)
+        self.assertIn("gckeepstorage = 21474836480", config)
+        self.assertIn('[registry."registry.test:5000"]', config)
+        self.assertIn("--buildkitd-config", self.log.read_text(encoding="utf-8"))
+
+    def test_config_ceiling_is_written_for_plain_https_builders(self) -> None:
+        result = self.run_make("0")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        config = (
+            self.root / "ssl-proxy-buildkitd-test-publisher.toml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("gckeepstorage = 21474836480", config)
+        self.assertNotIn("[registry.", config)
+
+    def test_recreates_a_builder_that_predates_the_cache_ceiling(self) -> None:
+        first = self.run_make("1", "host")
+        self.assertEqual(0, first.returncode, first.stderr)
+
+        stamp = self.root / "ssl-proxy-buildkitd-test-publisher.mode"
+        stamp.write_text("registry.test:5000\n1\nhost\n", encoding="utf-8")
+
+        second = self.run_make("1", "host")
+
+        self.assertEqual(0, second.returncode, second.stderr)
+        self.assertIn("predates the build cache ceiling", second.stderr)
+        log = self.log.read_text(encoding="utf-8")
+        self.assertIn("buildx rm", log)
+        self.assertEqual(2, log.count("buildx create"))
 
 
 if __name__ == "__main__":

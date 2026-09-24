@@ -42,6 +42,9 @@ overrides a rule for its subtree.
   `cyber-stack/matrix/prod/` contains the production Kustomize slices.
 - `docker/`, `scripts/`, and `docs/` hold deployment, operational, and design
   material.
+- `ops/` holds read-only audit tooling and explicitly gated host reclaim
+  scripts for the Wiretrap storage workmap: `ops/disk/`, `ops/redpanda/`,
+  `ops/sql/`, and `ops/ci/`.
 
 ## Architecture Guardrails
 - Keep coordinator concerns in `services/octopus/`: cursoring, dedupe,

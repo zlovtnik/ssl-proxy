@@ -1,0 +1,10 @@
+[Unit]
+Description=Report ssl-proxy CI registry storage and retention plan
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ssl-proxy-registry-gc $REGISTRY_GC_MODE
+Environment=REGISTRY_GC_MODE=plan
+EnvironmentFile=-/etc/default/ssl-proxy-storage
+Nice=19
+IOSchedulingClass=idle

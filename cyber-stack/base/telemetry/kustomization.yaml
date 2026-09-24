@@ -31,6 +31,7 @@ configMapGenerator:
       - workload.rules.yml=config/prometheus/rules/workload.rules.yml
       - infrastructure.rules.yml=config/prometheus/rules/infrastructure.rules.yml
       - capacity.alerts.yml=config/prometheus/rules/capacity.alerts.yml
+      - storage.alerts.yml=config/prometheus/rules/storage.alerts.yml
       - data-tracing-jenkins.rules.yml=config/prometheus/rules/data-tracing-jenkins.rules.yml
       - redpanda-maintenance.rules.yml=config/prometheus/rules/redpanda-maintenance.rules.yml
   - name: ssl-proxy-telemetry-alertmanager-config

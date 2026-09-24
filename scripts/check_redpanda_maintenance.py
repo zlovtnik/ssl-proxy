@@ -13,6 +13,10 @@ ROOT = Path(__file__).resolve().parents[1]
 TOPICS = ROOT / "cyber-stack/base/redpanda-maintenance/topics.tsv"
 PLATFORM_CONFIG = ROOT / "cyber-stack/base/platform-config/configmap.yaml"
 
+# Maximum retention.ms allowed for a topic by the disk workmap. A future edit
+# that silently raises these windows must fail the review gate.
+MAX_RETENTION_MS = {"wireless.audit": 604800000}
+
 
 def maintenance_topics() -> set[str]:
     configured: set[str] = set()
@@ -57,12 +61,26 @@ def validate() -> None:
         fields = raw.split("|")
         if len(fields) != 5:
             raise ValueError(f"topics.manifest:{line_number}: expected five fields")
-        topic, _partitions, _replicas, retention_ms, retention_bytes = fields
+        topic, partitions, replicas, retention_ms, retention_bytes = fields
         manifest_topics.add(topic)
-        bounded_by_time = retention_ms != "-1" and int(retention_ms) > 0
-        bounded_by_bytes = retention_bytes != "-1" and int(retention_bytes) > 0
-        if not (bounded_by_time or bounded_by_bytes or topic in maintained):
-            raise ValueError(f"topics.manifest:{line_number}: {topic} is unbounded and unmanaged")
+        if not partitions.isdigit() or int(partitions) < 1:
+            raise ValueError(f"topics.manifest:{line_number}: {topic} has no partition count")
+        if not replicas.isdigit() or int(replicas) < 1:
+            raise ValueError(f"topics.manifest:{line_number}: {topic} has no replica count")
+        if retention_ms.lstrip("-").isdigit() and int(retention_ms) >= 0:
+            maximum = MAX_RETENTION_MS.get(topic)
+            if maximum is not None and int(retention_ms) > maximum:
+                raise ValueError(
+                    f"topics.manifest:{line_number}: {topic} retention.ms "
+                    f"{retention_ms} exceeds the {maximum}ms budget"
+                )
+        else:
+            raise ValueError(f"topics.manifest:{line_number}: {topic} has invalid retention.ms")
+        if not retention_bytes.lstrip("-").isdigit() or int(retention_bytes) < 1:
+            raise ValueError(
+                f"topics.manifest:{line_number}: {topic} lacks a per-partition "
+                "retention.bytes cap"
+            )
     missing = maintained - manifest_topics
     if missing:
         raise ValueError("maintenance topics absent from manifest: " + ", ".join(sorted(missing)))

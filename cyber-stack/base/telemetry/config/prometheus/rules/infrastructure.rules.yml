@@ -20,20 +20,20 @@ groups:
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#node-saturation"
       - alert: FilesystemFreeSpaceWarning
-        expr: node:filesystem_utilization:ratio > 0.85 or pvc:utilization:ratio > 0.85
+        expr: node:filesystem_utilization:ratio > 0.75 or pvc:utilization:ratio > 0.75
         for: 10m
         labels: {severity: warning, service: storage}
         annotations:
-          summary: "Filesystem or PVC has less than 15% free"
-          diagnostic: "Persistent storage utilization has crossed the warning threshold."
+          summary: "Filesystem or PVC has less than 25% free"
+          diagnostic: "Persistent storage utilization has crossed the 75% warning threshold."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#storage-pressure"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md"
       - alert: FilesystemFreeSpaceCritical
-        expr: node:filesystem_utilization:ratio > 0.92 or pvc:utilization:ratio > 0.92
+        expr: node:filesystem_utilization:ratio > 0.85 or pvc:utilization:ratio > 0.85
         for: 5m
         labels: {severity: critical, service: storage}
         annotations:
-          summary: "Filesystem or PVC has less than 8% free"
-          diagnostic: "Persistent storage utilization has crossed the critical threshold."
+          summary: "Filesystem or PVC has less than 15% free"
+          diagnostic: "Persistent storage utilization has crossed the 85% critical threshold."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
-          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#storage-pressure"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md"

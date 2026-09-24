@@ -2,11 +2,14 @@
 
 This runbook covers the external PostgreSQL prerequisite, the private CI
 registry and Kubernetes storage hygiene. Read it with the
-[secret-management policy](secret-management.md), the
- [production prerequisites](../cyber-stack/matrix/prod/README.md) and the
+[secret-management policy](secret-management.md),
+ the [production prerequisites](../cyber-stack/matrix/prod/README.md) and the
  [registry workflow](local-registry-workflow.md). The tracked host definition,
  adoption procedure, resource settings, and rollout evidence are in the
- [Wiretrap PostgreSQL host guide](postgres-host.md).
+ [Wiretrap PostgreSQL host guide](postgres-host.md). When a storage alert
+ fires, start with the [disk full runbook](runbooks/disk-full.md); the phase
+ map, targets and read-only scripts for the Wiretrap capacity workmap are in
+ the [storage workmap](../ops/disk/README.md).
 
 ## Boundaries
 
@@ -191,7 +194,8 @@ Use `make registry-clean-plan` and `make registry-clean` as documented in the
 [registry retention procedure](local-registry-workflow.md#retention-and-garbage-collection).
 The planner protects Git pins and live pod digests before proposing deletions.
 Offline garbage collection omits `--delete-untagged` because a valid release may
-be referenced only by digest.
+be referenced only by digest. `ops/ci/registry-gc.sh` wraps the plan and the
+guarded garbage-collection step for weekly scheduling.
 
 ## PVC and controller hygiene
 

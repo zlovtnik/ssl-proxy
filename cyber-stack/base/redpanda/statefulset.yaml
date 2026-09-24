@@ -167,7 +167,32 @@ spec:
           args:
             - |
               brokers=ssl-proxy-redpanda:9092
+              admin=127.0.0.1:9644
               until rpk cluster info --brokers "$brokers" </dev/null >/dev/null 2>&1; do sleep 2; done
+              attempts=0
+              until rpk --api-addr "$admin" cluster config get log_retention_ms </dev/null >/dev/null 2>&1; do
+                attempts="$((attempts + 1))"
+                if [ "$attempts" -ge 30 ]; then
+                  echo "redpanda admin API is not reachable at $admin" >&2
+                  exit 1
+                fi
+                sleep 2
+              done
+              # Cluster defaults bound topics created outside the manifest. An
+              # unknown property is reported but not fatal so that a version
+              # difference cannot block the sync hook; a failed set of a known
+              # property is fatal.
+              set_cluster_default() {
+                if ! rpk --api-addr "$admin" cluster config get "$1" </dev/null >/dev/null 2>&1; then
+                  echo "cluster property $1 is unavailable; leaving its default unchanged" >&2
+                  return 0
+                fi
+                rpk --api-addr "$admin" cluster config set "$1" "$2" </dev/null >/dev/null
+                echo "cluster default $1=$2"
+              }
+              set_cluster_default log_retention_ms 604800000
+              set_cluster_default retention_bytes 1073741824
+              set_cluster_default log_segment_ms 21600000
               while IFS='|' read -r topic partitions replicas retention_ms retention_bytes || [ -n "$topic$partitions$replicas$retention_ms$retention_bytes" ]; do
                 case "$topic" in ''|'#'*) continue ;; esac
                 attempts=0
