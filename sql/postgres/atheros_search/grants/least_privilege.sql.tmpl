@@ -37,6 +37,9 @@ GRANT SELECT, INSERT, UPDATE ON atheros_search.embeddings TO {{ATHEROS_SEARCH_AC
 GRANT SELECT, INSERT, UPDATE ON atheros_search.search_vectors_event, atheros_search.search_vectors_device,
   atheros_search.search_vectors_behaviour, atheros_search.search_vectors_sequence TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT ON atheros_search.devices TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT ON atheros_search.graph_nodes, atheros_search.graph_edges,
+  atheros_search.merge_candidates TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE ON atheros_search.merge_decisions TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.search_queries TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.worker_heartbeat TO {{ATHEROS_SEARCH_ACCOUNT}};
 

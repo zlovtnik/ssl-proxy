@@ -59,7 +59,7 @@ spec:
             - name: ATHSEARCH_POSTGRES_TLS_SERVER_NAME
               value: "postgres-pgbouncer"
             - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
-              value: "57cea4933ec8627e3dc6d2f9fc8f5102e7229fd94c405dd44cbd081f6c1ed372"
+              value: "a7b557edbd245e3ca86fbe8b058f2ccca4893a7b15dcbd2e03de1b183ff4f609"
             - name: ATHSEARCH_EMBEDDING_MODEL
               value: "nomic-embed-text-v2-moe"
             - name: ATHSEARCH_EMBEDDING_DIMENSIONS

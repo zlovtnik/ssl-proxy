@@ -1,10 +1,10 @@
 engine: postgres
 layer: atheros_search
 database: sync
-schema_version: 006
+schema_version: 007
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: 57cea4933ec8627e3dc6d2f9fc8f5102e7229fd94c405dd44cbd081f6c1ed372
+manifest_sha256: a7b557edbd245e3ca86fbe8b058f2ccca4893a7b15dcbd2e03de1b183ff4f609
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:

@@ -85,6 +85,7 @@ END $$;
 
 ALTER TABLE atheros_search.merge_decisions
   ALTER COLUMN decided_at SET DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS decided_by text DEFAULT NULL,
   DROP COLUMN IF EXISTS decision_id;
 
 DELETE FROM atheros_search.merge_decisions decision
