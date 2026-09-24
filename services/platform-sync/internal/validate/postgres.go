@@ -307,6 +307,10 @@ func atherosSearchGrants() []tableGrant {
 		{table: "atheros_search.search_vectors_behaviour", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 		{table: "atheros_search.search_vectors_sequence", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 		{table: "atheros_search.devices", privileges: []string{"SELECT"}},
+		{table: "atheros_search.graph_nodes", privileges: []string{"SELECT"}},
+		{table: "atheros_search.graph_edges", privileges: []string{"SELECT"}},
+		{table: "atheros_search.merge_candidates", privileges: []string{"SELECT"}},
+		{table: "atheros_search.merge_decisions", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 		{table: "atheros_search.search_queries", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 		{table: "atheros_search.worker_heartbeat", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 	}

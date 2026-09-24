@@ -70,8 +70,6 @@ func TestAtherosSearchRuntimeExcludesCoordinatorAndUnknownTables(t *testing.T) {
 	for _, table := range []string{
 		"atheros_search.identity_clusters",
 		"atheros_search.identity_cluster_members",
-		"atheros_search.merge_candidates",
-		"atheros_search.merge_decisions",
 		"atheros_search.search_query_results",
 		"atheros_search.search_feedback",
 		"atheros_search.search_filter_values",
