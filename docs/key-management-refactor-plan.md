@@ -6,7 +6,7 @@
 Production credentials have one source of truth: HashiCorp Vault KV-v2 under
 `secret/ssl-proxy/prod`. The value-free
 [`platform-input-contract.yaml`](../cyber-stack/platform-input-contract.yaml)
-defines the 19 Kubernetes Secrets and one ConfigMap that platform-sync may
+defines the 21 Kubernetes Secrets and one ConfigMap that platform-sync may
 materialize. Local-development generators are not production provisioning
 tools.
 
@@ -31,7 +31,7 @@ tools.
 | Surface | Current role | Production status | Direction |
 |---|---|---|---|
 | `cyber-stack/platform-input-contract.yaml` | Names every production input, Vault path and allowed key | Authoritative | Keep and add ownership metadata when the schema is extended |
-| `services/platform-sync` | Reads all 19 inputs, validates them and writes only declared objects | Active | Keep; retain read-only Vault and name-scoped Kubernetes identities |
+| `services/platform-sync` | Reads all 22 inputs, validates them and writes only declared objects | Active | Keep; retain read-only Vault and name-scoped Kubernetes identities |
 | `services/platform-sync/cmd/cred-gen` | Requests a short-lived Kubernetes token and writes an ephemeral kubeconfig | Active host helper | Keep; never turn it into a workload-secret generator |
 | `scripts/bootstrap-vault-platform-sync.sh` | Creates the renewable read-only Vault service token | Active one-time bootstrap | Keep; require administrator capability preflight and immediate removal of temporary root access |
 | `scripts/bootstrap-postgres-rotation-token.sh` | Creates a short-lived writer limited to five PostgreSQL accounts and the PgBouncer user list | Active operator helper | Keep separate from platform-sync and revoke after each rotation window |

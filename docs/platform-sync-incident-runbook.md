@@ -194,7 +194,7 @@ sudo systemctl is-active --quiet vault-k8s-sync.service && {
 sudo "$release_root/worktree/scripts/install-platform-sync.sh"
 sudo sha256sum --check /opt/platform-sync/contract/platform-input-contract.sha256
 test "$(sudo sha256sum /opt/platform-sync/contract/platform-input-contract.yaml | awk '{print $1}')" = \
-  9516aa0d26a309d92d27d994ae295555f886c0d3d93f51f1c6d854a2234ca8ed
+  f4ce3f6ef2ddafa6e3b91c726cf696a1ab563f9395af4d42a2db8f265c20882c
 ```
 
 Do not pass `VAULT_TOKEN_SOURCE` or `VAULT_CA_SOURCE` during this reinstall;
@@ -202,7 +202,7 @@ the installer retains the existing `/etc/platform-sync` files. Do not read
 those files directly to test Vault connectivity; the one-shot service below
 validates connectivity with the token and CA supplied through systemd
 `LoadCredential=`. Before the one-shot run, capture the prior success timestamp.
-Then require the run to load 21 inputs, pass every validation, and publish the
+Then require the run to load 22 inputs, pass every validation, and publish the
 exact current contract:
 
 ```bash
@@ -212,7 +212,7 @@ previous_success="$(sudo env KUBECONFIG=/run/platform-sync/kubeconfig \
   -o jsonpath='{.data.last-success-unix}')"
 sudo systemctl start vault-k8s-sync.service
 recovery_log="$(sudo journalctl -u vault-k8s-sync.service -n 100 --no-pager)"
-printf '%s\n' "$recovery_log" | rg -q '"inputs":21|"count":21'
+printf '%s\n' "$recovery_log" | rg -q '"inputs":22|"count":22'
 printf '%s\n' "$recovery_log" | rg -q 'all validations passed'
 printf '%s\n' "$recovery_log" | rg -q 'sync complete'
 
@@ -222,7 +222,7 @@ $(sudo env KUBECONFIG=/run/platform-sync/kubeconfig \
   -o jsonpath='{.data.ready}{" "}{.data.contract-sha256}{" "}{.data.last-success-unix}{"\n"}')
 EOF
 test "$ready" = true
-test "$digest" = 9516aa0d26a309d92d27d994ae295555f886c0d3d93f51f1c6d854a2234ca8ed
+test "$digest" = f4ce3f6ef2ddafa6e3b91c726cf696a1ab563f9395af4d42a2db8f265c20882c
 case "$previous_success" in ''|*[!0-9]*) exit 1 ;; esac
 case "$last_success" in ''|*[!0-9]*) exit 1 ;; esac
 test "$last_success" -gt "$previous_success"
