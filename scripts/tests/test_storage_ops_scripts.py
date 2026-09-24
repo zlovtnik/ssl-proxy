@@ -61,11 +61,13 @@ class AuditScriptTest(unittest.TestCase):
         self.env.stub("journalctl", "printf '%s\\n' \"$*\" >> \"$STUB_LOG\"\nexit 1\n")
         self.env.stub("sudo", "exit 1\n")
 
-    def run_audit(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+    def run_audit(
+        self, *arguments: str, **environment: str
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["bash", str(REPOSITORY_ROOT / "ops" / "disk" / "audit.sh"), *arguments],
             cwd=REPOSITORY_ROOT,
-            env=self.env.environment(AUDIT_OUTPUT_DIR=str(self.output)),
+            env=self.env.environment(AUDIT_OUTPUT_DIR=str(self.output), **environment),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -118,6 +120,52 @@ class AuditScriptTest(unittest.TestCase):
         for line in self.env.calls():
             for verb in forbidden:
                 self.assertNotIn(verb, line, line)
+
+    def test_postgres_report_supplies_the_password_inside_the_container(self) -> None:
+        result = self.run_audit("pgpass")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("/run/platform-secrets/platform_admin.password", "\n".join(self.env.calls()))
+        content = next(self.output.glob("*pgpass.txt")).read_text(encoding="utf-8")
+        self.assertNotIn("skipped: postgres report failed", content)
+
+    def test_filesystems_section_omits_virtual_mounts(self) -> None:
+        result = self.run_audit("filesystems")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        content = next(self.output.glob("*filesystems.txt")).read_text(encoding="utf-8")
+        self.assertRegex(content, r"# \d+ overlay/tmpfs/shm mounts omitted")
+        section = content.split("===== filesystems =====", 1)[1].split("=====", 1)[0]
+        self.assertNotIn("\noverlay", section)
+        self.assertNotIn("\ntmpfs", section)
+
+    def test_kubectl_fallback_uses_kubeconfig_and_live_namespace(self) -> None:
+        (self.env.bin / "rpk").unlink()
+        kubeconfig = self.env.root / "kubeconfig"
+        kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+        self.env.stub(
+            "kubectl",
+            "printf '%s\\n' \"$*\" >> \"$STUB_LOG\"\n"
+            "case \"$*\" in\n"
+            "  *' group describe'*)\n"
+            "    printf '%s\\n' 'GROUP octopus' 'TOPIC PARTITION CURRENT-OFFSET' "
+            "'wireless.audit 0 12' ;;\n"
+            "  *' group list'*) printf '%s\\n' 'BROKER GROUP' '1 octopus' ;;\n"
+            "esac\n"
+            "exit 0\n",
+        )
+        result = self.run_audit(
+            "kubepath",
+            PATH=f"{self.env.bin}:/usr/bin:/bin",
+            KUBECONFIG=str(kubeconfig),
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        calls = "\n".join(self.env.calls())
+        self.assertIn(f"--kubeconfig {kubeconfig}", calls)
+        self.assertIn(
+            "-n prod-ssl-proxy exec ssl-proxy-redpanda-0 -- rpk group list", calls
+        )
+        content = next(self.output.glob("*kubepath.txt")).read_text(encoding="utf-8")
+        self.assertIn("--- group octopus ---", content)
+        self.assertIn("wireless.audit", content)
 
 
 class CheckTopicsScriptTest(unittest.TestCase):
@@ -314,6 +362,13 @@ class PgSizeReportScriptTest(PostgresScriptTest):
         self.assertEqual("timestamp,database,bytes", lines[0])
         self.assertRegex(lines[1], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z,sync,1$")
 
+    def test_docker_report_reads_the_password_inside_the_container(self) -> None:
+        result = self.run_script("pg-size-report.sh")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        calls = "\n".join(self.env.calls())
+        self.assertIn("/run/platform-secrets/platform_admin.password", calls)
+        self.assertIn("psql-wrap platform_admin sync", calls)
+
     def test_missing_container_fails_with_a_clear_message(self) -> None:
         self.container_present = False
         result = self.run_script("pg-size-report.sh")
@@ -372,6 +427,75 @@ class PgRepackScriptTest(PostgresScriptTest):
         calls = "\n".join(self.env.calls())
         self.assertIn("no such relation", result.stdout)
         self.assertNotIn("VACUUM", calls)
+
+
+PV_USAGE_DOCKER_STUB = (
+    "printf '%s\\n' \"$*\" >> \"$STUB_LOG\"\n"
+    "case \"${1:-}\" in\n"
+    "  ps)\n"
+    "    printf '%s\\n' 'ssl-proxy-platform-postgres'\n"
+    "    exit 0 ;;\n"
+    "esac\n"
+    "case \"$*\" in\n"
+    "  *pg_total_relation_size*) printf '%s\\n' 'octopus_core sync_events 1024' ;;\n"
+    "  *pg_database_size*) printf '%s\\n' 'sync 1048576' ;;\n"
+    "esac\n"
+    "exit 0\n"
+)
+
+
+class PvUsageTextfileScriptTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.env = StubEnvironment()
+        self.addCleanup(self.env.close)
+        self.env.stub("docker", PV_USAGE_DOCKER_STUB)
+        self.env.stub(
+            "kubectl",
+            "printf '%s\\n' \"$*\" >> \"$STUB_LOG\"\n"
+            "printf '%s\\n' 'BROKER DIRECTORY TOPIC BYTES' "
+            "'1 /var/lib/redpanda wireless.audit 12345'\n",
+        )
+        self.output = self.env.root / "textfile"
+        self.output.mkdir()
+        self.kubeconfig = self.env.root / "kubeconfig"
+        self.kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+        self.pvc_root = self.env.root / "k3s"
+        (self.pvc_root / "pvc-demo").mkdir(parents=True)
+        (self.pvc_root / "pvc-demo" / "data").write_text("x", encoding="utf-8")
+        self.volume_root = self.env.root / "volumes"
+        (self.volume_root / "registry" / "_data").mkdir(parents=True)
+        (self.volume_root / "registry" / "_data" / "blob").write_text(
+            "y", encoding="utf-8"
+        )
+
+    def test_publishes_metrics_with_container_side_password(self) -> None:
+        result = subprocess.run(
+            ["bash", str(REPOSITORY_ROOT / "scripts" / "pv-usage-textfile.sh")],
+            cwd=REPOSITORY_ROOT,
+            env=self.env.environment(
+                NODE_EXPORTER_TEXTFILE_DIR=str(self.output),
+                K3S_PVC_ROOT=str(self.pvc_root),
+                DOCKER_VOLUME_ROOT=str(self.volume_root),
+                KUBECONFIG=str(self.kubeconfig),
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        prom = (self.output / "ssl_proxy_storage.prom").read_text(encoding="utf-8")
+        self.assertIn('ssl_proxy_postgres_database_bytes{datname="sync"} 1048576', prom)
+        self.assertIn(
+            'ssl_proxy_postgres_relation_bytes{schema="octopus_core",'
+            'relation="sync_events"} 1024',
+            prom,
+        )
+        self.assertIn('redpanda_topic_log_bytes{topic="wireless.audit"} 12345', prom)
+        self.assertIn('docker_volume_used_bytes{volume="registry"}', prom)
+        calls = "\n".join(self.env.calls())
+        self.assertIn("/run/platform-secrets/platform_admin.password", calls)
+        self.assertIn(f"--kubeconfig {self.kubeconfig}", calls)
 
 
 class DiskAuditMakeTargetTest(unittest.TestCase):

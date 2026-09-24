@@ -62,6 +62,13 @@ only with `--apply` plus its confirmation token.
 Snapshots and CSV evidence are written to `ops/disk/snapshots/` and are
 ignored by Git; attach them to the change review instead of committing them.
 
+The audit resolves Kubernetes access from `KUBECONFIG`, then the root-readable
+`/etc/rancher/k3s/k3s.yaml`, then the ambient kubectl config, and queries the
+live namespace `prod-ssl-proxy` (`REDPANDA_NAMESPACE` overrides it). `df`
+omits overlay/tmpfs/shm rows and says how many it dropped. PostgreSQL sections
+export the password inside the container from its own secret file, so stdin
+stays reserved for the report and no credential reaches the host.
+
 ## Weekly timers
 
 Install as root on `wiretrap` after reviewing the scripts:

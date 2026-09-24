@@ -25,8 +25,12 @@ run_psql() {
     psql -X -q --pset pager=off -v ON_ERROR_STOP=1 -U "$psql_user" -d "$psql_db" "$@"
   elif command -v docker >/dev/null 2>&1 &&
     docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$container"; then
-    docker exec -i "$container" psql -X -q --pset pager=off \
-      -v ON_ERROR_STOP=1 -U "$psql_user" -d "$psql_db" "$@"
+    # The local socket requires SCRAM and psql has no tty under docker exec,
+    # so export the password inside the container from its own secret file;
+    # stdin stays reserved for the SQL.
+    docker exec -i "$container" sh -eu -c \
+      'PGPASSWORD=$(tr -d "\r\n" </run/platform-secrets/platform_admin.password); export PGPASSWORD; user=$1; database=$2; shift 2; exec psql -X -q --pset pager=off -v ON_ERROR_STOP=1 -U "$user" -d "$database" "$@"' \
+      psql-wrap "$psql_user" "$psql_db" "$@"
   elif command -v docker >/dev/null 2>&1; then
     printf 'pg-size-report: container %s is not reachable; start it or set PGHOST with a local psql\n' "$container" >&2
     exit 1

@@ -14,10 +14,16 @@ output_dir="${AUDIT_OUTPUT_DIR:-$repo_root/ops/disk/snapshots}"
 output_file="$output_dir/$(date -u +%Y-%m-%d)-${label//[^A-Za-z0-9._-]/_}.txt"
 
 redpanda_brokers="${RPK_BROKERS:-ssl-proxy-redpanda:9092}"
-redpanda_namespace="${REDPANDA_NAMESPACE:-ssl-proxy}"
+redpanda_namespace="${REDPANDA_NAMESPACE:-prod-ssl-proxy}"
 redpanda_pod="${REDPANDA_POD:-ssl-proxy-redpanda-0}"
 postgres_container="${POSTGRES_CONTAINER:-ssl-proxy-platform-postgres}"
 dind_service_label="${DIND_SERVICE_LABEL:-com.docker.compose.service=jenkins-docker}"
+# Prefer the caller's kubeconfig, then the k3s admin config readable by root
+# (systemd timer), then whatever the ambient kubectl already uses.
+kubeconfig="${KUBECONFIG:-}"
+if [ -z "$kubeconfig" ] && [ -r /etc/rancher/k3s/k3s.yaml ]; then
+  kubeconfig="/etc/rancher/k3s/k3s.yaml"
+fi
 
 host_paths=(
   /var/lib/rancher/k3s/agent/containerd
@@ -63,6 +69,55 @@ as_root() {
   return 0
 }
 
+kubectl_audit() {
+  # kubectl_audit <kubectl args...> - same as kubectl, with the resolved
+  # kubeconfig when one was found.
+  if [ -n "$kubeconfig" ]; then
+    kubectl --kubeconfig "$kubeconfig" "$@"
+  else
+    kubectl "$@"
+  fi
+}
+
+run_rpk() {
+  # run_rpk <rpk args...> - local rpk when installed, otherwise the rpk inside
+  # the Redpanda pod. Returns non-zero when neither path is available.
+  if command -v rpk >/dev/null 2>&1; then
+    rpk "$@" --brokers "$redpanda_brokers"
+  elif command -v kubectl >/dev/null 2>&1; then
+    kubectl_audit -n "$redpanda_namespace" exec "$redpanda_pod" -- rpk "$@"
+  else
+    return 1
+  fi
+}
+
+run_rpk_optional() {
+  # run_rpk_optional <rpk args...> - print output, or explain the skip.
+  if command -v rpk >/dev/null 2>&1; then
+    if ! rpk "$@" --brokers "$redpanda_brokers"; then
+      printf 'skipped: command failed: rpk %s\n' "$*"
+    fi
+  elif command -v kubectl >/dev/null 2>&1; then
+    if ! kubectl_audit -n "$redpanda_namespace" exec "$redpanda_pod" -- rpk "$@"; then
+      printf 'skipped: command failed: kubectl exec %s -- rpk %s\n' "$redpanda_pod" "$*"
+    fi
+  else
+    printf 'skipped: neither rpk nor kubectl is available\n'
+  fi
+  return 0
+}
+
+filter_filesystems() {
+  # Drop overlay/tmpfs/shm rows that repeat the root filesystem or hold no
+  # persistent data, and report how many were dropped.
+  awk '
+    NR == 1 { print; next }
+    $1 == "overlay" || $1 == "tmpfs" || $1 == "shm" { omitted++; next }
+    { print }
+    END { printf "# %d overlay/tmpfs/shm mounts omitted\n", omitted + 0 }
+  '
+}
+
 du_flags="-s -h"
 if du -x -s -h /dev/null >/dev/null 2>&1; then
   du_flags="-x -s -h"
@@ -80,9 +135,9 @@ dind_container() {
   printf 'label=%s\n' "$label"
 
   section "filesystems"
-  df -h
+  df -h | filter_filesystems
   printf '\n'
-  df -i
+  df -i | filter_filesystems
 
   section "host paths (du)"
   for path in "${host_paths[@]}"; do
@@ -109,45 +164,48 @@ dind_container() {
   fi
 
   section "redpanda topic sizes"
-  if command -v rpk >/dev/null 2>&1; then
-    run_optional rpk cluster logdirs describe --aggregate-into topic --brokers "$redpanda_brokers"
-    printf '\n'
-    run_optional rpk topic describe wireless.audit -p --brokers "$redpanda_brokers"
-    printf '\n'
-    run_optional rpk topic describe sync.oracle.load -p --brokers "$redpanda_brokers"
-    printf '\n'
-    run_optional rpk topic describe sync.scan.request -p --brokers "$redpanda_brokers"
-  elif command -v kubectl >/dev/null 2>&1; then
-    run_optional kubectl -n "$redpanda_namespace" exec "$redpanda_pod" -- \
-      rpk cluster logdirs describe --aggregate-into topic
-    printf '\n'
-    run_optional kubectl -n "$redpanda_namespace" exec "$redpanda_pod" -- \
-      rpk topic describe wireless.audit -p
-  else
-    printf 'skipped: neither rpk nor kubectl is available\n'
-  fi
+  run_rpk_optional cluster logdirs describe --aggregate-into topic
+  printf '\n'
+  run_rpk_optional topic describe wireless.audit -p
+  printf '\n'
+  run_rpk_optional topic describe sync.oracle.load -p
+  printf '\n'
+  run_rpk_optional topic describe sync.scan.request -p
 
   section "consumer groups on capped topics"
-  if command -v rpk >/dev/null 2>&1; then
-    run_optional rpk group list --brokers "$redpanda_brokers"
-    while read -r group; do
-      [ -n "$group" ] || continue
-      printf '\n--- group %s ---\n' "$group"
-      rpk group describe "$group" --brokers "$redpanda_brokers" 2>/dev/null |
-        awk 'NR <= 2 || $1 == "wireless.audit" || $1 == "sync.oracle.load" || $1 == "sync.scan.request" || $1 == "sync.oracle.result" || $1 == "proxy.events"' ||
-        printf 'skipped: group describe failed for %s\n' "$group"
-    done < <(rpk group list --brokers "$redpanda_brokers" 2>/dev/null |
-      awk '$1 == "BROKER" && $2 == "GROUP" { header = 1; next } header && NF { print $2 }')
+  if command -v rpk >/dev/null 2>&1 || command -v kubectl >/dev/null 2>&1; then
+    if group_listing="$(run_rpk group list 2>/dev/null)"; then
+      printf '%s\n' "$group_listing"
+      while read -r group; do
+        [ -n "$group" ] || continue
+        printf '\n--- group %s ---\n' "$group"
+        run_rpk group describe "$group" 2>/dev/null |
+          awk 'NR <= 2 || $1 == "wireless.audit" || $1 == "sync.oracle.load" || $1 == "sync.scan.request" || $1 == "sync.oracle.result" || $1 == "proxy.events"' ||
+          printf 'skipped: group describe failed for %s\n' "$group"
+      done < <(printf '%s\n' "$group_listing" |
+        awk '
+          $1 == "GROUPS" { single = 1; header = 1; next }
+          $1 == "BROKER" { header = 1; next }
+          header && NF { if (single) print $1; else print $2 }
+        ')
+    else
+      printf 'skipped: could not list consumer groups\n'
+    fi
   else
-    printf 'skipped: rpk is not installed\n'
+    printf 'skipped: neither rpk nor kubectl is available\n'
   fi
 
   section "postgres relation sizes"
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx "$postgres_container"; then
     if [ -f "$repo_root/ops/sql/pg-size-report.sql" ]; then
-      docker exec -i "$postgres_container" \
-        psql -U platform_admin -d sync -v ON_ERROR_STOP=1 -f - \
-        <"$repo_root/ops/sql/pg-size-report.sql" || printf 'skipped: postgres report failed\n'
+      # The local socket requires SCRAM, and psql has no tty here, so the
+      # password is exported inside the container from its own secret file;
+      # stdin stays reserved for the report.
+      if ! docker exec -i "$postgres_container" sh -eu -c \
+        'PGPASSWORD=$(tr -d "\r\n" </run/platform-secrets/platform_admin.password); export PGPASSWORD; exec psql -U platform_admin -d sync -v ON_ERROR_STOP=1 -f -' \
+        <"$repo_root/ops/sql/pg-size-report.sql"; then
+        printf 'skipped: postgres report failed\n'
+      fi
     else
       printf 'skipped: ops/sql/pg-size-report.sql is missing\n'
     fi
