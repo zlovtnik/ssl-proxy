@@ -15,16 +15,16 @@ resources:
 - ../../../base/cloudflared
 - ../../../base/public-gateway
 images:
-- digest: sha256:f41160c1278d4f7c5a8b4d2c4458a25e264dad6894af1af5305402366691dbac
+- digest: sha256:46c74129a08bf0b36e5b5c54b186153306b35622a206a395181992e24da06913
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
-- digest: sha256:cc9b2665e4c16c193b14a101a61a0cb466bd7139d0785af1771ef459541a2133
+- digest: sha256:3fb089dd1b443bd1451430fc1ef925f55f6b65b1d7bbd2573b2bb9edd839f591
   name: atheros-search-ui
   newName: 192.168.1.242:5000/atheros-search-ui
 - digest: sha256:bf61b27b6ff140d51e3f34ff7115c611eb5ca02afc26e43019faa234d3059665
   name: atheros-sensor
   newName: 192.168.1.242:5000/atheros-sensor
-- digest: sha256:ce0307c9e97f90328ead682a2c5a06aec48b69e7bf200794125f8a71ace91aab
+- digest: sha256:630f5cb1d6313e2b08b9ed7e83228d07e7f540856552f8737b59d5ba804333c7
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
 - digest: sha256:ff49acb61038b4b4bcbd211ca917bbce5a553193cfbedcb9e7bdd25d5478d4e6
