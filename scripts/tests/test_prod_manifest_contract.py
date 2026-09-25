@@ -253,7 +253,16 @@ mock_kcadm() {
         *) printf '{"requiredActions": []}\n' ;;
       esac ;;
     "get users/user-uuid/role-mappings/clients/client-uuid") printf 'name\n' ;;
-    "set-password --config") cat >/dev/null ;;
+    "set-password --config")
+      case "$*" in
+        *"--new-password"*) return 97 ;;
+        *"--username schema-admin"*) expected="$SCHEMA_ADMIN_PASSWORD" ;;
+        *"--username search-admin"*) expected="$SEARCH_ADMIN_PASSWORD" ;;
+        *"--username search-operator"*) expected="$SEARCH_OPERATOR_PASSWORD" ;;
+        *"--username search-viewer"*) expected="$SEARCH_VIEWER_PASSWORD" ;;
+        *) return 97 ;;
+      esac
+      [ "$KC_CLI_PASSWORD" = "$expected" ] || return 97 ;;
     "update clients/client-uuid") return 0 ;;
     "update users/user-uuid") return 0 ;;
     "add-roles --config") return 0 ;;
@@ -265,7 +274,7 @@ mock_kcadm() {
             calls = Path(directory) / "calls"
             env = dict(os.environ, SCENARIO=scenario, CALL_LOG=str(calls))
             for entry in self.bootstrap_container()["env"]:
-                env[entry["name"]] = entry.get("value", "test-secret")
+                env[entry["name"]] = entry.get("value", f"test-secret-{entry['name']}")
             env.update(PUBLIC_ORIGIN="https://migrator.example.internal",
                        UI_ORIGIN="https://migrator.example.internal",
                        SEARCH_ORIGIN="https://search.example.internal")
@@ -279,6 +288,7 @@ mock_kcadm() {
         result, calls = self.run_bootstrap("existing")
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("bootstrap completed successfully", result.stdout)
+        self.assertEqual(4, calls.count("set-password --config"))
         self.assertIn('redirectUris=["https://migrator.example.internal/callback"]', calls)
         self.assertIn("--uusername search-admin --cclientid atheros-search-ui --rolename admin", calls)
         self.assertIn("--uusername search-operator --cclientid atheros-search-ui --rolename operator", calls)

@@ -191,8 +191,9 @@ spec:
                   echo "Keycloak user $username was not found after creation" >&2
                   exit 1
                 fi
-                "$KCADM" set-password --config "$ADMIN_CONFIG" -r "$REALM" \
-                  --username "$username" --new-password - >/dev/null <<< "$password"
+                KC_CLI_PASSWORD="$password" "$KCADM" set-password \
+                  --config "$ADMIN_CONFIG" -r "$REALM" \
+                  --username "$username" >/dev/null
 
                 "$KCADM" update "users/$user_id" --config "$ADMIN_CONFIG" -r "$REALM" \
                   -s "username=$username" -s "enabled=true" -s "emailVerified=true" \
