@@ -194,6 +194,16 @@ spec:
                 "$KCADM" set-password --config "$ADMIN_CONFIG" -r "$REALM" \
                   --username "$username" --new-password - >/dev/null <<< "$password"
 
+                "$KCADM" update "users/$user_id" --config "$ADMIN_CONFIG" -r "$REALM" \
+                  -s "username=$username" -s "enabled=true" -s "emailVerified=true" \
+                  -s "requiredActions=[]" >/dev/null
+                pending_actions="$($KCADM get "users/$user_id" \
+                  --config "$ADMIN_CONFIG" -r "$REALM")"
+                if printf '%s' "$pending_actions" | grep -Fq CONFIGURE_TOTP; then
+                  echo "Keycloak user $username still has required actions pending" >&2
+                  exit 1
+                fi
+
                 existing_roles="$($KCADM get "users/$user_id/role-mappings/clients/$client_uuid" \
                   --config "$ADMIN_CONFIG" -r "$REALM" --fields name --format csv --noquotes)"
                 if ! printf '%s\n' "$existing_roles" | grep -Fxq "$role"; then
@@ -206,8 +216,8 @@ spec:
               echo "Configuring Keycloak Schema Migrator administrator..."
               provision_user "$SCHEMA_ADMIN_USERNAME" "$SCHEMA_ADMIN_PASSWORD" "$ADMIN_ROLE"
 
-              stage="configuring Atheros Search users"
-              echo "Configuring Keycloak Atheros Search users..."
+              stage="configuring Atheros Search client and users"
+              echo "Configuring Keycloak Atheros Search client and users..."
               search_client_ids="$($KCADM get clients --config "$ADMIN_CONFIG" -r "$REALM" \
                 -q "clientId=$SEARCH_CLIENT_ID" --fields id --format csv --noquotes)"
               search_client_uuid="$(printf '%s\n' "$search_client_ids" | grep -v '^id$' | head -n 1)"
@@ -217,6 +227,8 @@ spec:
               fi
               client_uuid="$search_client_uuid"
               CLIENT_ID="$SEARCH_CLIENT_ID"
+              "$KCADM" update "clients/$client_uuid" --config "$ADMIN_CONFIG" -r "$REALM" \
+                -s "redirectUris=[\"$SEARCH_ORIGIN/callback\"]" -s "webOrigins=[\"$SEARCH_ORIGIN\"]" >/dev/null
               provision_user "$SEARCH_ADMIN_USERNAME" "$SEARCH_ADMIN_PASSWORD" "$ADMIN_ROLE"
               provision_user "$SEARCH_OPERATOR_USERNAME" "$SEARCH_OPERATOR_PASSWORD" "$OPERATOR_ROLE"
               provision_user "$SEARCH_VIEWER_USERNAME" "$SEARCH_VIEWER_PASSWORD" "$VIEWER_ROLE"
@@ -267,6 +279,11 @@ spec:
                   key: application-admin-password
             - name: SEARCH_CLIENT_ID
               value: "atheros-search-ui"
+            - name: SEARCH_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: ATHEROS_SEARCH_CORS_ORIGIN
             - name: SEARCH_ADMIN_USERNAME
               value: "search-admin"
             - name: SEARCH_ADMIN_PASSWORD

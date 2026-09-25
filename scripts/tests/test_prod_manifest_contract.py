@@ -160,6 +160,20 @@ class ProductionManifestContractTest(unittest.TestCase):
 
     def test_bootstrap_client_matches_realm_and_callback_configuration(self) -> None:
         env = {entry["name"]: entry for entry in self.bootstrap_container()["env"]}
+        platform_config = dict(
+            next(
+                doc for doc in documents(
+                    (ROOT / "cyber-stack/base/platform-config/configmap.yaml").read_text()
+                )
+                if doc.get("metadata", {}).get("name") == "ssl-proxy-platform-config"
+            ).get("data") or {}
+        )
+        identity_overrides = {
+            "cyber-stack/matrix/prod/patches/schema-migrator-identity.yaml":
+                "cyber-stack/matrix/prod/patches/identity-hostname.yaml",
+            "cyber-stack/matrix/staging/patches/schema-migrator-identity.yaml":
+                "cyber-stack/matrix/staging/patches/identity-hostname.yaml",
+        }
         for path in (
             "cyber-stack/base/schema-migrator/configmaps.yaml",
             "cyber-stack/matrix/prod/patches/schema-migrator-identity.yaml",
@@ -181,11 +195,39 @@ class ProductionManifestContractTest(unittest.TestCase):
                     [role["name"] for role in realm["roles"]["client"][client["clientId"]]],
                 )
                 self.assertEqual([client["webOrigins"][0] + "/callback"], client["redirectUris"])
+                origin_config = dict(platform_config)
+                if path in identity_overrides:
+                    origin_config.update(
+                        dict(
+                            next(
+                                doc for doc in documents(
+                                    (ROOT / identity_overrides[path]).read_text()
+                                )
+                                if doc.get("metadata", {}).get("name")
+                                == "ssl-proxy-platform-config"
+                            ).get("data") or {}
+                        )
+                    )
+                for client_id, key in (
+                    (env["CLIENT_ID"]["value"], "SCHEMA_MIGRATOR_CORS_ORIGIN"),
+                    (env["SEARCH_CLIENT_ID"]["value"], "ATHEROS_SEARCH_CORS_ORIGIN"),
+                ):
+                    origin = origin_config[key]
+                    realm_client = next(
+                        item for item in realm["clients"]
+                        if item["clientId"] == client_id
+                    )
+                    self.assertEqual([origin], realm_client["webOrigins"])
+                    self.assertEqual([origin + "/callback"], realm_client["redirectUris"])
         for name in ("PUBLIC_ORIGIN", "UI_ORIGIN"):
             self.assertEqual(
                 "SCHEMA_MIGRATOR_CORS_ORIGIN",
                 env[name]["valueFrom"]["configMapKeyRef"]["key"],
             )
+        self.assertEqual(
+            "ATHEROS_SEARCH_CORS_ORIGIN",
+            env["SEARCH_ORIGIN"]["valueFrom"]["configMapKeyRef"]["key"],
+        )
 
     def run_bootstrap(self, scenario: str) -> tuple[subprocess.CompletedProcess, str]:
         script = self.bootstrap_container()["args"][0].replace(
@@ -205,9 +247,15 @@ mock_kcadm() {
         *) printf 'id\nclient-uuid\n' ;;
       esac ;;
     "get users") printf 'id\nuser-uuid\n' ;;
+    "get users/user-uuid")
+      case "$SCENARIO" in
+        pending_action) printf '{"requiredActions": ["CONFIGURE_TOTP"]}\n' ;;
+        *) printf '{"requiredActions": []}\n' ;;
+      esac ;;
     "get users/user-uuid/role-mappings/clients/client-uuid") printf 'name\n' ;;
     "set-password --config") cat >/dev/null ;;
     "update clients/client-uuid") return 0 ;;
+    "update users/user-uuid") return 0 ;;
     "add-roles --config") return 0 ;;
     *) echo 'Unexpected admin command' >&2; return 98 ;;
   esac
@@ -219,7 +267,8 @@ mock_kcadm() {
             for entry in self.bootstrap_container()["env"]:
                 env[entry["name"]] = entry.get("value", "test-secret")
             env.update(PUBLIC_ORIGIN="https://migrator.example.internal",
-                       UI_ORIGIN="https://migrator.example.internal")
+                       UI_ORIGIN="https://migrator.example.internal",
+                       SEARCH_ORIGIN="https://search.example.internal")
             result = subprocess.run(
                 ["bash", "-ec", mocks + script], env=env, text=True,
                 capture_output=True, timeout=5,
@@ -235,6 +284,21 @@ mock_kcadm() {
         self.assertIn("--uusername search-operator --cclientid atheros-search-ui --rolename operator", calls)
         self.assertIn("--uusername search-viewer --cclientid atheros-search-ui --rolename viewer", calls)
         self.assertNotIn("test-secret", result.stdout + result.stderr)
+
+    def test_bootstrap_configures_search_client_and_clears_required_actions(self) -> None:
+        result, calls = self.run_bootstrap("existing")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn('redirectUris=["https://search.example.internal/callback"]', calls)
+        self.assertIn('webOrigins=["https://search.example.internal"]', calls)
+        self.assertEqual(4, calls.count("-s requiredActions=[]"))
+        self.assertNotIn("CONFIGURE_TOTP", calls)
+
+    def test_bootstrap_fails_when_required_action_remains(self) -> None:
+        result, calls = self.run_bootstrap("pending_action")
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("still has required actions pending", result.stderr)
+        self.assertIn("failed during configuring Schema Migrator administrator", result.stderr)
+        self.assertNotIn("add-roles", calls)
 
     def test_bootstrap_missing_client_fails_before_user_changes(self) -> None:
         result, calls = self.run_bootstrap("missing")
