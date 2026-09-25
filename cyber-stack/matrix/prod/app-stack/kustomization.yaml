@@ -24,7 +24,7 @@ images:
 - digest: sha256:bf61b27b6ff140d51e3f34ff7115c611eb5ca02afc26e43019faa234d3059665
   name: atheros-sensor
   newName: 192.168.1.242:5000/atheros-sensor
-- digest: sha256:630f5cb1d6313e2b08b9ed7e83228d07e7f540856552f8737b59d5ba804333c7
+- digest: sha256:b72b032d1ef2930129a97023de5bf6b47a164202acf20245dbfcd8aea81ae0a3
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
 - digest: sha256:ff49acb61038b4b4bcbd211ca917bbce5a553193cfbedcb9e7bdd25d5478d4e6
