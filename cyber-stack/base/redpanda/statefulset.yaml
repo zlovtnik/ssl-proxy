@@ -178,10 +178,11 @@ spec:
                 sleep 2
               done
               attempts=0
-              until rpk --api-addr "$admin" cluster config get log_retention_ms </dev/null >/dev/null 2>&1; do
+              until rpk -X admin.hosts="$admin" cluster config get log_retention_ms </dev/null >/dev/null 2>&1; do
                 attempts="$((attempts + 1))"
                 if [ "$attempts" -ge 30 ]; then
                   echo "redpanda admin API is not reachable at $admin" >&2
+                  rpk -X admin.hosts="$admin" cluster config get log_retention_ms </dev/null >&2 || true
                   exit 1
                 fi
                 sleep 2
@@ -191,11 +192,11 @@ spec:
               # difference cannot block the sync hook; a failed set of a known
               # property is fatal.
               set_cluster_default() {
-                if ! rpk --api-addr "$admin" cluster config get "$1" </dev/null >/dev/null 2>&1; then
+                if ! rpk -X admin.hosts="$admin" cluster config get "$1" </dev/null >/dev/null 2>&1; then
                   echo "cluster property $1 is unavailable; leaving its default unchanged" >&2
                   return 0
                 fi
-                rpk --api-addr "$admin" cluster config set "$1" "$2" </dev/null >/dev/null
+                rpk -X admin.hosts="$admin" cluster config set "$1" "$2" </dev/null >/dev/null
                 echo "cluster default $1=$2"
               }
               set_cluster_default log_retention_ms 604800000
