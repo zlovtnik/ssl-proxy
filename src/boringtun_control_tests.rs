@@ -12,6 +12,59 @@ fn private_key_generation_round_trips_to_public_key() {
 }
 
 #[test]
+fn resolve_pubkey_input_prefers_non_empty_stdin_over_argv() {
+    let stdin = "  stdin-key  ";
+    let argv = "argv-key";
+    let mut argv_used = true;
+    let resolved =
+        resolve_pubkey_input(Some(stdin), Some(argv), &mut argv_used).expect("stdin should win");
+    assert_eq!(resolved, "stdin-key");
+    assert!(!argv_used, "argv must not be flagged when stdin is used");
+}
+
+#[test]
+fn resolve_pubkey_input_falls_back_to_argv_when_stdin_empty() {
+    let stdin = "   ";
+    let argv = "argv-key";
+    let mut argv_used = false;
+    let resolved = resolve_pubkey_input(Some(stdin), Some(argv), &mut argv_used)
+        .expect("argv fallback should succeed");
+    assert_eq!(resolved, "argv-key");
+    assert!(argv_used, "argv flag must be set when fallback is taken");
+}
+
+#[test]
+fn resolve_pubkey_input_falls_back_to_argv_when_stdin_missing() {
+    let argv = "argv-key";
+    let mut argv_used = false;
+    let resolved =
+        resolve_pubkey_input(None, Some(argv), &mut argv_used).expect("argv fallback should succeed");
+    assert_eq!(resolved, "argv-key");
+    assert!(argv_used);
+}
+
+#[test]
+fn resolve_pubkey_input_errors_when_both_inputs_missing() {
+    let mut argv_used = false;
+    let err = resolve_pubkey_input(None, None, &mut argv_used).expect_err("usage error expected");
+    assert!(
+        matches!(err, ControlError::Usage(_)),
+        "expected ControlError::Usage, got {err:?}"
+    );
+}
+
+#[test]
+fn resolve_pubkey_input_errors_when_both_inputs_blank() {
+    let mut argv_used = false;
+    let err = resolve_pubkey_input(Some("\n\t  "), Some("  "), &mut argv_used)
+        .expect_err("usage error expected");
+    assert!(
+        matches!(err, ControlError::Usage(_)),
+        "expected ControlError::Usage, got {err:?}"
+    );
+}
+
+#[test]
 fn parses_wireguard_style_config_for_boringtun_control() {
     let tempdir = tempfile::tempdir().unwrap();
     let config_path = tempdir.path().join("wg0.conf");

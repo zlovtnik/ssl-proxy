@@ -111,6 +111,35 @@ pub fn public_key_from_private_base64(private_key: &str) -> Result<String, Contr
     Ok(encode_base64(PublicKey::from(&secret).as_bytes()))
 }
 
+/// Resolve the private key for the `boringtun pubkey` subcommand from optional
+/// stdin content and an optional argv entry.
+///
+/// Stdin takes precedence when present and non-empty (after trimming). Otherwise
+/// the trimmed argv entry is used. Returns `ControlError::Usage` when neither
+/// source yields a non-empty key. The `argv_used` output flag is set to `true`
+/// when the resolved key came from argv so callers can warn about the
+/// deprecated form.
+pub fn resolve_pubkey_input(
+    stdin: Option<&str>,
+    argv: Option<&str>,
+    argv_used: &mut bool,
+) -> Result<String, ControlError> {
+    *argv_used = false;
+
+    if let Some(value) = stdin.map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(value.to_string());
+    }
+
+    if let Some(value) = argv.map(str::trim).filter(|s| !s.is_empty()) {
+        *argv_used = true;
+        return Ok(value.to_string());
+    }
+
+    Err(ControlError::Usage(
+        "usage: ssl-proxy boringtun pubkey  (reads a private key from stdin)".to_string(),
+    ))
+}
+
 pub fn apply_config(interface: &str, config_path: &Path) -> Result<(), ControlError> {
     let config = parse_config(config_path)?;
     let request = build_set_request(&config)?;

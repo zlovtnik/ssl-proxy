@@ -628,7 +628,9 @@ resolve_peer_public_key() {
 
 	peer_private_key="$(trim "$(extract_ini_value "$peer_config" "Interface" "PrivateKey")")"
 	if [ -n "$peer_private_key" ]; then
-		if ! peer_public_key="$("$PROXY_BIN" boringtun pubkey "$peer_private_key")"; then
+		# Pipe the private key on stdin; passing it via argv would leak it
+		# through /proc/<pid>/cmdline to other processes in the container.
+		if ! peer_public_key="$(printf '%s' "$peer_private_key" | "$PROXY_BIN" boringtun pubkey)"; then
 			echo "invalid peer private key in $peer_config" >&2
 			return 1
 		fi
@@ -822,7 +824,8 @@ ensure_wireguard_server_keys() {
 		server_private_key="$(read_trimmed_file "$WG_SERVER_PRIVATE_KEY_FILE")"
 	fi
 
-	server_public_key="$("$PROXY_BIN" boringtun pubkey "$server_private_key")"
+	# Pipe the private key on stdin to avoid leaking it via argv.
+	server_public_key="$(printf '%s' "$server_private_key" | "$PROXY_BIN" boringtun pubkey)"
 
 	if [ -f "$WG_SERVER_PUBLIC_KEY_FILE" ]; then
 		current_public_key="$(read_trimmed_file "$WG_SERVER_PUBLIC_KEY_FILE")"

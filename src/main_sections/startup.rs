@@ -21,6 +21,7 @@ use ssl_proxy::{
     observability, proxy, security, state, tunnel, wg_packet_obfuscation, wg_relay, wg_stats,
 };
 use std::{
+    io::IsTerminal,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
@@ -43,31 +44,7 @@ fn run_boringtun_subcommand() -> Option<i32> {
         Some("genkey") => boringtun_control::generate_private_key_base64().map(|key| {
             println!("{key}");
         }),
-        Some("pubkey") => {
-            // Read the private key from stdin: passing secrets as argv is
-            // visible to other processes through process listings.
-            let mut private_key = String::new();
-            let read_result = std::io::Read::read_to_string(&mut std::io::stdin(), &mut private_key);
-            match read_result {
-                Ok(_) => {
-                    private_key = private_key.trim().to_string();
-                    if private_key.is_empty() {
-                        Err(boringtun_control::ControlError::Usage(
-                            "usage: ssl-proxy boringtun pubkey  (reads a private key from stdin)"
-                                .to_string(),
-                        ))
-                    } else {
-                        boringtun_control::public_key_from_private_base64(&private_key)
-                            .map(|key| {
-                                println!("{key}");
-                            })
-                    }
-                }
-                Err(err) => Err(boringtun_control::ControlError::Usage(format!(
-                    "failed to read private key from stdin: {err}"
-                ))),
-            }
-        }
+        Some("pubkey") => resolve_pubkey_subcommand(&mut args),
         Some("apply-config") => {
             let interface = args.next().ok_or_else(|| {
                 boringtun_control::ControlError::Usage(
@@ -112,6 +89,56 @@ fn run_boringtun_subcommand() -> Option<i32> {
             eprintln!("{err}");
             1
         }
+    })
+}
+
+fn read_trimmed_stdin() -> std::io::Result<String> {
+    let mut buf = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+    Ok(buf.trim().to_string())
+}
+
+fn resolve_pubkey_subcommand<I, T>(
+    args: &mut I,
+) -> Result<(), boringtun_control::ControlError>
+where
+    I: Iterator<Item = T>,
+    T: AsRef<str>,
+{
+    // Prefer stdin to avoid exposing the private key via argv (visible to
+    // other processes through /proc/<pid>/cmdline). Fall back to argv so
+    // existing operational tooling continues to work; emit a deprecation
+    // warning when it is used.
+    let stdin_input = if std::io::stdin().is_terminal() {
+        None
+    } else {
+        match read_trimmed_stdin() {
+            Ok(value) => Some(value),
+            Err(err) => {
+                return Err(boringtun_control::ControlError::Usage(format!(
+                    "failed to read private key from stdin: {err}"
+                )));
+            }
+        }
+    };
+
+    let argv_input = args.next().map(|s| s.as_ref().to_string());
+
+    let mut argv_used = false;
+    let private_key = boringtun_control::resolve_pubkey_input(
+        stdin_input.as_deref(),
+        argv_input.as_deref(),
+        &mut argv_used,
+    )?;
+
+    if argv_used {
+        eprintln!(
+            "warning: passing the private key via argv is deprecated; pipe it on stdin instead"
+        );
+    }
+
+    boringtun_control::public_key_from_private_base64(&private_key).map(|key| {
+        println!("{key}");
     })
 }
 
