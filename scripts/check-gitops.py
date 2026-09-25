@@ -827,6 +827,12 @@ OCTOPUS_RUNTIME_PROCESSORS = {
     "wireless-frame-normalizer",
     "wireless-inventory-projector",
     "wireless-identity-projector",
+    "wireless-behavior-projector",
+    "wireless-timing-projector",
+    "wireless-sequence-projector",
+    "wireless-baseline-projector",
+    "wireless-similarity-projector",
+    "threat-risk-projector",
     "embedding-preparer",
     "embedding-text-builder",
     "rf-alert-projector",
@@ -2150,6 +2156,14 @@ def _check_redpanda_topic_metrics_history(
     return errors
 
 
+RUNTIME_SCHEMA_LAYERS = (
+    "atheros_search",
+    "contracts",
+    "keycloak",
+    "octopus_core",
+)
+
+
 def _schema_migrator_contract_marker(root: Path, errors: list[str]) -> str | None:
     relative = "sql/postgres/schema_migrator/manifest.yaml"
     text = _read_required(root, relative, errors, "manifest")
@@ -2165,7 +2179,18 @@ def _schema_migrator_contract_marker(root: Path, errors: list[str]) -> str | Non
         errors.append(f"{relative}: missing schema contract version or checksum")
         return None
     version_text = f"{version:03d}" if isinstance(version, int) else str(version)
-    return f"schema-migrator-{version_text}-{checksum}"
+    runtime_digest = hashlib.sha256()
+    for layer in sorted(RUNTIME_SCHEMA_LAYERS):
+        layer_manifest = root / f"sql/postgres/{layer}/manifest.yaml"
+        try:
+            runtime_digest.update(layer_manifest.read_bytes())
+        except OSError as error:
+            errors.append(f"sql/postgres/{layer}/manifest.yaml: cannot hash runtime schema manifest: {error}")
+            return None
+    return (
+        f"schema-migrator-{version_text}-{checksum}-runtime-"
+        f"{runtime_digest.hexdigest()[:16]}"
+    )
 
 
 def _check_schema_migrator_source_contract(root: Path) -> list[str]:
