@@ -95,7 +95,7 @@
 
     /// Sets test defaults for the shared config tests.
     fn set_test_env_defaults() {
-        std::env::set_var("WG_OBFUSCATION_KEY", "test-obfuscation-key");
+        std::env::set_var("WG_OBFUSCATION_KEY", "test-obfuscation-key-32-bytes-aaaaaa");
     }
 
     #[cfg(unix)]
@@ -107,7 +107,7 @@
         clear_env();
         std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         let file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), "file-key").unwrap();
+        std::fs::write(file.path(), "file-key-with-32-bytes-of-material!!").unwrap();
         std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
         std::env::set_var("WG_OBFUSCATION_KEY_FILE", file.path());
 
@@ -131,14 +131,17 @@
         clear_env();
         std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         let file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), "file-key").unwrap();
+        std::fs::write(file.path(), "file-key-with-32-bytes-of-material!!").unwrap();
         std::env::set_var("WG_OBFUSCATION_KEY_FILE", file.path());
 
         for mode in [0o400, 0o440] {
             std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(mode)).unwrap();
             let config = Config::from_env().unwrap();
 
-            assert_eq!(config.wireguard.obfuscation_key.as_slice(), b"file-key");
+            assert_eq!(
+                config.wireguard.obfuscation_key.as_slice(),
+                b"file-key-with-32-bytes-of-material!!"
+            );
         }
     }
 
@@ -151,7 +154,7 @@
         clear_env();
         std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         let file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), "file-key").unwrap();
+        std::fs::write(file.path(), "file-key-with-32-bytes-of-material!!").unwrap();
         std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o444)).unwrap();
         std::env::set_var("WG_OBFUSCATION_KEY_FILE", file.path());
 
@@ -356,46 +359,62 @@
         assert_eq!(result.wireguard.port, 443);
         assert_eq!(result.wireguard.internal_port, 51820);
         assert!(result.wireguard.obfuscation_enabled);
-        assert_eq!(result.wireguard.obfuscation_magic_byte, None);
         assert_eq!(result.wireguard.obfuscation_session_idle_secs, 300);
         assert_eq!(
             result.wireguard.obfuscation_encryption_mode,
-            EncryptionMode::Xor
+            EncryptionMode::Aead
         );
         assert_eq!(result.wireguard.obfuscation_padding, PacketPadding::None);
         assert_eq!(
-            result.wireguard.obfuscation_magic_position,
-            MagicPositionMode::Fixed
-        );
-        assert!(!result.wireguard.obfuscation_replay_protection);
-        assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, None);
-        assert_eq!(result.wireguard.obfuscation_xor_rekey_secs, None);
-        assert_eq!(
             result.wireguard.obfuscation_max_datagram_bytes,
             max_wireguard_transport_packet_bytes(DEFAULT_WIREGUARD_PATH_MTU_BYTES)
+                + FRAMED_HEADER_LEN
+                + FRAMED_BODY_LEN_FIELD_LEN
+                + AEAD_TAG_LEN_BYTES
         );
         assert_eq!(
             result.wireguard.udp_socket_buffer_bytes,
             DEFAULT_WIREGUARD_UDP_SOCKET_BUFFER_BYTES
         );
         assert_eq!(
-            result.wireguard.obfuscation_key,
-            b"test-obfuscation-key".to_vec()
+            result.wireguard.obfuscation_key.to_vec(),
+            b"test-obfuscation-key-32-bytes-aaaaaa".to_vec()
         );
     }
 
     #[test]
-    fn wireguard_legacy_magic_obfuscation_default_datagram_covers_transport_overhead() {
+    fn wireguard_framed_obfuscation_default_datagram_covers_transport_overhead() {
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
         std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         std::env::set_var("WG_MTU", "1420");
-        std::env::set_var("WG_OBFUSCATION_MAGIC_BYTE", "0xAA");
 
         let result = Config::from_env().unwrap();
 
-        assert_eq!(result.wireguard.obfuscation_max_datagram_bytes, 1453);
+        // Framed AEAD adds a fixed header, length field, and tag on top of
+        // the WireGuard transport packet.
+        assert_eq!(
+            result.wireguard.obfuscation_max_datagram_bytes,
+            max_wireguard_transport_packet_bytes(1420)
+                + FRAMED_HEADER_LEN
+                + FRAMED_BODY_LEN_FIELD_LEN
+                + AEAD_TAG_LEN_BYTES
+        );
+    }
+
+    #[test]
+    fn wireguard_short_obfuscation_key_is_rejected() {
+        let _guard = env_lock();
+        clear_env();
+        std::env::set_var("WG_OBFUSCATION_KEY", "too-short");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+
+        assert!(matches!(
+            Config::from_env(),
+            Err(ConfigError::InvalidWireGuardObfuscationSizing { var, .. })
+                if var == "WG_OBFUSCATION_KEY"
+        ));
     }
 
     #[test]
@@ -404,29 +423,19 @@
         clear_env();
         set_test_env_defaults();
         std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
-        std::env::set_var("WG_OBFUSCATION_ENCRYPTION_MODE", "aead");
+        std::env::set_var("WG_OBFUSCATION_ENCRYPTION_MODE", "xor");
         std::env::set_var("WG_OBFUSCATION_PADDING", "fixed-mtu:1200");
-        std::env::set_var("WG_OBFUSCATION_MAGIC_POSITION", "randomized");
-        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "128");
-        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_SECS", "60");
 
         let result = Config::from_env().unwrap();
 
         assert_eq!(
             result.wireguard.obfuscation_encryption_mode,
-            EncryptionMode::Aead
+            EncryptionMode::Xor
         );
         assert_eq!(
             result.wireguard.obfuscation_padding,
             PacketPadding::FixedMtu(1200)
         );
-        assert_eq!(
-            result.wireguard.obfuscation_magic_position,
-            MagicPositionMode::Randomized
-        );
-        assert!(result.wireguard.obfuscation_replay_protection);
-        assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, Some(128));
-        assert_eq!(result.wireguard.obfuscation_xor_rekey_secs, Some(60));
         assert_eq!(result.wireguard.obfuscation_max_datagram_bytes, 1200);
     }
 
@@ -473,32 +482,6 @@
             Config::from_env(),
             Err(ConfigError::InvalidWireGuardSizeValue {
                 var: "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn wireguard_xor_rekey_values_must_be_positive_integers() {
-        let _guard = env_lock();
-        clear_env();
-        set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
-        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "0");
-
-        assert!(matches!(
-            Config::from_env(),
-            Err(ConfigError::InvalidWireGuardObfuscationXorRekeyValue {
-                var: "WG_OBFUSCATION_XOR_REKEY_PACKETS",
-                ..
-            })
-        ));
-
-        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "not-a-number");
-        assert!(matches!(
-            Config::from_env(),
-            Err(ConfigError::InvalidWireGuardObfuscationXorRekeyValue {
-                var: "WG_OBFUSCATION_XOR_REKEY_PACKETS",
                 ..
             })
         ));
@@ -562,40 +545,7 @@
         let result = Config::from_env().unwrap();
 
         assert!(!result.wireguard.obfuscation_enabled);
-        assert_eq!(result.wireguard.obfuscation_magic_byte, None);
         assert_eq!(result.wireguard.obfuscation_padding, PacketPadding::None);
-        assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, None);
-    }
-
-    #[test]
-    fn wireguard_magic_byte_accepts_hex_and_decimal() {
-        let _guard = env_lock();
-        clear_env();
-        set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
-
-        std::env::set_var("WG_OBFUSCATION_MAGIC_BYTE", "0xAA");
-        let result = Config::from_env().unwrap();
-        assert_eq!(result.wireguard.obfuscation_magic_byte, Some(0xAA));
-
-        std::env::set_var("WG_OBFUSCATION_MAGIC_BYTE", "170");
-        let result = Config::from_env().unwrap();
-        assert_eq!(result.wireguard.obfuscation_magic_byte, Some(170));
-    }
-
-    #[test]
-    fn invalid_wireguard_magic_byte_errors() {
-        let _guard = env_lock();
-        clear_env();
-        set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
-        std::env::set_var("WG_OBFUSCATION_MAGIC_BYTE", "0xGG");
-
-        let result = Config::from_env();
-        assert!(matches!(
-            result,
-            Err(ConfigError::InvalidWireGuardObfuscationMagicByte(_))
-        ));
     }
 
     #[test]

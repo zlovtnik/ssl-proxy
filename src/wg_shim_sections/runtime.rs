@@ -1,5 +1,4 @@
 use rand_core::{OsRng, RngCore};
-use tokio::time::MissedTickBehavior;
 
 async fn get_or_create_session(
     client_addr: SocketAddr,
@@ -92,18 +91,13 @@ async fn run_session_receiver(
         }
     };
 
-    let mut chaff_interval = session.config.chaff_interval().map(|period| {
-        let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        interval
+    // Chaff timing is randomized around the configured rate so idle-session
+    // padding is not perfectly periodic: a fixed-interval chaff stream is
+    // trivially filtered out by traffic analysis.
+    let chaff_interval = session.config.chaff_interval();
+    let mut next_chaff_at = chaff_interval.map(|period| {
+        tokio::time::Instant::now() + randomize_chaff_delay(period)
     });
-    if session.config.chaff_pps > 0 && chaff_interval.is_none() {
-        warn!(
-            %client_addr,
-            session_id = session.id,
-            "WG_OBFS_SHIM_CHAFF_PPS is set but chaff requires framed obfuscation; ignoring chaff for this session"
-        );
-    }
 
     loop {
         let Some(mut lease) = lease_buffer_or_wait(&context, Some(&session.shutdown)).await else {
@@ -160,7 +154,7 @@ async fn run_session_receiver(
                     }
                 }
             }
-            _ = optional_interval_tick(chaff_interval.as_mut()) => {
+            _ = optional_chaff_tick(next_chaff_at.as_mut()) => {
                 let now = context.clock.now_millis();
                 if session
                     .config
@@ -178,7 +172,6 @@ async fn run_session_receiver(
                     &session.config.obfuscation,
                     &session.client_to_server_encode,
                     PacketDirection::ClientToServer,
-                    now,
                 ) {
                     Ok(encoded_range) => encoded_range,
                     Err(err) => {
@@ -190,6 +183,9 @@ async fn run_session_receiver(
 
                 if !await_send_jitter(&context, &session).await {
                     break;
+                }
+                if let Some(period) = chaff_interval {
+                    next_chaff_at = Some(tokio::time::Instant::now() + randomize_chaff_delay(period));
                 }
 
                 let packet = QueuedUpstreamPacket {
@@ -261,13 +257,13 @@ async fn run_session_receiver(
                         &mut lease,
                         len,
                         &session.config.obfuscation,
-                        Some(&mut replay),
+                        &mut replay,
                         PacketDirection::ServerToClient,
                     ) {
                         Ok(decoded_range) => decoded_range,
-                        Err(PacketDecodeError::MagicByteMismatch) => {
+                        Err(PacketDecodeError::HeaderTagMismatch) => {
                             context.metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
-                            warn!(%client_addr, session_id = session.id, packet_len = len, "dropping server reply with missing or invalid obfuscation marker");
+                            warn!(%client_addr, session_id = session.id, packet_len = len, "dropping server reply with missing or invalid obfuscation header tag");
                             continue;
                         }
                         Err(PacketDecodeError::EmptyPayload) => {
@@ -579,12 +575,25 @@ async fn optional_cancelled(token: Option<&CancellationToken>) {
     }
 }
 
-async fn optional_interval_tick(interval: Option<&mut tokio::time::Interval>) {
-    if let Some(interval) = interval {
-        interval.tick().await;
-    } else {
-        std::future::pending::<()>().await;
+async fn optional_chaff_tick(next_at: Option<&mut tokio::time::Instant>) {
+    match next_at {
+        Some(deadline) => {
+            tokio::time::sleep_until(*deadline).await;
+        }
+        None => std::future::pending::<()>().await,
     }
+}
+
+/// Randomize a chaff interval by -50%..+50% so the padding stream carries no
+/// fixed period observable on the wire.
+fn randomize_chaff_delay(period: Duration) -> Duration {
+    let base_nanos = period.as_nanos();
+    if base_nanos == 0 {
+        return Duration::ZERO;
+    }
+    // jitter in [0.5, 1.5) x period
+    let scaled = base_nanos / 2 + (OsRng.next_u64() as u128) % (base_nanos + 1);
+    Duration::from_nanos(scaled.min(u128::from(u64::MAX)) as u64)
 }
 
 fn record_buffer_pool_wait_since(metrics: &ShimMetrics, wait_started: Instant) {

@@ -53,23 +53,9 @@ fn parse_optional_duration_secs(
     parse_optional_positive_u64(raw, label).map(|value| value.map(Duration::from_secs))
 }
 
-fn parse_optional_bool(
-    raw: Option<String>,
-    label: &str,
-) -> Result<Option<bool>, ConfigParseOutcome> {
-    raw.map(|raw| match raw.to_ascii_lowercase().as_str() {
-        "true" | "1" | "yes" | "on" => Ok(true),
-        "false" | "0" | "no" | "off" => Ok(false),
-        _ => Err(ConfigParseOutcome::Error(format!(
-            "invalid {label} {raw:?}; expected boolean"
-        ))),
-    })
-    .transpose()
-}
-
 fn parse_encryption_mode(raw: Option<String>) -> Result<EncryptionMode, ConfigParseOutcome> {
     let Some(raw) = raw else {
-        return Ok(EncryptionMode::Xor);
+        return Ok(EncryptionMode::Aead);
     };
     match raw.to_ascii_lowercase().as_str() {
         "xor" => Ok(EncryptionMode::Xor),
@@ -119,19 +105,6 @@ fn parse_padding_bucket(raw: &str) -> Option<Vec<usize>> {
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
     (!values.is_empty() && values.iter().all(|value| *value > 0)).then_some(values)
-}
-
-fn parse_magic_position(raw: Option<String>) -> Result<MagicPositionMode, ConfigParseOutcome> {
-    let Some(raw) = raw else {
-        return Ok(MagicPositionMode::Fixed);
-    };
-    match raw.to_ascii_lowercase().as_str() {
-        "fixed" => Ok(MagicPositionMode::Fixed),
-        "randomized" | "randomised" | "random" => Ok(MagicPositionMode::Randomized),
-        _ => Err(ConfigParseOutcome::Error(format!(
-            "invalid magic position {raw:?}; expected fixed or randomized"
-        ))),
-    }
 }
 
 fn parse_rate_limit(options: &CliOptions) -> Result<Option<RateLimitConfig>, ConfigParseOutcome> {

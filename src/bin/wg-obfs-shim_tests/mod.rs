@@ -62,9 +62,7 @@ fn parse_config_supports_cli_overrides() {
         "--health-token".to_string(),
         "health-secret".to_string(),
         "--key".to_string(),
-        "super-secret".to_string(),
-        "--magic-byte".to_string(),
-        "0xAA".to_string(),
+        "super-secret-key-32-bytes-aaaaaaaaaa".to_string(),
         "--idle-timeout-secs".to_string(),
         "45".to_string(),
         "--max-sessions".to_string(),
@@ -95,10 +93,6 @@ fn parse_config_supports_cli_overrides() {
         "aead".to_string(),
         "--padding".to_string(),
         "power-of-two".to_string(),
-        "--magic-position".to_string(),
-        "randomized".to_string(),
-        "--xor-rekey-packets".to_string(),
-        "64".to_string(),
     ])
     .unwrap();
     let config = &process_config.shims[0];
@@ -123,19 +117,12 @@ fn parse_config_supports_cli_overrides() {
             "192.168.1.222:443".parse::<SocketAddr>().unwrap(),
         ]
     );
-    assert_eq!(config.obfuscation.magic_byte, Some(0xAA));
-    assert_eq!(config.obfuscation.key.as_slice(), b"super-secret");
+    assert_eq!(
+        config.obfuscation.key.as_slice(),
+        b"super-secret-key-32-bytes-aaaaaaaaaa"
+    );
     assert_eq!(config.obfuscation.encryption_mode, EncryptionMode::Aead);
     assert_eq!(config.obfuscation.padding, PacketPadding::PowerOfTwo);
-    assert_eq!(
-        config.obfuscation.magic_position,
-        MagicPositionMode::Randomized
-    );
-    assert!(config.obfuscation.replay_protection);
-    assert_eq!(
-        config.obfuscation.xor_rekey,
-        XorRekeyPolicy::new(Some(64), None)
-    );
     assert_eq!(config.idle_timeout, Duration::from_secs(45));
     assert_eq!(config.max_sessions, Some(128));
     assert_eq!(config.cleanup_interval, Some(Duration::from_secs(3)));
@@ -178,7 +165,7 @@ fn parse_config_supports_env_server_addr_list_and_default_health() {
     let _guard = env_lock();
     clear_env();
     std::env::set_var("WG_OBFS_SERVER_ADDRS", "127.0.0.1:1111,127.0.0.1:2222");
-    std::env::set_var("WG_OBFUSCATION_KEY", "super-secret");
+    std::env::set_var("WG_OBFUSCATION_KEY", "super-secret-key-32-bytes-aaaaaaaaaa");
 
     let process_config = parse_config(std::iter::empty::<String>()).unwrap();
     let config = &process_config.shims[0];
@@ -210,8 +197,7 @@ health_token = "  health-secret  "
 [[shim]]
 listen_addr = "127.0.0.1:51821"
 server_addrs = ["127.0.0.1:443", "127.0.0.1:444"]
-key = "first-key"
-magic_byte = "0xAA"
+key = "first-key-32-bytes-aaaaaaaaaaaaaaaaaa"
 idle_timeout_secs = 45
 send_queue_capacity = 17
 max_datagram_bytes = 1300
@@ -222,7 +208,7 @@ chaff_pps = 1
 [[shim]]
 listen_addr = "127.0.0.1:51822"
 server_addr = "127.0.0.1:445"
-key = "second-key"
+key = "second-key-32-bytes-aaaaaaaaaaaaaaaaa"
 "#
     )
     .unwrap();
@@ -273,7 +259,7 @@ health_token = "   "
 [[shim]]
 listen_addr = "127.0.0.1:51821"
 server_addr = "127.0.0.1:445"
-key = "first-key"
+key = "first-key-32-bytes-aaaaaaaaaaaaaaaaaa"
 "#
     )
     .unwrap();
@@ -293,7 +279,7 @@ fn parse_config_rejects_excessive_chaff_pps() {
         "--server".to_string(),
         "127.0.0.1:443".to_string(),
         "--key".to_string(),
-        "super-secret".to_string(),
+        "super-secret-key-32-bytes-aaaaaaaaaa".to_string(),
         "--chaff-pps".to_string(),
         (MAX_CHAFF_PPS + 1).to_string(),
     ]);
@@ -312,7 +298,7 @@ fn parse_config_rejects_zero_udp_socket_buffer_bytes() {
         "--server".to_string(),
         "127.0.0.1:443".to_string(),
         "--key".to_string(),
-        "super-secret".to_string(),
+        "super-secret-key-32-bytes-aaaaaaaaaa".to_string(),
         "--udp-socket-buffer-bytes".to_string(),
         "0".to_string(),
     ]);
@@ -333,7 +319,7 @@ fn parse_config_rejects_zero_toml_udp_socket_buffer_bytes() {
 [[shim]]
 listen_addr = "127.0.0.1:51821"
 server_addr = "127.0.0.1:445"
-key = "first-key"
+key = "first-key-32-bytes-aaaaaaaaaaaaaaaaaa"
 udp_socket_buffer_bytes = 0
 "#
     )

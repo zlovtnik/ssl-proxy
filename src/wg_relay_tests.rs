@@ -3,11 +3,50 @@ use std::collections::HashSet;
 use tokio::time::{sleep, timeout};
 
 use super::*;
-use crate::wg_packet_obfuscation::{decode_packet, encode_packet};
+use crate::wg_packet_obfuscation::{
+    decode_packet_in_place, encode_packet_in_place, PacketDirection, PacketEncodeState,
+    SessionReplayWindow, MAX_UDP_PACKET_SIZE,
+};
 
-fn test_settings(magic_byte: Option<u8>, idle_timeout: Duration) -> WgPacketObfuscation {
+fn test_settings(idle_timeout: Duration) -> WgPacketObfuscation {
     let _ = idle_timeout;
-    WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), magic_byte).unwrap()
+    WgPacketObfuscation::new(b"test-obfuscation-key-32-bytes-aaaaaa".to_vec()).unwrap()
+}
+
+/// Encode a client-to-server frame, mirroring what the shim produces.
+fn encode_client_packet(packet: &[u8], settings: &WgPacketObfuscation) -> Vec<u8> {
+    let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
+    encoded[..packet.len()].copy_from_slice(packet);
+    let state = PacketEncodeState::new();
+    let len = encode_packet_in_place(
+        &mut encoded,
+        packet.len(),
+        settings,
+        &state,
+        PacketDirection::ClientToServer,
+    )
+    .unwrap();
+    encoded.truncate(len);
+    encoded
+}
+
+/// Decode a server-to-client frame, mirroring what the shim consumes.
+fn decode_server_packet(
+    packet: &[u8],
+    settings: &WgPacketObfuscation,
+    replay: &mut SessionReplayWindow,
+) -> Vec<u8> {
+    let mut decoded = packet.to_vec();
+    let len = decode_packet_in_place(
+        &mut decoded,
+        packet.len(),
+        settings,
+        replay,
+        PacketDirection::ServerToClient,
+    )
+    .unwrap();
+    decoded.truncate(len);
+    decoded
 }
 
 #[test]
@@ -23,11 +62,12 @@ fn drop_notice_is_rate_limited() {
 #[test]
 fn probe_detector_prunes_expired_states_before_inserting_new_ip() {
     let config = ProbeBlockConfig {
+        enabled: true,
         threshold: 10,
         window: Duration::from_secs(1),
         block_duration: Duration::from_secs(1),
     };
-    let detector = ProbeDetector::with_max_states(Some(config), 1);
+    let detector = ProbeDetector::with_max_states(config, 1);
     let first_ip = IpAddr::from([192, 0, 2, 1]);
     let second_ip = IpAddr::from([192, 0, 2, 2]);
     let now = Instant::now();
@@ -44,11 +84,12 @@ fn probe_detector_prunes_expired_states_before_inserting_new_ip() {
 #[test]
 fn probe_detector_does_not_evict_active_state_at_budget() {
     let config = ProbeBlockConfig {
+        enabled: true,
         threshold: 10,
         window: Duration::from_secs(10),
         block_duration: Duration::from_secs(10),
     };
-    let detector = ProbeDetector::with_max_states(Some(config), 1);
+    let detector = ProbeDetector::with_max_states(config, 1);
     let first_ip = IpAddr::from([192, 0, 2, 1]);
     let second_ip = IpAddr::from([192, 0, 2, 2]);
     let now = Instant::now();
@@ -79,7 +120,7 @@ fn probe_block_duration_config_rejects_zero_values() {
 #[tokio::test]
 async fn relay_forwards_plaintext_to_internal_listener_and_replies() {
     let shutdown = CancellationToken::new();
-    let obfuscation = test_settings(Some(0xAA), Duration::from_secs(1));
+    let obfuscation = test_settings(Duration::from_secs(1));
     let internal_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .unwrap();
@@ -107,7 +148,7 @@ async fn relay_forwards_plaintext_to_internal_listener_and_replies() {
     let client = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .unwrap();
-    let encoded = encode_packet(b"handshake-init", &obfuscation).unwrap();
+    let encoded = encode_client_packet(b"handshake-init", &obfuscation);
     client.send_to(&encoded, public_addr).await.unwrap();
 
     let mut buf = [0u8; 2048];
@@ -115,7 +156,8 @@ async fn relay_forwards_plaintext_to_internal_listener_and_replies() {
         .await
         .unwrap()
         .unwrap();
-    let decoded = decode_packet(&buf[..len], &obfuscation).unwrap();
+    let mut replay = SessionReplayWindow::default();
+    let decoded = decode_server_packet(&buf[..len], &obfuscation, &mut replay);
     assert_eq!(decoded, b"handshake-reply");
 
     upstream.await.unwrap();
@@ -126,7 +168,7 @@ async fn relay_forwards_plaintext_to_internal_listener_and_replies() {
 #[tokio::test]
 async fn relay_uses_distinct_upstream_ports_per_client() {
     let shutdown = CancellationToken::new();
-    let obfuscation = test_settings(Some(0xAA), Duration::from_secs(1));
+    let obfuscation = test_settings(Duration::from_secs(1));
     let internal_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .unwrap();
@@ -163,11 +205,11 @@ async fn relay_uses_distinct_upstream_ports_per_client() {
         .unwrap();
 
     client_one
-        .send_to(&encode_packet(b"peer-one", &obfuscation).unwrap(), public_addr)
+        .send_to(&encode_client_packet(b"peer-one", &obfuscation), public_addr)
         .await
         .unwrap();
     client_two
-        .send_to(&encode_packet(b"peer-two", &obfuscation).unwrap(), public_addr)
+        .send_to(&encode_client_packet(b"peer-two", &obfuscation), public_addr)
         .await
         .unwrap();
 
@@ -181,12 +223,14 @@ async fn relay_uses_distinct_upstream_ports_per_client() {
         .await
         .unwrap()
         .unwrap();
+    let mut replay_one = SessionReplayWindow::default();
+    let mut replay_two = SessionReplayWindow::default();
     assert_eq!(
-        decode_packet(&buf_one[..len_one], &obfuscation).unwrap(),
+        decode_server_packet(&buf_one[..len_one], &obfuscation, &mut replay_one),
         b"peer-one"
     );
     assert_eq!(
-        decode_packet(&buf_two[..len_two], &obfuscation).unwrap(),
+        decode_server_packet(&buf_two[..len_two], &obfuscation, &mut replay_two),
         b"peer-two"
     );
 
@@ -199,9 +243,9 @@ async fn relay_uses_distinct_upstream_ports_per_client() {
 }
 
 #[tokio::test]
-async fn relay_drops_raw_direct_packets_without_magic_byte() {
+async fn relay_drops_raw_direct_packets_without_valid_header_tag() {
     let shutdown = CancellationToken::new();
-    let obfuscation = test_settings(Some(0xAA), Duration::from_secs(1));
+    let obfuscation = test_settings(Duration::from_secs(1));
     let internal_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .unwrap();
@@ -220,7 +264,7 @@ async fn relay_drops_raw_direct_packets_without_magic_byte() {
         .await
         .unwrap();
     client
-        .send_to(b"missing-magic-byte", public_addr)
+        .send_to(b"missing-header-tag", public_addr)
         .await
         .unwrap();
 
@@ -246,7 +290,7 @@ async fn relay_drops_raw_direct_packets_without_magic_byte() {
 #[tokio::test]
 async fn relay_evicts_idle_sessions_and_recreates_upstream_socket() {
     let shutdown = CancellationToken::new();
-    let obfuscation = test_settings(Some(0xAA), Duration::from_millis(100));
+    let obfuscation = test_settings(Duration::from_millis(100));
     let internal_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
         .await
         .unwrap();
@@ -279,7 +323,7 @@ async fn relay_evicts_idle_sessions_and_recreates_upstream_socket() {
         .await
         .unwrap();
     client
-        .send_to(&encode_packet(b"first-packet", &obfuscation).unwrap(), public_addr)
+        .send_to(&encode_client_packet(b"first-packet", &obfuscation), public_addr)
         .await
         .unwrap();
     let mut buf = [0u8; 2048];
@@ -291,7 +335,7 @@ async fn relay_evicts_idle_sessions_and_recreates_upstream_socket() {
     sleep(Duration::from_millis(250)).await;
 
     client
-        .send_to(&encode_packet(b"second-packet", &obfuscation).unwrap(), public_addr)
+        .send_to(&encode_client_packet(b"second-packet", &obfuscation), public_addr)
         .await
         .unwrap();
     timeout(Duration::from_secs(1), client.recv_from(&mut buf))

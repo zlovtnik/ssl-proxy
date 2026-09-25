@@ -21,19 +21,6 @@ fn parse_single_shim_process_config(
             "missing required obfuscation key; set --key, --key-file, WG_OBFUSCATION_KEY, or WG_OBFUSCATION_KEY_FILE".to_string(),
         )
     })?;
-    let magic_byte = match options
-        .magic_byte
-        .clone()
-        .or_else(|| std::env::var("WG_OBFUSCATION_MAGIC_BYTE").ok())
-    {
-        Some(raw) => Some(parse_magic_byte(&raw).ok_or_else(|| {
-            ConfigParseOutcome::Error(format!(
-                "invalid magic byte {raw:?}; expected decimal or 0xNN"
-            ))
-        })?),
-        None => None,
-    };
-
     let idle_timeout_secs = options
         .idle_timeout_secs
         .clone()
@@ -53,39 +40,24 @@ fn parse_single_shim_process_config(
         &options.encryption_mode,
         "WG_OBFUSCATION_ENCRYPTION_MODE",
     ))?;
-    let replay_protection = parse_optional_bool(
-        optional_value(
-            &options.replay_protection,
-            "WG_OBFUSCATION_REPLAY_PROTECTION",
-        ),
-        "replay protection",
-    )?
-    .unwrap_or(matches!(encryption_mode, EncryptionMode::Aead));
-    let xor_rekey_packets = parse_optional_positive_u64(
-        optional_value(
-            &options.xor_rekey_packets,
-            "WG_OBFUSCATION_XOR_REKEY_PACKETS",
-        ),
-        "XOR rekey packet count",
-    )?;
-    let xor_rekey_secs = parse_optional_positive_u64(
-        optional_value(&options.xor_rekey_secs, "WG_OBFUSCATION_XOR_REKEY_SECS"),
-        "XOR rekey seconds",
-    )?;
+    if let Some(raw) = std::env::var("WG_OBFUSCATION_MAGIC_BYTE")
+        .ok()
+        .filter(|raw| !raw.trim().is_empty())
+    {
+        // v2 frames no longer carry a magic byte; reject configured values so
+        // stale deployments fail fast instead of silently changing shape.
+        return Err(ConfigParseOutcome::Error(format!(
+            "invalid magic byte {raw:?}; the v2 frame format does not support magic bytes"
+        )));
+    }
 
-    let obfuscation = WgPacketObfuscation::new(key.into_bytes(), magic_byte)
+    let obfuscation = WgPacketObfuscation::new(key.into_bytes())
         .map_err(|e| ConfigParseOutcome::Error(e.to_string()))?
         .with_encryption_mode(encryption_mode)
         .with_padding(parse_padding(optional_value(
             &options.padding,
             "WG_OBFUSCATION_PADDING",
-        ))?)
-        .with_magic_position(parse_magic_position(optional_value(
-            &options.magic_position,
-            "WG_OBFUSCATION_MAGIC_POSITION",
-        ))?)
-        .with_xor_rekey(XorRekeyPolicy::new(xor_rekey_packets, xor_rekey_secs))
-        .with_replay_protection(replay_protection);
+        ))?);
 
     let mut config = WgObfsShimConfig::with_server_addrs(
         listen_addr,
@@ -568,28 +540,16 @@ fn build_toml_shim_config(
             "missing required obfuscation key in config file shim section".to_string(),
         )
     })?;
-    let magic_byte = match raw.magic_byte {
-        Some(raw) => Some(parse_magic_byte(&raw).ok_or_else(|| {
-            ConfigParseOutcome::Error(format!(
-                "invalid magic byte {raw:?}; expected decimal or 0xNN"
-            ))
-        })?),
-        None => None,
-    };
+    if let Some(raw) = raw.magic_byte.filter(|raw| !raw.trim().is_empty()) {
+        return Err(ConfigParseOutcome::Error(format!(
+            "invalid magic byte {raw:?}; the v2 frame format does not support magic bytes"
+        )));
+    }
     let encryption_mode = parse_encryption_mode(raw.encryption_mode)?;
-    let replay_protection = raw
-        .replay_protection
-        .unwrap_or(matches!(encryption_mode, EncryptionMode::Aead));
-    let obfuscation = WgPacketObfuscation::new(key.into_bytes(), magic_byte)
+    let obfuscation = WgPacketObfuscation::new(key.into_bytes())
         .map_err(|e| ConfigParseOutcome::Error(e.to_string()))?
         .with_encryption_mode(encryption_mode)
-        .with_padding(parse_padding(raw.padding)?)
-        .with_magic_position(parse_magic_position(raw.magic_position)?)
-        .with_xor_rekey(XorRekeyPolicy::new(
-            raw.xor_rekey_packets,
-            raw.xor_rekey_secs,
-        ))
-        .with_replay_protection(replay_protection);
+        .with_padding(parse_padding(raw.padding)?);
 
     let mut config = WgObfsShimConfig::with_server_addrs(
         listen_addr,

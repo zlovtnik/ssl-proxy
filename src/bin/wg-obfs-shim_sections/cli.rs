@@ -12,8 +12,7 @@ use ssl_proxy::{
     constant_time_eq,
     udp_tuning::DEFAULT_UDP_SOCKET_BUFFER_BYTES,
     wg_packet_obfuscation::{
-        parse_magic_byte, EncryptionMode, MagicPositionMode, PacketPadding, WgPacketObfuscation,
-        XorRekeyPolicy, MAX_UDP_PACKET_SIZE,
+        EncryptionMode, PacketPadding, WgPacketObfuscation, MAX_UDP_PACKET_SIZE,
     },
     wg_shim::{
         self, RateLimitConfig, ShimHealthHandle, ShimHealthSnapshot, WgObfsShimConfig,
@@ -76,7 +75,7 @@ Environment fallbacks:
   WG_OBFUSCATION_XOR_REKEY_SECS
 
 Example:
-  wg-obfs-shim --server 192.168.1.242:443 --listen 127.0.0.1:51821 --magic-byte 0xAA
+  wg-obfs-shim --server 192.168.1.242:443 --listen 127.0.0.1:51821
 ";
 
 #[derive(Debug, Default)]
@@ -88,7 +87,6 @@ struct CliOptions {
     health_token: Option<String>,
     key: Option<String>,
     key_file: Option<String>,
-    magic_byte: Option<String>,
     idle_timeout_secs: Option<String>,
     max_sessions: Option<String>,
     cleanup_interval_secs: Option<String>,
@@ -104,10 +102,6 @@ struct CliOptions {
     chaff_pps: Option<String>,
     encryption_mode: Option<String>,
     padding: Option<String>,
-    magic_position: Option<String>,
-    replay_protection: Option<String>,
-    xor_rekey_packets: Option<String>,
-    xor_rekey_secs: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -148,10 +142,6 @@ struct TomlShimConfig {
     chaff_pps: Option<u64>,
     encryption_mode: Option<String>,
     padding: Option<String>,
-    magic_position: Option<String>,
-    replay_protection: Option<bool>,
-    xor_rekey_packets: Option<u64>,
-    xor_rekey_secs: Option<u64>,
 }
 
 #[tokio::main]
@@ -287,7 +277,11 @@ fn parse_config(
             }
             "--key" => options.key = Some(next_value(&mut args, "--key")?),
             "--key-file" => options.key_file = Some(next_value(&mut args, "--key-file")?),
-            "--magic-byte" => options.magic_byte = Some(next_value(&mut args, "--magic-byte")?),
+            "--magic-byte" => {
+                return Err(ConfigParseOutcome::Error(
+                    "--magic-byte is no longer supported; the v2 frame format uses a keyed header tag".to_string(),
+                ));
+            }
             "--idle-timeout-secs" => {
                 options.idle_timeout_secs = Some(next_value(&mut args, "--idle-timeout-secs")?)
             }
@@ -333,16 +327,24 @@ fn parse_config(
             }
             "--padding" => options.padding = Some(next_value(&mut args, "--padding")?),
             "--magic-position" => {
-                options.magic_position = Some(next_value(&mut args, "--magic-position")?)
+                return Err(ConfigParseOutcome::Error(
+                    "--magic-position is no longer supported; the v2 frame format uses a keyed header tag".to_string(),
+                ));
             }
             "--replay-protection" => {
-                options.replay_protection = Some(next_value(&mut args, "--replay-protection")?)
+                return Err(ConfigParseOutcome::Error(
+                    "--replay-protection is no longer configurable; v2 frames always enforce replay protection".to_string(),
+                ));
             }
             "--xor-rekey-packets" => {
-                options.xor_rekey_packets = Some(next_value(&mut args, "--xor-rekey-packets")?)
+                return Err(ConfigParseOutcome::Error(
+                    "--xor-rekey-packets is no longer supported; the v2 frame format derives a fresh keystream per frame".to_string(),
+                ));
             }
             "--xor-rekey-secs" => {
-                options.xor_rekey_secs = Some(next_value(&mut args, "--xor-rekey-secs")?)
+                return Err(ConfigParseOutcome::Error(
+                    "--xor-rekey-secs is no longer supported; the v2 frame format derives a fresh keystream per frame".to_string(),
+                ));
             }
             other => {
                 return Err(ConfigParseOutcome::Error(format!(

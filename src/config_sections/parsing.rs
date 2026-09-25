@@ -1,7 +1,5 @@
 use super::types::ConfigError;
-use crate::wg_packet_obfuscation::{
-    parse_magic_byte, EncryptionMode, MagicPositionMode, PacketPadding,
-};
+use crate::wg_packet_obfuscation::{EncryptionMode, PacketPadding};
 use std::path::Path;
 
 /// Returns a secret value taken from an environment variable or, if that is empty/missing,
@@ -126,44 +124,6 @@ fn validate_secret_file(_path: &Path, _file_var: &'static str) -> Result<(), Con
     Ok(())
 }
 
-pub(super) fn read_magic_byte(var: &str) -> Result<Option<u8>, ConfigError> {
-    let Some(raw) = std::env::var(var)
-        .ok()
-        .map(|value| value.trim().to_string())
-    else {
-        return Ok(None);
-    };
-    if raw.is_empty() {
-        return Ok(None);
-    }
-
-    parse_magic_byte(&raw)
-        .map(Some)
-        .ok_or(ConfigError::InvalidWireGuardObfuscationMagicByte(raw))
-}
-
-pub(super) fn read_optional_u64(var: &'static str) -> Result<Option<u64>, ConfigError> {
-    let Some(raw) = std::env::var(var).ok() else {
-        return Ok(None);
-    };
-    let value = raw.trim();
-    if value.is_empty() {
-        return Ok(None);
-    }
-
-    let parsed = value.parse::<u64>().map_err(|_| {
-        ConfigError::InvalidWireGuardObfuscationXorRekeyValue {
-            var,
-            value: raw.clone(),
-        }
-    })?;
-    if parsed == 0 {
-        return Err(ConfigError::InvalidWireGuardObfuscationXorRekeyValue { var, value: raw });
-    }
-
-    Ok(Some(parsed))
-}
-
 pub(super) fn read_bounded_usize(
     var: &'static str,
     default: usize,
@@ -220,7 +180,7 @@ pub(super) fn read_wireguard_obfuscation_encryption_mode(
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
     else {
-        return Ok(EncryptionMode::Xor);
+        return Ok(EncryptionMode::Aead);
     };
 
     match raw.as_str() {
@@ -270,20 +230,3 @@ fn parse_padding_bucket(raw: &str) -> Option<Vec<usize>> {
     (!values.is_empty() && values.iter().all(|value| *value > 0)).then_some(values)
 }
 
-pub(super) fn read_wireguard_obfuscation_magic_position(
-    var: &str,
-) -> Result<MagicPositionMode, ConfigError> {
-    let Some(raw) = std::env::var(var)
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(MagicPositionMode::Fixed);
-    };
-
-    match raw.as_str() {
-        "fixed" => Ok(MagicPositionMode::Fixed),
-        "randomized" | "randomised" | "random" => Ok(MagicPositionMode::Randomized),
-        _ => Err(ConfigError::InvalidWireGuardObfuscationMagicPosition(raw)),
-    }
-}

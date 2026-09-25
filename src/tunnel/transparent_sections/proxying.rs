@@ -92,10 +92,6 @@ pub(crate) async fn run_transparent(
             } else {
                 0
             });
-            let preview_summary = |buf: &[u8]| {
-                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, buf)
-            };
-
             let bytes_up_counter = Arc::new(AtomicU64::new(0));
             let bytes_down_counter = Arc::new(AtomicU64::new(0));
             let up_counter = Arc::clone(&bytes_up_counter);
@@ -110,17 +106,15 @@ pub(crate) async fn run_transparent(
                         break;
                     }
                     if let Err(e) = upstream_write.write_all(&buf[..n]).await {
-                        let preview_b64 = if capture_payloads {
-                            preview_summary(&up_buf)
-                        } else {
-                            String::new()
-                        };
+                        // Log sizes only: the captured buffer is raw plaintext
+                        // and must never reach debug logs. Byte-level payload
+                        // evidence flows exclusively through the redacted
+                        // payload-audit JSON path.
                         debug!(
                             %host,
                             %e,
                             bytes_transferred = total,
                             preview_len = up_buf.len(),
-                            preview_b64 = %preview_b64,
                             "transparent upstream write failed"
                         );
                         return Err(e);
@@ -154,17 +148,13 @@ pub(crate) async fn run_transparent(
                         break;
                     }
                     if let Err(e) = client_write.write_all(&buf[..n]).await {
-                        let preview_b64 = if capture_payloads {
-                            preview_summary(&down_buf)
-                        } else {
-                            String::new()
-                        };
+                        // Log sizes only: the captured buffer is raw plaintext
+                        // and must never reach debug logs.
                         debug!(
                             %host,
                             %e,
                             bytes_transferred = total,
                             preview_len = down_buf.len(),
-                            preview_b64 = %preview_b64,
                             "transparent downstream write failed"
                         );
                         return Err(e);

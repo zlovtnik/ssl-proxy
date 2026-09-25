@@ -20,6 +20,11 @@ fn parses_wireguard_style_config_for_boringtun_control() {
             "[Interface]\nAddress = 10.13.13.1/24\nListenPort = 51820\nPrivateKey = eHz8Gu9Uhp8Zqc+nEDp98kVxKlznPAouR4VLr5J6jGs=\nMTU = 1280\nPostUp = ignored\n\n[Peer]\nPublicKey = RMG56qSaFhNYkZVoizYm9g4pqSRZ+EQYkLhxGUtCeQw=\nPresharedKey = JiSXAaw54GnEjuwO9RUCbumIJI/Jb7oBCEibn3KTHo0=\nEndpoint = 192.0.2.10:443\nAllowedIPs = 10.13.13.2/32, 10.13.13.3/32\nPersistentKeepalive = 25\n",
         )
         .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
 
     let parsed = parse_config(&config_path).expect("config should parse");
     assert_eq!(parsed.interface.listen_port, Some(51820));
@@ -104,4 +109,22 @@ fn read_uapi_response_accumulates_partial_chunks() {
         .expect("chunked response should be preserved");
 
     assert_eq!(response, "errno=0\ninterface=wg0\n\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_world_readable_config_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let config_path = tempdir.path().join("wg0.conf");
+    fs::write(
+        &config_path,
+        "[Interface]\nPrivateKey = eHz8Gu9Uhp8Zqc+nEDp98kVxKlznPAouR4VLr5J6jGs=\n",
+    )
+    .unwrap();
+    fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let err = parse_config(&config_path).expect_err("world-readable config must be rejected");
+    assert!(err.to_string().contains("must not be world-readable"));
 }

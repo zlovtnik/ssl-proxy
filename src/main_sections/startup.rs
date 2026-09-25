@@ -44,16 +44,29 @@ fn run_boringtun_subcommand() -> Option<i32> {
             println!("{key}");
         }),
         Some("pubkey") => {
-            let private_key = args.next().ok_or_else(|| {
-                boringtun_control::ControlError::Usage(
-                    "usage: ssl-proxy boringtun pubkey <private-key-base64>".to_string(),
-                )
-            });
-            private_key.and_then(|private_key| {
-                boringtun_control::public_key_from_private_base64(&private_key).map(|key| {
-                    println!("{key}");
-                })
-            })
+            // Read the private key from stdin: passing secrets as argv is
+            // visible to other processes through process listings.
+            let mut private_key = String::new();
+            let read_result = std::io::Read::read_to_string(&mut std::io::stdin(), &mut private_key);
+            match read_result {
+                Ok(_) => {
+                    private_key = private_key.trim().to_string();
+                    if private_key.is_empty() {
+                        Err(boringtun_control::ControlError::Usage(
+                            "usage: ssl-proxy boringtun pubkey  (reads a private key from stdin)"
+                                .to_string(),
+                        ))
+                    } else {
+                        boringtun_control::public_key_from_private_base64(&private_key)
+                            .map(|key| {
+                                println!("{key}");
+                            })
+                    }
+                }
+                Err(err) => Err(boringtun_control::ControlError::Usage(format!(
+                    "failed to read private key from stdin: {err}"
+                ))),
+            }
         }
         Some("apply-config") => {
             let interface = args.next().ok_or_else(|| {
@@ -483,7 +496,7 @@ fn log_runtime_ports(config: &config::Config) {
         tunnel_endpoint = ?config.proxy.tunnel_endpoint,
         obfuscation_profiles = ?config.obfuscation.enabled_profiles,
         wg_obfuscation_enabled = config.wireguard.obfuscation_enabled,
-        wg_obfuscation_magic_byte = ?config.wireguard.obfuscation_magic_byte,
+        wg_obfuscation_encryption_mode = ?config.wireguard.obfuscation_encryption_mode,
         "port assignment"
     );
     info!(

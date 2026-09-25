@@ -19,8 +19,8 @@ use crate::{
     udp_tuning::bind_tuned_udp_socket,
     wg_packet_obfuscation::{
         cleanup_interval, decode_packet_in_place_view, encode_packet_in_place_with_headroom,
-        packet_encode_headroom, validate_framed_header, PacketDecodeError, PacketDirection,
-        PacketEncodeState, ReplayWindow, WgPacketObfuscation, MAX_UDP_PACKET_SIZE,
+        packet_encode_headroom, PacketDecodeError, PacketDirection, PacketEncodeState,
+        SessionReplayWindow, WgPacketObfuscation, MAX_UDP_PACKET_SIZE,
     },
 };
 
@@ -28,6 +28,8 @@ const DROP_LOG_INTERVAL: Duration = Duration::from_secs(30);
 const PROBE_BLOCK_WINDOW: Duration = Duration::from_secs(60);
 const PROBE_BLOCK_DURATION: Duration = Duration::from_secs(300);
 const PROBE_STATE_MAX_ENTRIES: usize = 16_384;
+const DEFAULT_PROBE_BLOCK_THRESHOLD: u64 = 64;
+const DEFAULT_RELAY_MAX_SESSIONS: usize = 8_192;
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct RelayMetricsSnapshot {
@@ -40,6 +42,7 @@ pub struct RelayMetricsSnapshot {
     pub probe_blocked_packets: u64,
     pub sessions_evicted_idle: u64,
     pub sessions_evicted_send_failure: u64,
+    pub sessions_evicted_table_limit: u64,
     pub sessions_closed_shutdown: u64,
 }
 
@@ -54,6 +57,7 @@ pub struct RelayMetrics {
     probe_blocked_packets: AtomicU64,
     sessions_evicted_idle: AtomicU64,
     sessions_evicted_send_failure: AtomicU64,
+    sessions_evicted_table_limit: AtomicU64,
     sessions_closed_shutdown: AtomicU64,
 }
 
@@ -71,6 +75,9 @@ impl RelayMetrics {
             sessions_evicted_send_failure: self
                 .sessions_evicted_send_failure
                 .load(Ordering::Relaxed),
+            sessions_evicted_table_limit: self
+                .sessions_evicted_table_limit
+                .load(Ordering::Relaxed),
             sessions_closed_shutdown: self.sessions_closed_shutdown.load(Ordering::Relaxed),
         }
     }
@@ -82,7 +89,8 @@ struct RelaySettings {
     idle_timeout: Duration,
     max_datagram_bytes: usize,
     udp_socket_buffer_bytes: usize,
-    probe_block: Option<ProbeBlockConfig>,
+    probe_block: ProbeBlockConfig,
+    max_sessions: usize,
 }
 
 impl RelaySettings {
@@ -94,6 +102,7 @@ impl RelaySettings {
             max_datagram_bytes: config.obfuscation_max_datagram_bytes,
             udp_socket_buffer_bytes: config.udp_socket_buffer_bytes,
             probe_block: read_probe_block_config(),
+            max_sessions: read_max_sessions(),
         })
     }
 
@@ -104,12 +113,14 @@ impl RelaySettings {
             max_datagram_bytes: MAX_UDP_PACKET_SIZE,
             udp_socket_buffer_bytes: crate::udp_tuning::DEFAULT_UDP_SOCKET_BUFFER_BYTES,
             probe_block: read_probe_block_config(),
+            max_sessions: DEFAULT_RELAY_MAX_SESSIONS,
         }
     }
 }
 
 #[derive(Clone, Copy)]
 struct ProbeBlockConfig {
+    enabled: bool,
     threshold: u64,
     window: Duration,
     block_duration: Duration,
@@ -123,13 +134,13 @@ struct ProbeState {
 }
 
 struct ProbeDetector {
-    config: Option<ProbeBlockConfig>,
+    config: ProbeBlockConfig,
     states: DashMap<IpAddr, ProbeState>,
     max_states: usize,
 }
 
 impl ProbeDetector {
-    fn new(config: Option<ProbeBlockConfig>) -> Self {
+    fn new(config: ProbeBlockConfig) -> Self {
         Self {
             config,
             states: DashMap::new(),
@@ -138,7 +149,7 @@ impl ProbeDetector {
     }
 
     #[cfg(test)]
-    fn with_max_states(config: Option<ProbeBlockConfig>, max_states: usize) -> Self {
+    fn with_max_states(config: ProbeBlockConfig, max_states: usize) -> Self {
         Self {
             config,
             states: DashMap::new(),
@@ -147,6 +158,9 @@ impl ProbeDetector {
     }
 
     fn is_blocked(&self, ip: IpAddr, now: Instant) -> bool {
+        if !self.config.enabled {
+            return false;
+        }
         let Some(mut entry) = self.states.get_mut(&ip) else {
             return false;
         };
@@ -165,9 +179,10 @@ impl ProbeDetector {
     }
 
     fn record_decode_error(&self, ip: IpAddr, now: Instant) -> bool {
-        let Some(config) = self.config else {
+        let config = self.config;
+        if !config.enabled {
             return false;
-        };
+        }
 
         if !self.states.contains_key(&ip) && self.states.len() >= self.max_states {
             self.prune_expired(now, config);
@@ -225,21 +240,49 @@ impl ProbeDetector {
     }
 }
 
-fn read_probe_block_config() -> Option<ProbeBlockConfig> {
-    let threshold = read_env_u64("WG_RELAY_PROBE_BLOCK_THRESHOLD").filter(|value| *value > 0)?;
+/// Probe blocking is on by default so unauthenticated probers are cut off
+/// after `DEFAULT_PROBE_BLOCK_THRESHOLD` decode failures inside the window.
+/// Set `WG_RELAY_PROBE_BLOCK_THRESHOLD` to tune or raise the threshold; set
+/// `WG_RELAY_PROBE_BLOCK_ENABLED=false` to disable.
+fn read_probe_block_config() -> ProbeBlockConfig {
+    let enabled = read_env_bool("WG_RELAY_PROBE_BLOCK_ENABLED", true);
+    let threshold = read_env_u64("WG_RELAY_PROBE_BLOCK_THRESHOLD")
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_PROBE_BLOCK_THRESHOLD);
     let window = positive_duration_or_default(
         read_env_u64("WG_RELAY_PROBE_BLOCK_WINDOW_SECS"),
         PROBE_BLOCK_WINDOW,
-    )?;
+    )
+    .unwrap_or(PROBE_BLOCK_WINDOW);
     let block_duration = positive_duration_or_default(
         read_env_u64("WG_RELAY_PROBE_BLOCK_SECS"),
         PROBE_BLOCK_DURATION,
-    )?;
-    Some(ProbeBlockConfig {
+    )
+    .unwrap_or(PROBE_BLOCK_DURATION);
+    ProbeBlockConfig {
+        enabled,
         threshold,
         window,
         block_duration,
-    })
+    }
+}
+
+fn read_env_bool(var: &str, default: bool) -> bool {
+    std::env::var(var)
+        .ok()
+        .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => true,
+            "false" | "0" | "no" | "off" => false,
+            _ => default,
+        })
+        .unwrap_or(default)
+}
+
+fn read_max_sessions() -> usize {
+    read_env_u64("WG_RELAY_MAX_SESSIONS")
+        .map(|value| value.max(1) as usize)
+        .unwrap_or(DEFAULT_RELAY_MAX_SESSIONS)
+        .clamp(1, MAX_UDP_PACKET_SIZE * 8)
 }
 
 fn positive_duration_or_default(raw: Option<u64>, default: Duration) -> Option<Duration> {
@@ -258,7 +301,7 @@ fn read_env_u64(var: &str) -> Option<u64> {
 struct RelaySession {
     upstream_socket: Arc<UdpSocket>,
     last_activity_millis: AtomicU64,
-    client_to_server_replay: Mutex<ReplayWindow>,
+    client_to_server_replay: Mutex<SessionReplayWindow>,
     // Server-to-client frames use this encoder state to choose the direction's
     // session salt. The salt is embedded in every frame, so the client shim can
     // derive reply keys from the frame alone without sharing this state object.
@@ -272,8 +315,8 @@ impl RelaySession {
         Self {
             upstream_socket,
             last_activity_millis: AtomicU64::new(now_millis),
-            client_to_server_replay: Mutex::new(ReplayWindow::default()),
-            server_to_client_encode: PacketEncodeState::new(now_millis),
+            client_to_server_replay: Mutex::new(SessionReplayWindow::default()),
+            server_to_client_encode: PacketEncodeState::new(),
             idle_jitter: random_idle_jitter(idle_timeout),
             shutdown: CancellationToken::new(),
         }
@@ -333,22 +376,22 @@ impl RelayClock {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DropReason {
-    MagicByteMismatch,
+    HeaderTagMismatch,
     EmptyPayload,
 }
 
 impl DropReason {
     fn as_str(self) -> &'static str {
         match self {
-            Self::MagicByteMismatch => "magic_byte_mismatch",
+            Self::HeaderTagMismatch => "header_tag_mismatch",
             Self::EmptyPayload => "empty_payload",
         }
     }
 
     fn message(self) -> &'static str {
         match self {
-            Self::MagicByteMismatch => {
-                "dropping inbound WireGuard UDP packet: obfuscation marker missing or invalid; raw direct clients are unsupported on this public port"
+            Self::HeaderTagMismatch => {
+                "dropping inbound WireGuard UDP packet: obfuscation header tag missing or invalid; raw direct clients are unsupported on this public port"
             }
             Self::EmptyPayload => {
                 "dropping inbound WireGuard UDP packet: obfuscation payload was empty"
@@ -496,7 +539,8 @@ async fn run_relay(
             .local_addr()
             .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0))),
         internal_addr = %internal_addr,
-        magic_byte = ?settings.obfuscation.magic_byte,
+        encryption_mode = ?settings.obfuscation.encryption_mode,
+        max_sessions = settings.max_sessions,
         max_datagram_bytes = settings.max_datagram_bytes,
         udp_socket_buffer_bytes = settings.udp_socket_buffer_bytes,
         idle_timeout_secs = settings.idle_timeout.as_secs(),
@@ -510,7 +554,7 @@ async fn run_relay(
         clock.clone(),
         metrics.clone(),
     ));
-    let mut magic_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
+    let mut header_tag_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
     let mut empty_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
     let mut other_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
     let probe_detector = ProbeDetector::new(settings.probe_block);
@@ -539,14 +583,49 @@ async fn run_relay(
                     continue;
                 }
 
-                let (session, decoded_range) = if settings.obfuscation.uses_framed_encoding() {
-                    if let Err(err) = validate_framed_header(
-                        &buf,
-                        len,
-                        &settings.obfuscation,
-                    ) {
+                // Replay rejection happens before any new session state is
+                // created or touched, so replays cannot keep a session alive
+                // or fixate sessions for spoofed source addresses. An
+                // existing session's replay window is consulted without
+                // refreshing its idle timer.
+                let decode_result = {
+                    let existing_session =
+                        sessions.get(&client_addr).map(|entry| entry.value().clone());
+                    match existing_session {
+                        Some(session) => {
+                            let mut replay = session
+                                .client_to_server_replay
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner());
+                            let decoded = decode_packet_in_place_view(
+                                &mut buf,
+                                len,
+                                &settings.obfuscation,
+                                &mut replay,
+                                PacketDirection::ClientToServer,
+                            );
+                            drop(replay);
+                            decoded.map(move |range| (Some(session), range))
+                        }
+                        None => {
+                            let mut fresh_replay = SessionReplayWindow::default();
+                            let decoded = decode_packet_in_place_view(
+                                &mut buf,
+                                len,
+                                &settings.obfuscation,
+                                &mut fresh_replay,
+                                PacketDirection::ClientToServer,
+                            );
+                            decoded.map(|range| (None::<Arc<RelaySession>>, range))
+                        }
+                    }
+                };
+
+                let (existing_session, decoded_range) = match decode_result {
+                    Ok((session, range)) => (session, range),
+                    Err(err) => {
                         handle_decode_error(
-                            &mut magic_drop_notice,
+                            &mut header_tag_drop_notice,
                             &mut empty_drop_notice,
                             &mut other_drop_notice,
                             &metrics,
@@ -558,8 +637,12 @@ async fn run_relay(
                         );
                         continue;
                     }
+                };
 
-                    let session = match get_or_create_session(
+                let session = match existing_session {
+                    Some(session) => session,
+                    None => {
+                        match get_or_create_session(
                             client_addr,
                             public_socket.clone(),
                             internal_addr,
@@ -570,87 +653,14 @@ async fn run_relay(
                             metrics.clone(),
                         )
                         .await
-                    {
-                        Ok(session) => session,
-                        Err(err) => {
-                            warn!(%client_addr, %err, "failed to create WireGuard relay session");
-                            continue;
-                        }
-                    };
-
-                    let decoded_range = {
-                        let mut replay = session
-                            .client_to_server_replay
-                            .lock()
-                            .unwrap_or_else(|error| error.into_inner());
-                        match decode_packet_in_place_view(
-                            &mut buf,
-                            len,
-                            &settings.obfuscation,
-                            Some(&mut replay),
-                            PacketDirection::ClientToServer,
-                        ) {
-                            Ok(decoded_range) => decoded_range,
+                        {
+                            Ok(session) => session,
                             Err(err) => {
-                                handle_decode_error(
-                                    &mut magic_drop_notice,
-                                    &mut empty_drop_notice,
-                                    &mut other_drop_notice,
-                                    &metrics,
-                                    &probe_detector,
-                                    err,
-                                    client_addr,
-                                    len,
-                                    packet_received_at,
-                                );
+                                warn!(%client_addr, %err, "failed to create WireGuard relay session");
                                 continue;
                             }
                         }
-                    };
-                    (session, decoded_range)
-                } else {
-                    let decoded_range = match decode_packet_in_place_view(
-                        &mut buf,
-                        len,
-                        &settings.obfuscation,
-                        None,
-                        PacketDirection::ClientToServer,
-                    ) {
-                        Ok(decoded_range) => decoded_range,
-                        Err(err) => {
-                            handle_decode_error(
-                                &mut magic_drop_notice,
-                                &mut empty_drop_notice,
-                                &mut other_drop_notice,
-                                &metrics,
-                                &probe_detector,
-                                err,
-                                client_addr,
-                                len,
-                                packet_received_at,
-                            );
-                            continue;
-                        }
-                    };
-                    let session = match get_or_create_session(
-                        client_addr,
-                        public_socket.clone(),
-                        internal_addr,
-                        settings.clone(),
-                        sessions.clone(),
-                        shutdown.clone(),
-                        clock.clone(),
-                        metrics.clone(),
-                    )
-                    .await
-                    {
-                        Ok(session) => session,
-                        Err(err) => {
-                            warn!(%client_addr, %err, "failed to create WireGuard relay session");
-                            continue;
-                        }
-                    };
-                    (session, decoded_range)
+                    }
                 };
 
                 session.touch(clock.now_millis());
@@ -675,6 +685,21 @@ async fn run_relay(
     cleanup_task.abort();
     let _ = cleanup_task.await;
 
+    // Graceful drain: after the shutdown token fires, session receivers may
+    // still hold in-flight server replies. Give them a short window to
+    // finish encoding and sending before the session sweep tears sockets
+    // down, so clients are less likely to lose the final datagrams of a
+    // exchange across restarts.
+    let drain_window = relay_drain_window();
+    if !sessions.is_empty() && !drain_window.is_zero() {
+        info!(
+            drain_ms = drain_window.as_millis() as u64,
+            active_sessions = sessions.len(),
+            "WireGuard relay draining in-flight replies before shutdown"
+        );
+        tokio::time::sleep(drain_window).await;
+    }
+
     let sessions_to_close: Vec<_> = sessions
         .iter()
         .map(|entry| (*entry.key(), entry.value().clone()))
@@ -690,6 +715,15 @@ async fn run_relay(
     }
 
     info!("WireGuard obfuscation relay shutting down");
+}
+
+/// Drain window applied after shutdown cancellation, before the session
+/// sweep closes upstream sockets. Configurable via
+/// `WG_RELAY_DRAIN_TIMEOUT_MS` (default 2000, `0` disables).
+fn relay_drain_window() -> Duration {
+    read_env_u64("WG_RELAY_DRAIN_TIMEOUT_MS")
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(2_000))
 }
 
 fn log_decode_drop(
@@ -711,7 +745,7 @@ fn log_decode_drop(
 }
 
 fn handle_decode_error(
-    magic_drop_notice: &mut RateLimitedDropNotice,
+    header_tag_drop_notice: &mut RateLimitedDropNotice,
     empty_drop_notice: &mut RateLimitedDropNotice,
     other_drop_notice: &mut RateLimitedDropNotice,
     metrics: &RelayMetrics,
@@ -741,9 +775,9 @@ fn handle_decode_error(
     }
 
     match err {
-        PacketDecodeError::MagicByteMismatch => log_decode_drop(
-            magic_drop_notice,
-            DropReason::MagicByteMismatch,
+        PacketDecodeError::HeaderTagMismatch => log_decode_drop(
+            header_tag_drop_notice,
+            DropReason::HeaderTagMismatch,
             client_addr,
             packet_len,
         ),

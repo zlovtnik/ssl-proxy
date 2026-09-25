@@ -10,8 +10,18 @@ async fn get_or_create_session(
 ) -> io::Result<Arc<RelaySession>> {
     if let Some(existing) = sessions.get(&client_addr) {
         let session = existing.value().clone();
-        session.touch(clock.now_millis());
         return Ok(session);
+    }
+
+    // Bound the session table so unauthenticated traffic cannot exhaust
+    // memory, sockets, and tasks. The keyed header tag must already have
+    // validated before callers reach this point.
+    while sessions.len() >= settings.max_sessions {
+        if !evict_oldest_idle_session(&sessions, &clock, &metrics) {
+            return Err(io::Error::other(
+                "WireGuard relay session limit reached; no session could be evicted",
+            ));
+        }
     }
 
     let upstream_socket = Arc::new(bind_tuned_udp_socket(
@@ -56,6 +66,39 @@ async fn get_or_create_session(
     Ok(session)
 }
 
+/// Evict the most idle session to make room under the session cap.
+///
+/// Returns false when the table contains no evictable entry (every entry is
+/// currently referenced elsewhere), leaving the caller to shed load.
+fn evict_oldest_idle_session(
+    sessions: &DashMap<SocketAddr, Arc<RelaySession>>,
+    clock: &Arc<RelayClock>,
+    metrics: &Arc<RelayMetrics>,
+) -> bool {
+    let now = clock.now_millis();
+    let mut oldest: Option<(SocketAddr, Arc<RelaySession>, u64)> = None;
+    for entry in sessions.iter() {
+        let idle_for = entry.value().idle_for(now).as_millis() as u64;
+        match &oldest {
+            Some((_, _, current)) if idle_for <= *current => {}
+            _ => {
+                oldest = Some((*entry.key(), entry.value().clone(), idle_for));
+            }
+        }
+    }
+    let Some((client_addr, session, _)) = oldest else {
+        return false;
+    };
+    if remove_session_if_current(sessions, client_addr, &session) {
+        metrics.active_sessions.fetch_sub(1, Ordering::Relaxed);
+        metrics
+            .sessions_evicted_table_limit
+            .fetch_add(1, Ordering::Relaxed);
+    }
+    session.close();
+    true
+}
+
 async fn run_session_receiver(
     client_addr: SocketAddr,
     session: Arc<RelaySession>,
@@ -68,15 +111,43 @@ async fn run_session_receiver(
 ) {
     let mut buf = vec![0u8; settings.max_datagram_bytes];
     let packet_start = packet_encode_headroom(&settings.obfuscation);
+    // Drain mode: after the global shutdown token fires, keep forwarding
+    // in-flight server replies for a bounded window so clients do not lose
+    // the final datagrams of an exchange across restarts. The drain ends
+    // when the window elapses or the session sweep closes the session.
+    let drain_window = relay_drain_window();
+    let mut drain_deadline: Option<tokio::time::Instant> = None;
     loop {
         tokio::select! {
-            _ = shutdown.cancelled() => break,
+            biased;
             _ = session.shutdown.cancelled() => break,
-            recv = session.upstream_socket.recv(&mut buf[packet_start..]) => {
-                let len = match recv {
-                    Ok(len) => len,
-                    Err(err) => {
+            _ = async {
+                match drain_deadline {
+                    Some(_) => std::future::pending::<()>().await,
+                    None => shutdown.cancelled().await,
+                }
+            } => {
+                if drain_deadline.is_none() {
+                    if drain_window.is_zero() {
+                        break;
+                    }
+                    drain_deadline = Some(tokio::time::Instant::now() + drain_window);
+                }
+            }
+            result = async {
+                match drain_deadline {
+                    Some(deadline) => tokio::time::timeout_at(deadline, session.upstream_socket.recv(&mut buf[packet_start..])).await,
+                    None => Ok(session.upstream_socket.recv(&mut buf[packet_start..]).await),
+                }
+            } => {
+                let len = match result {
+                    Ok(Ok(len)) => len,
+                    Ok(Err(err)) => {
                         warn!(%client_addr, %err, "WireGuard relay session receive failed");
+                        continue;
+                    }
+                    Err(_elapsed) => {
+                        // Drain deadline elapsed.
                         break;
                     }
                 };
@@ -90,7 +161,6 @@ async fn run_session_receiver(
                     &settings.obfuscation,
                     &session.server_to_client_encode,
                     PacketDirection::ServerToClient,
-                    now,
                 ) {
                     Ok(encoded_range) => encoded_range,
                     Err(err) => {

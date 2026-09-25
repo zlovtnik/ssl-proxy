@@ -235,7 +235,7 @@ impl SyncPublisher {
             ));
         }
 
-        std::fs::create_dir_all(&self.config.outbox_dir).map_err(|error| {
+        ensure_private_dir(&self.config.outbox_dir).map_err(|error| {
             format!(
                 "create sync outbox {}: {error}",
                 self.config.outbox_dir.display()
@@ -249,7 +249,7 @@ impl SyncPublisher {
             .collect();
         let file_name = format!("{observed_token}-{digest}.json");
         let path = self.config.outbox_dir.join(&file_name);
-        std::fs::write(&path, raw_payload)
+        write_private_file(&path, raw_payload)
             .map_err(|error| format!("write sync outbox payload {}: {error}", path.display()))?;
         Ok(format!("{OUTBOX_PAYLOAD_REF_PREFIX}{file_name}"))
     }
@@ -421,4 +421,50 @@ fn validate_json_payload(raw_payload: &str) -> Result<(), String> {
     serde_json::from_str::<serde_json::Value>(raw_payload)
         .map(|_| ())
         .map_err(|error| format!("sync payload must be valid JSON: {error}"))
+}
+
+/// Create the directory if missing and strip world/group access bits.
+///
+/// Outbox payloads contain per-request identity data, so the directory is
+/// tightened to 0700 on creation and on every write path.
+#[cfg(unix)]
+fn ensure_private_dir(dir: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let created = !dir.exists();
+    std::fs::create_dir_all(dir).map_err(|error| format!("{error}"))?;
+    let metadata = std::fs::metadata(dir).map_err(|error| format!("{error}"))?;
+    let mode = metadata.mode();
+    if created || mode & 0o077 != 0 {
+        std::fs::set_permissions(
+            dir,
+            std::fs::Permissions::from_mode(mode & 0o700),
+        )
+        .map_err(|error| format!("{error}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_private_dir(_dir: &std::path::Path) -> Result<(), String> {
+    Ok(())
+}
+
+/// Write a file with owner-only permissions (0600).
+#[cfg(unix)]
+fn write_private_file(path: &std::path::Path, contents: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut file = std::fs::File::create(path).map_err(|error| format!("{error}"))?;
+    file.write_all(contents.as_bytes())
+        .map_err(|error| format!("{error}"))?;
+    file.sync_all().ok();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("{error}"))
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &std::path::Path, contents: &str) -> Result<(), String> {
+    std::fs::write(path, contents).map_err(|error| format!("{error}"))
 }

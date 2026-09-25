@@ -9,21 +9,53 @@
     use super::*;
     use crate::{
         wg_packet_obfuscation::{
-            decode_packet as decode_obfuscated_packet, encode_packet, EncryptionMode,
-            MagicPositionMode, PacketPadding,
+            decode_packet_in_place, encode_packet_in_place, EncryptionMode, PacketDirection,
+            PacketEncodeState, PacketPadding, SessionReplayWindow, MAX_UDP_PACKET_SIZE,
         },
         wg_relay,
     };
 
-    fn test_obfuscation(magic_byte: Option<u8>) -> WgPacketObfuscation {
-        WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), magic_byte).unwrap()
+    fn test_obfuscation() -> WgPacketObfuscation {
+        WgPacketObfuscation::new(b"test-obfuscation-key-32-bytes-aaaaaa".to_vec()).unwrap()
     }
+    /// Encode a server-to-client frame, mirroring what the relay produces.
+    fn encode_server_packet(packet: &[u8], settings: &WgPacketObfuscation) -> Vec<u8> {
+        let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
+        encoded[..packet.len()].copy_from_slice(packet);
+        let state = PacketEncodeState::new();
+        let len = encode_packet_in_place(
+            &mut encoded,
+            packet.len(),
+            settings,
+            &state,
+            PacketDirection::ServerToClient,
+        )
+        .unwrap();
+        encoded.truncate(len);
+        encoded
+    }
+
+    /// Decode a client-to-server frame, mirroring what the relay consumes.
+    fn decode_client_packet(packet: &[u8], settings: &WgPacketObfuscation) -> Vec<u8> {
+        let mut decoded = packet.to_vec();
+        let len = decode_packet_in_place(
+            &mut decoded,
+            packet.len(),
+            settings,
+            &mut SessionReplayWindow::default(),
+            PacketDirection::ClientToServer,
+        )
+        .unwrap();
+        decoded.truncate(len);
+        decoded
+    }
+
 
     fn test_shim_config() -> Arc<WgObfsShimConfig> {
         Arc::new(WgObfsShimConfig::new(
             SocketAddr::from(([127, 0, 0, 1], 0)),
             SocketAddr::from(([127, 0, 0, 1], 1)),
-            test_obfuscation(None),
+            test_obfuscation(),
             Duration::from_secs(30),
         ))
     }
@@ -44,7 +76,7 @@
         let mut config = WgObfsShimConfig::new(
             SocketAddr::from(([127, 0, 0, 1], 0)),
             SocketAddr::from(([127, 0, 0, 1], 1)),
-            test_obfuscation(None),
+            test_obfuscation(),
             Duration::from_secs(30),
         );
         config.send_queue_capacity = capacity;
@@ -368,7 +400,7 @@
             ..WgObfsShimConfig::new(
                 SocketAddr::from(([127, 0, 0, 1], 0)),
                 SocketAddr::from(([127, 0, 0, 1], 1)),
-                test_obfuscation(Some(0xAA)),
+                test_obfuscation(),
                 Duration::from_secs(300),
             )
         };
@@ -383,7 +415,7 @@
             ..WgObfsShimConfig::new(
                 SocketAddr::from(([127, 0, 0, 1], 0)),
                 SocketAddr::from(([127, 0, 0, 1], 1)),
-                test_obfuscation(Some(0xAA)),
+                test_obfuscation(),
                 Duration::from_secs(300),
             )
         };
@@ -394,7 +426,7 @@
     #[tokio::test]
     async fn shim_obfuscates_plaintext_and_decodes_replies() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA));
+        let obfuscation = test_obfuscation();
         let server_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .unwrap();
@@ -412,9 +444,9 @@
         let upstream = tokio::spawn(async move {
             let mut buf = [0u8; 2048];
             let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
-            let decoded = decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap();
+            let decoded = decode_client_packet(&buf[..len], &obfuscation);
             assert_eq!(decoded, b"handshake-init");
-            let response = encode_packet(b"handshake-reply", &obfuscation).unwrap();
+            let response = encode_server_packet(b"handshake-reply", &obfuscation);
             server_socket.send_to(&response, shim_peer).await.unwrap();
         });
 
@@ -441,7 +473,7 @@
     #[tokio::test]
     async fn shim_uses_distinct_upstream_ports_per_local_client() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA));
+        let obfuscation = test_obfuscation();
         let server_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .unwrap();
@@ -462,8 +494,8 @@
             for _ in 0..2 {
                 let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
                 peers.push(shim_peer);
-                let decoded = decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap();
-                let response = encode_packet(&decoded, &obfuscation).unwrap();
+                let decoded = decode_client_packet(&buf[..len], &obfuscation);
+                let response = encode_server_packet(&decoded, &obfuscation);
                 server_socket.send_to(&response, shim_peer).await.unwrap();
             }
             peers
@@ -503,7 +535,7 @@
     #[tokio::test]
     async fn shim_evicts_idle_sessions_and_recreates_upstream_socket() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA));
+        let obfuscation = test_obfuscation();
         let server_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .unwrap();
@@ -523,8 +555,8 @@
             for _ in 0..2 {
                 let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
                 peers.push(shim_peer);
-                let decoded = decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap();
-                let response = encode_packet(&decoded, &obfuscation).unwrap();
+                let decoded = decode_client_packet(&buf[..len], &obfuscation);
+                let response = encode_server_packet(&decoded, &obfuscation);
                 server_socket.send_to(&response, shim_peer).await.unwrap();
             }
             peers
@@ -559,7 +591,7 @@
     #[tokio::test]
     async fn shim_max_sessions_evicts_oldest_session() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA));
+        let obfuscation = test_obfuscation();
         let server_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .unwrap();
@@ -579,9 +611,9 @@
             for _ in 0..3 {
                 let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
                 peers.push(shim_peer);
-                let decoded = decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap();
+                let decoded = decode_client_packet(&buf[..len], &obfuscation);
                 server_socket
-                    .send_to(&encode_packet(&decoded, &obfuscation).unwrap(), shim_peer)
+                    .send_to(&encode_server_packet(&decoded, &obfuscation), shim_peer)
                     .await
                     .unwrap();
             }

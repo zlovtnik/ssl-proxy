@@ -1,5 +1,5 @@
 fn write_spool_envelope(spool_dir: &Path, topic: &str, payload: &str) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(spool_dir)
+    ensure_private_dir(spool_dir)
         .map_err(|error| format!("create sync publish spool {}: {error}", spool_dir.display()))?;
     let created_at = crate::time::now_rfc3339();
     let token = crate::time::file_token_now();
@@ -13,7 +13,11 @@ fn write_spool_envelope(spool_dir: &Path, topic: &str, payload: &str) -> Result<
     };
     let bytes = serde_json::to_vec(&envelope)
         .map_err(|error| format!("serialize sync publish spool envelope: {error}"))?;
-    std::fs::write(&tmp_path, bytes).map_err(|error| {
+    write_private_file(
+        &tmp_path,
+        std::str::from_utf8(&bytes).map_err(|error| format!("spool envelope UTF-8: {error}"))?,
+    )
+    .map_err(|error| {
         format!(
             "write sync publish spool envelope {}: {error}",
             tmp_path.display()

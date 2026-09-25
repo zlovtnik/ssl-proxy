@@ -128,6 +128,33 @@ pub fn dump_interface(interface: &str) -> Result<String, ControlError> {
     Ok(render_dump(&device))
 }
 
+/// Dump only peer rows, never materializing the interface private key or
+/// public key into the returned output.
+///
+/// The stats poller calls this on a hot interval; `dump_interface` would
+/// render the interface private key and every peer preshared key into a
+/// heap string on each sample even though the poller only consumes peer
+/// rows. This variant returns only the peer lines, with preshared keys
+/// replaced by empty fields.
+pub fn dump_peers_only(interface: &str) -> Result<String, ControlError> {
+    let device = get_device(interface)?;
+    let mut output = String::new();
+    for peer in &device.peers {
+        output.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            peer.public_key,
+            "",
+            peer.endpoint.clone().unwrap_or_default(),
+            peer.allowed_ips.join(","),
+            peer.latest_handshake_sec.unwrap_or(0),
+            peer.rx_bytes,
+            peer.tx_bytes,
+            peer.persistent_keepalive.unwrap_or(0)
+        ));
+    }
+    Ok(output)
+}
+
 fn get_device(interface: &str) -> Result<RuntimeDevice, ControlError> {
     let response = send_uapi_request(interface, "get=1\n\n")?;
     ensure_uapi_success(&response)?;

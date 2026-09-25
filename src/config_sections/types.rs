@@ -6,9 +6,7 @@ use thiserror::Error;
 use crate::{
     obfuscation::Profile,
     udp_tuning::DEFAULT_UDP_SOCKET_BUFFER_BYTES,
-    wg_packet_obfuscation::{
-        EncryptionMode, MagicPositionMode, PacketPadding, MAX_UDP_PACKET_SIZE,
-    },
+    wg_packet_obfuscation::{EncryptionMode, PacketPadding, MAX_UDP_PACKET_SIZE},
 };
 
 pub const MIN_ADMIN_API_KEY_LEN: usize = 32;
@@ -120,15 +118,10 @@ pub struct WireGuardConfig {
     pub interface: Option<String>,
     pub drop_udp_443: bool,
     pub obfuscation_enabled: bool,
-    pub obfuscation_key: Vec<u8>,
-    pub obfuscation_magic_byte: Option<u8>,
+    pub obfuscation_key: zeroize::Zeroizing<Vec<u8>>,
     pub obfuscation_session_idle_secs: u64,
     pub obfuscation_encryption_mode: EncryptionMode,
     pub obfuscation_padding: PacketPadding,
-    pub obfuscation_magic_position: MagicPositionMode,
-    pub obfuscation_replay_protection: bool,
-    pub obfuscation_xor_rekey_packets: Option<u64>,
-    pub obfuscation_xor_rekey_secs: Option<u64>,
     pub obfuscation_max_datagram_bytes: usize,
     pub udp_socket_buffer_bytes: usize,
 }
@@ -169,16 +162,10 @@ pub enum ConfigError {
         file_var: &'static str,
         message: String,
     },
-    #[error("WG_OBFUSCATION_MAGIC_BYTE must be a single byte in decimal or 0xNN form; got {0:?}")]
-    InvalidWireGuardObfuscationMagicByte(String),
     #[error("WG_OBFUSCATION_ENCRYPTION_MODE must be xor or aead; got {0:?}")]
     InvalidWireGuardObfuscationEncryptionMode(String),
     #[error("WG_OBFUSCATION_PADDING must be none, power-of-two, fixed-mtu:<bytes>, or random-bucket:<bytes,...>; got {0:?}")]
     InvalidWireGuardObfuscationPadding(String),
-    #[error("WG_OBFUSCATION_MAGIC_POSITION must be fixed or randomized; got {0:?}")]
-    InvalidWireGuardObfuscationMagicPosition(String),
-    #[error("{var} must be a positive integer; got {value:?}")]
-    InvalidWireGuardObfuscationXorRekeyValue { var: &'static str, value: String },
     #[error("{var} must be an integer from {min} to {max}; got {value:?}")]
     InvalidWireGuardSizeValue {
         var: &'static str,
@@ -348,7 +335,6 @@ impl std::fmt::Debug for WireGuardConfig {
             .field("drop_udp_443", &self.drop_udp_443)
             .field("obfuscation_enabled", &self.obfuscation_enabled)
             .field("obfuscation_key", &"[REDACTED]")
-            .field("obfuscation_magic_byte", &self.obfuscation_magic_byte)
             .field(
                 "obfuscation_session_idle_secs",
                 &self.obfuscation_session_idle_secs,
@@ -358,22 +344,6 @@ impl std::fmt::Debug for WireGuardConfig {
                 &self.obfuscation_encryption_mode,
             )
             .field("obfuscation_padding", &self.obfuscation_padding)
-            .field(
-                "obfuscation_magic_position",
-                &self.obfuscation_magic_position,
-            )
-            .field(
-                "obfuscation_replay_protection",
-                &self.obfuscation_replay_protection,
-            )
-            .field(
-                "obfuscation_xor_rekey_packets",
-                &self.obfuscation_xor_rekey_packets,
-            )
-            .field(
-                "obfuscation_xor_rekey_secs",
-                &self.obfuscation_xor_rekey_secs,
-            )
             .field(
                 "obfuscation_max_datagram_bytes",
                 &self.obfuscation_max_datagram_bytes,

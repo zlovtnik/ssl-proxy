@@ -17,17 +17,21 @@ use zeroize::Zeroizing;
 /// Maximum supported UDP datagram size.
 pub const MAX_UDP_PACKET_SIZE: usize = 65_535;
 
-const FRAME_VERSION: u8 = 1;
+/// Minimum accepted obfuscation key length in bytes.
+///
+/// The key is the HKDF input keying material for every derived frame key, so
+/// deployments must provision at least 256 bits of key material.
+pub const MIN_OBFUSCATION_KEY_LEN: usize = 32;
+
+const FRAME_VERSION: u8 = 2;
 const FRAME_FLAG_AEAD: u8 = 0b0000_0001;
 const FRAME_FLAG_PADDING: u8 = 0b0000_0010;
-const FRAME_FLAG_REKEY: u8 = 0b0000_0100;
-const FRAME_FLAG_RANDOMIZED_MAGIC: u8 = 0b0000_1000;
 const FRAME_SALT_LEN: usize = 16;
 const FRAME_COUNTER_LEN: usize = 8;
-const FRAME_EPOCH_LEN: usize = 4;
-const FRAME_MARKER_ZONE_LEN: usize = 8;
+const FRAME_HEADER_TAG_LEN: usize = 4;
+/// Cleartext header layout: version, flags, salt, masked counter, header tag.
 const FRAME_HEADER_LEN: usize =
-    3 + FRAME_SALT_LEN + FRAME_COUNTER_LEN + FRAME_EPOCH_LEN + FRAME_MARKER_ZONE_LEN;
+    1 + 1 + FRAME_SALT_LEN + FRAME_COUNTER_LEN + FRAME_HEADER_TAG_LEN;
 const AEAD_TAG_LEN: usize = 16;
 const BODY_LEN_FIELD_LEN: usize = 2;
 
@@ -35,17 +39,20 @@ pub const FRAMED_HEADER_LEN: usize = FRAME_HEADER_LEN;
 pub const FRAMED_BODY_LEN_FIELD_LEN: usize = BODY_LEN_FIELD_LEN;
 pub const AEAD_TAG_LEN_BYTES: usize = AEAD_TAG_LEN;
 
-/// Packet confidentiality/integrity mode.
+/// Packet confidentiality mode for framed obfuscation.
+///
+/// Both modes use the v2 framed wire format with a keyed header tag and
+/// mandatory, salt-keyed replay protection. `Xor` derives a fresh HKDF
+/// keystream per frame counter and provides obfuscation only; `Aead`
+/// provides full XChaCha20-Poly1305 confidentiality and integrity.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EncryptionMode {
-    /// XOR obfuscation.
+    /// Per-frame-counter keystream obfuscation without outer integrity.
     ///
-    /// Legacy non-framed packets use the configured key directly as the XOR
-    /// mask. Framed XOR packets derive the mask from the in-band frame salt,
-    /// packet direction, and rekey epoch so framed mode has per-session key
-    /// diversification even when no rekey policy is configured.
-    #[default]
+    /// WireGuard's own transport authentication still protects the inner
+    /// packets; this mode only hides them from passive observers.
     Xor,
+    #[default]
     Aead,
 }
 
@@ -78,120 +85,68 @@ impl EncodedPacketLenBounds {
     }
 }
 
-/// Placement policy for the obfuscation marker in framed packets.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum MagicPositionMode {
-    #[default]
-    Fixed,
-    Randomized,
-}
-
 /// Error returned when constructing invalid packet obfuscation settings.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum WgPacketObfuscationError {
     #[error("obfuscation key must not be empty")]
     EmptyKey,
-}
-
-/// Optional XOR re-keying schedule for framed XOR packets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct XorRekeyPolicy {
-    pub every_packets: Option<u64>,
-    pub every_secs: Option<u64>,
-}
-
-impl XorRekeyPolicy {
-    pub fn new(every_packets: Option<u64>, every_secs: Option<u64>) -> Option<Self> {
-        let every_packets = every_packets.filter(|value| *value > 0);
-        let every_secs = every_secs.filter(|value| *value > 0);
-        (every_packets.is_some() || every_secs.is_some()).then_some(Self {
-            every_packets,
-            every_secs,
-        })
-    }
+    #[error("obfuscation key must be at least {min} bytes; got {len}")]
+    KeyTooShort { len: usize, min: usize },
 }
 
 /// Shared packet obfuscation settings for WireGuard UDP transport.
+///
+/// All traffic uses the v2 framed format: a keyed header tag authenticates
+/// the cleartext header before any session state is created, the frame
+/// counter is masked, and replay protection is mandatory.
 #[derive(Clone, PartialEq, Eq)]
 pub struct WgPacketObfuscation {
     pub key: Zeroizing<Vec<u8>>,
-    pub magic_byte: Option<u8>,
     pub encryption_mode: EncryptionMode,
     pub padding: PacketPadding,
-    pub magic_position: MagicPositionMode,
-    pub xor_rekey: Option<XorRekeyPolicy>,
-    pub replay_protection: bool,
 }
 
 impl std::fmt::Debug for WgPacketObfuscation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WgPacketObfuscation")
             .field("key", &"[REDACTED]")
-            .field("magic_byte", &self.magic_byte)
             .field("encryption_mode", &self.encryption_mode)
             .field("padding", &self.padding)
-            .field("magic_position", &self.magic_position)
-            .field("xor_rekey", &self.xor_rekey)
-            .field("replay_protection", &self.replay_protection)
             .finish()
     }
 }
 
 impl WgPacketObfuscation {
-    /// Construct legacy-compatible packet obfuscation settings.
-    pub fn new(
-        key: impl Into<Vec<u8>>,
-        magic_byte: Option<u8>,
-    ) -> Result<Self, WgPacketObfuscationError> {
+    /// Construct v2 framed packet obfuscation settings.
+    ///
+    /// The key must be at least [`MIN_OBFUSCATION_KEY_LEN`] bytes because it
+    /// is the HKDF input keying material for every derived frame key.
+    pub fn new(key: impl Into<Vec<u8>>) -> Result<Self, WgPacketObfuscationError> {
         let key = key.into();
         if key.is_empty() {
             return Err(WgPacketObfuscationError::EmptyKey);
         }
+        if key.len() < MIN_OBFUSCATION_KEY_LEN {
+            return Err(WgPacketObfuscationError::KeyTooShort {
+                len: key.len(),
+                min: MIN_OBFUSCATION_KEY_LEN,
+            });
+        }
         Ok(Self {
             key: Zeroizing::new(key),
-            magic_byte,
-            encryption_mode: EncryptionMode::Xor,
+            encryption_mode: EncryptionMode::Aead,
             padding: PacketPadding::None,
-            magic_position: MagicPositionMode::Fixed,
-            xor_rekey: None,
-            replay_protection: false,
         })
     }
 
     pub fn with_encryption_mode(mut self, mode: EncryptionMode) -> Self {
         self.encryption_mode = mode;
-        if matches!(mode, EncryptionMode::Aead) {
-            self.replay_protection = true;
-        }
         self
     }
 
     pub fn with_padding(mut self, padding: PacketPadding) -> Self {
         self.padding = padding;
         self
-    }
-
-    pub fn with_magic_position(mut self, mode: MagicPositionMode) -> Self {
-        self.magic_position = mode;
-        self
-    }
-
-    pub fn with_xor_rekey(mut self, policy: Option<XorRekeyPolicy>) -> Self {
-        self.xor_rekey = policy;
-        self
-    }
-
-    pub fn with_replay_protection(mut self, enabled: bool) -> Self {
-        self.replay_protection = enabled;
-        self
-    }
-
-    pub fn uses_framed_encoding(&self) -> bool {
-        !matches!(self.encryption_mode, EncryptionMode::Xor)
-            || !matches!(&self.padding, PacketPadding::None)
-            || !matches!(self.magic_position, MagicPositionMode::Fixed)
-            || self.xor_rekey.is_some()
-            || self.replay_protection
     }
 
     pub fn encoded_len_bounds(
@@ -203,6 +158,10 @@ impl WgPacketObfuscation {
 }
 
 /// Direction label used for framed key derivation.
+///
+/// Every derived key and the header tag are direction-bound, so a
+/// client-to-server frame can never be reflected back at its origin as a
+/// server-to-client frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PacketDirection {
     ClientToServer,
@@ -229,25 +188,22 @@ impl PacketDirection {
 pub struct PacketEncodeState {
     session_salt: Zeroizing<[u8; FRAME_SALT_LEN]>,
     next_counter: AtomicU64,
-    started_at_millis: u64,
 }
 
 impl PacketEncodeState {
-    pub fn new(started_at_millis: u64) -> Self {
+    pub fn new() -> Self {
         let mut session_salt = [0u8; FRAME_SALT_LEN];
         OsRng.fill_bytes(&mut session_salt);
         Self {
             session_salt: Zeroizing::new(session_salt),
             next_counter: AtomicU64::new(0),
-            started_at_millis,
         }
     }
 
-    pub fn with_salt(session_salt: [u8; FRAME_SALT_LEN], started_at_millis: u64) -> Self {
+    pub fn with_salt(session_salt: [u8; FRAME_SALT_LEN]) -> Self {
         Self {
             session_salt: Zeroizing::new(session_salt),
             next_counter: AtomicU64::new(0),
-            started_at_millis,
         }
     }
 
@@ -257,6 +213,12 @@ impl PacketEncodeState {
 
     fn next_packet_counter(&self) -> u64 {
         self.next_counter.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+impl Default for PacketEncodeState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -303,6 +265,32 @@ impl ReplayWindow {
     }
 }
 
+/// Replay window keyed by the session salt embedded in frame headers.
+///
+/// When a peer restarts and picks a fresh session salt, its frame counters
+/// legitimately restart from zero. Keying the window by salt resets the
+/// sliding bitmap on salt change, so legitimate restarts are not misread as
+/// replays, while replays within a salt epoch are still rejected.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SessionReplayWindow {
+    salt: Option<[u8; FRAME_SALT_LEN]>,
+    window: ReplayWindow,
+}
+
+impl SessionReplayWindow {
+    pub fn check_and_update(
+        &mut self,
+        salt: &[u8; FRAME_SALT_LEN],
+        counter: u64,
+    ) -> Result<(), PacketDecodeError> {
+        if self.salt.as_ref() != Some(salt) {
+            self.salt = Some(*salt);
+            self.window = ReplayWindow::default();
+        }
+        self.window.check_and_update(counter)
+    }
+}
+
 /// Failure modes when encoding an obfuscated WireGuard packet.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PacketEncodeError {
@@ -328,29 +316,6 @@ pub fn encoded_packet_len_bounds(
     packet_len: usize,
     settings: &WgPacketObfuscation,
 ) -> Result<EncodedPacketLenBounds, PacketEncodeError> {
-    if !settings.uses_framed_encoding() {
-        let marker_len = usize::from(settings.magic_byte.is_some());
-        let encoded_len =
-            packet_len
-                .checked_add(marker_len)
-                .ok_or(PacketEncodeError::EncodedPacketTooLarge {
-                    encoded_len: usize::MAX,
-                    buffer_len: MAX_UDP_PACKET_SIZE,
-                })?;
-        if encoded_len > MAX_UDP_PACKET_SIZE {
-            return Err(PacketEncodeError::EncodedPacketTooLarge {
-                encoded_len,
-                buffer_len: MAX_UDP_PACKET_SIZE,
-            });
-        }
-        return Ok(EncodedPacketLenBounds {
-            plaintext_len: packet_len,
-            min_encoded_len: encoded_len,
-            max_encoded_len: encoded_len,
-            unpadded_encoded_len: encoded_len,
-        });
-    }
-
     if packet_len > u16::MAX as usize {
         return Err(PacketEncodeError::PacketTooLarge {
             packet_len,
@@ -358,10 +323,7 @@ pub fn encoded_packet_len_bounds(
         });
     }
 
-    let tag_len = match settings.encryption_mode {
-        EncryptionMode::Xor => 0,
-        EncryptionMode::Aead => AEAD_TAG_LEN,
-    };
+    let tag_len = tag_len(settings.encryption_mode);
     let body_base_len = BODY_LEN_FIELD_LEN + packet_len;
     let unpadded_encoded_len = FRAME_HEADER_LEN + body_base_len + tag_len;
     let (min_encoded_len, max_encoded_len) =
@@ -420,8 +382,8 @@ fn encoded_len_range_for_padding(
 /// Failure modes when decoding an obfuscated WireGuard packet.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PacketDecodeError {
-    #[error("obfuscation magic byte missing or invalid")]
-    MagicByteMismatch,
+    #[error("obfuscation header tag invalid")]
+    HeaderTagMismatch,
     #[error("obfuscation payload is empty")]
     EmptyPayload,
     #[error("obfuscation chaff frame")]
@@ -447,7 +409,7 @@ pub enum PacketDecodeError {
 impl PacketDecodeError {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::MagicByteMismatch => "magic_byte_mismatch",
+            Self::HeaderTagMismatch => "header_tag_mismatch",
             Self::EmptyPayload => "empty_payload",
             Self::ChaffFrame => "chaff_frame",
             Self::PacketTooShort { .. } => "packet_too_short",
@@ -463,26 +425,31 @@ impl PacketDecodeError {
 }
 
 /// Encode a plaintext WireGuard packet using the configured obfuscation mode.
+///
+/// Stateless helper for tests and one-shot encoders. It creates a fresh
+/// session salt, so each call produces frames from a distinct salt epoch.
 pub fn encode_packet(
     packet: &[u8],
     settings: &WgPacketObfuscation,
 ) -> Result<Vec<u8>, PacketEncodeError> {
     let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
     encoded[..packet.len()].copy_from_slice(packet);
-    let state = PacketEncodeState::new(0);
+    let state = PacketEncodeState::new();
     let len = encode_packet_in_place(
         &mut encoded,
         packet.len(),
         settings,
         &state,
         PacketDirection::Bidirectional,
-        0,
     )?;
     encoded.truncate(len);
     Ok(encoded)
 }
 
 /// Decode an obfuscated WireGuard packet back to plaintext.
+///
+/// Stateless helper: the replay window starts empty and keys itself on the
+/// first frame's salt, mirroring the state a fresh session would hold.
 pub fn decode_packet(
     packet: &[u8],
     settings: &WgPacketObfuscation,
@@ -496,11 +463,12 @@ pub fn decode_packet(
 
     let mut decoded = vec![0u8; MAX_UDP_PACKET_SIZE];
     decoded[..packet.len()].copy_from_slice(packet);
+    let mut replay = SessionReplayWindow::default();
     let len = decode_packet_in_place(
         &mut decoded,
         packet.len(),
         settings,
-        None,
+        &mut replay,
         PacketDirection::Bidirectional,
     )?;
     decoded.truncate(len);
@@ -514,7 +482,6 @@ pub fn encode_packet_in_place(
     settings: &WgPacketObfuscation,
     state: &PacketEncodeState,
     direction: PacketDirection,
-    now_millis: u64,
 ) -> Result<usize, PacketEncodeError> {
     if packet_len > buffer.len() {
         return Err(PacketEncodeError::PacketTooLarge {
@@ -523,11 +490,7 @@ pub fn encode_packet_in_place(
         });
     }
 
-    if !settings.uses_framed_encoding() {
-        return encode_legacy_xor_in_place(buffer, packet_len, settings);
-    }
-
-    encode_framed_in_place(buffer, packet_len, settings, state, direction, now_millis)
+    encode_framed_in_place(buffer, packet_len, settings, state, direction)
 }
 
 /// Decode a packet in place, moving plaintext to `buffer[..returned_len]`.
@@ -535,27 +498,16 @@ pub fn decode_packet_in_place(
     buffer: &mut [u8],
     packet_len: usize,
     settings: &WgPacketObfuscation,
-    replay_window: Option<&mut ReplayWindow>,
+    replay_window: &mut SessionReplayWindow,
     direction: PacketDirection,
 ) -> Result<usize, PacketDecodeError> {
-    if packet_len == 0 {
-        return Err(PacketDecodeError::PacketTooShort {
-            actual: 0,
-            minimum: 1,
-        });
+    let payload_range =
+        decode_packet_in_place_view(buffer, packet_len, settings, replay_window, direction)?;
+    let payload_len = payload_range.len();
+    if payload_range.start != 0 {
+        buffer.copy_within(payload_range, 0);
     }
-    if packet_len > buffer.len() {
-        return Err(PacketDecodeError::PacketTooShort {
-            actual: buffer.len(),
-            minimum: packet_len,
-        });
-    }
-
-    if !settings.uses_framed_encoding() {
-        return decode_legacy_xor_in_place(buffer, packet_len, settings);
-    }
-
-    decode_framed_in_place(buffer, packet_len, settings, replay_window, direction)
+    Ok(payload_len)
 }
 
 /// Decode a packet in place without moving its plaintext payload.
@@ -566,7 +518,7 @@ pub(crate) fn decode_packet_in_place_view(
     buffer: &mut [u8],
     packet_len: usize,
     settings: &WgPacketObfuscation,
-    replay_window: Option<&mut ReplayWindow>,
+    replay_window: &mut SessionReplayWindow,
     direction: PacketDirection,
 ) -> Result<Range<usize>, PacketDecodeError> {
     if packet_len == 0 {
@@ -582,14 +534,45 @@ pub(crate) fn decode_packet_in_place_view(
         });
     }
 
-    if !settings.uses_framed_encoding() {
-        return decode_legacy_xor_in_place_view(buffer, packet_len, settings);
-    }
-
     decode_framed_in_place_view(buffer, packet_len, settings, replay_window, direction)
 }
 
+fn tag_len(mode: EncryptionMode) -> usize {
+    match mode {
+        EncryptionMode::Xor => 0,
+        EncryptionMode::Aead => AEAD_TAG_LEN,
+    }
+}
+
+/// Constant-time byte-slice equality.
+///
+/// The header tag is compared with this helper so tag verification does not
+/// leak match position through timing.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut acc = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        acc |= x ^ y;
+    }
+    acc == 0
+}
+
+pub(crate) fn cleanup_interval(idle_timeout: Duration) -> Duration {
+    let half = idle_timeout / 2;
+    if half.is_zero() {
+        Duration::from_millis(1)
+    } else {
+        half.min(Duration::from_secs(5))
+    }
+}
+
 /// Parse a magic byte from decimal or `0xNN` input.
+///
+/// Retained for config compatibility: the v1 wire format allowed an optional
+/// leading magic byte. The v2 frame format replaces it with the keyed header
+/// tag, so parsed values are accepted but ignored by the encoder.
 pub fn parse_magic_byte(raw: &str) -> Option<u8> {
     let trimmed = raw.trim();
     if let Some(value) = trimmed

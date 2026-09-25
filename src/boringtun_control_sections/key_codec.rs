@@ -1,4 +1,5 @@
 fn parse_config(path: &Path) -> Result<DeviceConfig, ControlError> {
+    validate_config_file_permissions(path)?;
     let contents = fs::read_to_string(path).map_err(|source| ControlError::ReadConfig {
         path: path.to_path_buf(),
         source,
@@ -104,6 +105,41 @@ fn parse_u16_config_field(field_name: &str, value: &str) -> Result<u16, ControlE
     value.parse::<u16>().map_err(|error| {
         ControlError::InvalidConfig(format!("invalid {field_name} value {value:?}: {error}"))
     })
+}
+
+/// Reject config files that other local users could read.
+///
+/// WireGuard config files carry the interface private key and peer
+/// preshared keys, so the file must be a regular file without
+/// world-readable permission bits.
+#[cfg(unix)]
+fn validate_config_file_permissions(path: &Path) -> Result<(), ControlError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = fs::metadata(path).map_err(|source| ControlError::ReadConfig {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !metadata.is_file() {
+        return Err(ControlError::InvalidConfig(format!(
+            "{:?} must be a regular file",
+            path.display()
+        )));
+    }
+    let mode = metadata.mode() & 0o777;
+    if mode & 0o007 != 0 {
+        return Err(ControlError::InvalidConfig(format!(
+            "{:?} must not be world-readable; got mode {:04o}",
+            path.display(),
+            mode
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_config_file_permissions(_path: &Path) -> Result<(), ControlError> {
+    Ok(())
 }
 
 fn split_csv(value: &str) -> impl Iterator<Item = &str> {

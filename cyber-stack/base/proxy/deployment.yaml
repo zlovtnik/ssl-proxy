@@ -85,10 +85,14 @@ spec:
               value: ""
             - name: WG_OBFUSCATION_KEY_FILE
               value: "/run/local-secrets/wg_obfuscation_key"
-            - name: WG_OBFUSCATION_MAGIC_BYTE
-              value: "0xAA"
+            - name: WG_OBFUSCATION_ENCRYPTION_MODE
+              value: "aead"
             - name: WG_OBFUSCATION_SESSION_IDLE_SECS
               value: "300"
+            - name: WG_RELAY_MAX_SESSIONS
+              value: "8192"
+            - name: WG_RELAY_DRAIN_TIMEOUT_MS
+              value: "2000"
             - name: WG_SUDO
               value: "1"
             - name: WG_RUNTIME_SYSCTLS

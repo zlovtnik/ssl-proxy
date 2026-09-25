@@ -48,15 +48,19 @@ fn direct_peer_template_uses_normal_wireguard_mtu() {
 }
 
 #[test]
-fn obfuscated_peer_examples_use_legacy_magic_mtu() {
+fn obfuscated_peer_examples_use_framed_aead_mtu() {
     for peer in ["peer1", "peer2"] {
         let path = format!(
             "{}/config/{peer}/{peer}-obfuscated.conf.example",
             env!("CARGO_MANIFEST_DIR")
         );
-        let template = fs::read_to_string(path).expect("obfuscated peer template should exist");
+        let template = fs::read_to_string(&path).expect("obfuscated peer template should exist");
 
+        // The v2 framed format replaces the legacy magic byte with a keyed
+        // header tag; the MTU leaves headroom for the 30-byte header, 2-byte
+        // length field, and 16-byte AEAD tag.
         assert!(template.contains("MTU = 1419"));
-        assert!(template.contains("legacy XOR plus a 1-byte magic marker"));
+        assert!(template.contains("framed AEAD overhead"));
+        assert!(!template.contains("WG_OBFUSCATION_MAGIC_BYTE"));
     }
 }

@@ -24,14 +24,23 @@ pub fn spawn_wg_stats_poller(state: SharedState, token: tokio_util::sync::Cancel
         let interval_secs = state.config.runtime.bandwidth_sample_interval_secs.max(1);
 
         info!(%interface, interval_secs, "WireGuard stats poller started");
+
+        // Poll immediately on startup so `pubkey_by_ip` is populated before
+        // the first interval elapses; otherwise events emitted during the
+        // first sample window carry `identity_source: "unknown"` and device
+        // claims fail with a 412 until the first tick.
+        let mut first_poll = true;
         loop {
-            tokio::select! {
-                _ = token.cancelled() => {
-                    info!("WireGuard stats poller shutting down");
-                    return;
+            if !first_poll {
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        info!("WireGuard stats poller shutting down");
+                        return;
+                    }
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)) => {}
                 }
-                _ = tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)) => {}
             }
+            first_poll = false;
 
             let dump = match read_wg_dump(&interface).await {
                 Ok(dump) => dump,
@@ -56,7 +65,7 @@ pub fn spawn_wg_stats_poller(state: SharedState, token: tokio_util::sync::Cancel
 async fn read_wg_dump(interface: &str) -> Result<String, std::io::Error> {
     let interface = interface.to_string();
     tokio::task::spawn_blocking(move || {
-        boringtun_control::dump_interface(&interface)
+        boringtun_control::dump_peers_only(&interface)
             .map_err(|err| std::io::Error::other(err.to_string()))
     })
     .await
@@ -86,10 +95,16 @@ pub fn parse_wg_show_dump(
     dump: &str,
     interface: &str,
 ) -> Result<Vec<WgPeerSnapshot>, WgDumpParseError> {
-    dump.lines()
-        .enumerate()
-        .skip(1)
-        .filter(|(_, line)| !line.trim().is_empty())
+    let mut lines = dump.lines().enumerate().filter(|(_, line)| !line.trim().is_empty()).peekable();
+    // A leading interface row (private/public/port/fwmark) may or may not be
+    // present depending on the dump source; peer rows always carry 8+ fields.
+    if let Some((_, line)) = lines.peek() {
+        if line.split('\t').count() < 8 {
+            lines.next();
+        }
+    }
+
+    lines
         .map(|(idx, line)| {
             let line_number = idx + 1;
             let parts: Vec<_> = line.split('\t').collect();

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::{parsing::*, sync_tls::*, types::*};
 use crate::wg_packet_obfuscation::{
-    EncryptionMode, MagicPositionMode, PacketPadding,
+    EncryptionMode, PacketPadding,
 };
 use sync_plane::SyncConfig;
 
@@ -212,15 +212,10 @@ impl Default for Config {
                 interface: None,
                 drop_udp_443: true,
                 obfuscation_enabled: true,
-                obfuscation_key: b"test-obfuscation-key".to_vec(),
-                obfuscation_magic_byte: Some(0xAA),
+                obfuscation_key: zeroize::Zeroizing::new(b"test-obfuscation-key-32-bytes-aaaa".to_vec()),
                 obfuscation_session_idle_secs: 300,
-                obfuscation_encryption_mode: EncryptionMode::Xor,
+                obfuscation_encryption_mode: EncryptionMode::Aead,
                 obfuscation_padding: PacketPadding::None,
-                obfuscation_magic_position: MagicPositionMode::Fixed,
-                obfuscation_replay_protection: false,
-                obfuscation_xor_rekey_packets: None,
-                obfuscation_xor_rekey_secs: None,
                 obfuscation_max_datagram_bytes: default_obfuscation_max_datagram_bytes,
                 udp_socket_buffer_bytes: DEFAULT_WIREGUARD_UDP_SOCKET_BUFFER_BYTES,
             },

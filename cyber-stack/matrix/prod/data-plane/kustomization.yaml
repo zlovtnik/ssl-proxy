@@ -44,7 +44,7 @@ patches:
 - patch: |-
     - op: replace
       path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
-      value: schema-migrator-001-c728bb26dce5f13ec782e924fa61d4f3fe7a981c4611fed0c7c5291d55c621df-runtime-b6fd937867e05f7c
+      value: schema-migrator-001-c728bb26dce5f13ec782e924fa61d4f3fe7a981c4611fed0c7c5291d55c621df-runtime-dc5dbe63a5951683
   target:
     kind: Job
     name: ssl-proxy-postgres-schema-executor

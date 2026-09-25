@@ -7,7 +7,7 @@ use axum::{
 };
 use dashmap::{mapref::entry::Entry, DashMap};
 use prometheus::{Encoder, Histogram, HistogramOpts, IntCounter, IntGauge, Registry, TextEncoder};
-use rand::Rng;
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use ssl_proxy::{
     udp_tuning::{bind_tuned_udp_socket, DEFAULT_UDP_SOCKET_BUFFER_BYTES},
@@ -37,7 +37,7 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DEFAULT_CONFIG_FILE: &str = "/run/wg-rotation/frontdoor/wg-udp-frontdoor.toml";
-const DEFAULT_HEALTH_ADDR: &str = "0.0.0.0:3003";
+const DEFAULT_HEALTH_ADDR: &str = "127.0.0.1:3003";
 const DEFAULT_SESSION_IDLE_SECS: u64 = 300;
 const DEFAULT_MAX_SESSIONS: usize = 65_536;
 const DEFAULT_MAX_DATAGRAM_BYTES: usize = 1500;
@@ -703,7 +703,7 @@ impl RuntimeOptions {
             .parse()?;
         let idle_secs =
             read_u64_env("WG_FRONTDOOR_SESSION_IDLE_SECS", DEFAULT_SESSION_IDLE_SECS).max(1);
-        let rate_limit_pps = read_u64_env("WG_FRONTDOOR_RATE_LIMIT_PPS", 0);
+        let rate_limit_pps = read_u64_env("WG_FRONTDOOR_RATE_LIMIT_PPS", 200);
         let max_sessions = read_usize_env(
             "WG_FRONTDOOR_MAX_SESSIONS",
             DEFAULT_MAX_SESSIONS,
@@ -1425,7 +1425,9 @@ async fn apply_jitter(jitter_ms: u64) {
         return;
     }
 
-    let delay_ms = rand::thread_rng().gen_range(0..jitter_ms);
+    // Use the OS CSPRNG so jitter timing is not predictable from the
+    // process's PRNG state.
+    let delay_ms = OsRng.next_u64() % jitter_ms;
     if delay_ms > 0 {
         sleep(Duration::from_millis(delay_ms)).await;
     }

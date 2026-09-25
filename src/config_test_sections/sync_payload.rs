@@ -9,12 +9,12 @@
         assert_eq!(result.sync.connect_timeout_ms, 2_000);
         assert_eq!(result.sync.publish_timeout_ms, 2_000);
         assert_eq!(result.sync.inline_payload_max_bytes, 2_048);
-        assert_eq!(result.sync.outbox_dir, "/tmp/ssl-proxy-sync-outbox");
+        assert_eq!(result.sync.outbox_dir, "/var/lib/ssl-proxy/sync-outbox");
         assert_eq!(result.sync.publish_queue_capacity, 8_192);
         assert_eq!(result.sync.publish_enqueue_timeout_ms, 25);
         assert_eq!(
             result.sync.publish_spool_dir,
-            "/tmp/ssl-proxy-sync-outbox/publish-spool"
+            "/var/lib/ssl-proxy/sync-outbox/publish-spool"
         );
         assert!(result.sync.redpanda_bootstrap_servers.is_none());
 
@@ -118,15 +118,10 @@
             interface: Some("wg0".to_string()),
             drop_udp_443: true,
             obfuscation_enabled: true,
-            obfuscation_key: b"super-secret".to_vec(),
-            obfuscation_magic_byte: Some(0xAA),
+            obfuscation_key: zeroize::Zeroizing::new(b"super-secret".to_vec()),
             obfuscation_session_idle_secs: 300,
-            obfuscation_encryption_mode: EncryptionMode::Xor,
+            obfuscation_encryption_mode: EncryptionMode::Aead,
             obfuscation_padding: PacketPadding::None,
-            obfuscation_magic_position: MagicPositionMode::Fixed,
-            obfuscation_replay_protection: false,
-            obfuscation_xor_rekey_packets: None,
-            obfuscation_xor_rekey_secs: None,
             obfuscation_max_datagram_bytes: DEFAULT_WIREGUARD_PATH_MTU_BYTES + 1,
             udp_socket_buffer_bytes: DEFAULT_WIREGUARD_UDP_SOCKET_BUFFER_BYTES,
         };

@@ -21,7 +21,7 @@ use crate::{
     wg_packet_obfuscation::{
         cleanup_interval, decode_packet_in_place_view, encode_packet_in_place_with_headroom,
         packet_encode_headroom, PacketDecodeError, PacketDirection, PacketEncodeError,
-        PacketEncodeState, ReplayWindow, WgPacketObfuscation, MAX_UDP_PACKET_SIZE,
+        PacketEncodeState, SessionReplayWindow, WgPacketObfuscation, MAX_UDP_PACKET_SIZE,
     },
 };
 
@@ -155,10 +155,7 @@ impl WgObfsShimConfig {
     }
 
     fn chaff_interval(&self) -> Option<Duration> {
-        if self.chaff_pps == 0
-            || self.chaff_pps > MAX_CHAFF_PPS
-            || !self.obfuscation.uses_framed_encoding()
-        {
+        if self.chaff_pps == 0 || self.chaff_pps > MAX_CHAFF_PPS {
             return None;
         }
         let nanos_per_packet = 1_000_000_000u64 / self.chaff_pps.max(1);
@@ -669,7 +666,7 @@ struct ShimSession {
     shutdown: CancellationToken,
     receiver_task: Mutex<Option<JoinHandle<()>>>,
     client_to_server_encode: PacketEncodeState,
-    server_to_client_replay: Mutex<ReplayWindow>,
+    server_to_client_replay: Mutex<SessionReplayWindow>,
     rate_limiter: Option<Mutex<TokenBucket>>,
     first_send_logged: AtomicBool,
     send_queue_depth: AtomicUsize,

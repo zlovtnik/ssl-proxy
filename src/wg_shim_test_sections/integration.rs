@@ -1,7 +1,7 @@
     #[tokio::test]
     async fn shim_rate_limits_upstream_sends_per_session() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA));
+        let obfuscation = test_obfuscation();
         let server_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .unwrap();
@@ -27,7 +27,7 @@
             .unwrap()
             .unwrap();
         assert_eq!(
-            decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap(),
+            decode_client_packet(&buf[..len], &obfuscation),
             b"first"
         );
         assert!(timeout(
@@ -42,9 +42,9 @@
     }
 
     #[tokio::test]
-    async fn shim_drops_magic_byte_mismatch_replies() {
+    async fn shim_drops_invalid_header_tag_replies() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA));
+        let obfuscation = test_obfuscation();
         let server_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .unwrap();
@@ -63,7 +63,7 @@
             let mut buf = [0u8; 2048];
             let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
             assert_eq!(
-                decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap(),
+                decode_client_packet(&buf[..len], &obfuscation),
                 b"first"
             );
             server_socket
@@ -73,11 +73,11 @@
 
             let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
             assert_eq!(
-                decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap(),
+                decode_client_packet(&buf[..len], &obfuscation),
                 b"second"
             );
             server_socket
-                .send_to(&encode_packet(b"second-reply", &obfuscation).unwrap(), shim_peer)
+                .send_to(&encode_server_packet(b"second-reply", &obfuscation), shim_peer)
                 .await
                 .unwrap();
         });
@@ -108,7 +108,7 @@
     #[tokio::test]
     async fn shim_creates_concurrent_sessions_for_distinct_clients() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA));
+        let obfuscation = test_obfuscation();
         let server_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .unwrap();
@@ -130,11 +130,11 @@
             for _ in 0..50 {
                 let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
                 peers.push(shim_peer);
-                let decoded = decode_obfuscated_packet(&buf[..len], &server_obfuscation).unwrap();
+                let decoded = decode_client_packet(&buf[..len], &server_obfuscation);
                 let mut response = b"reply-".to_vec();
                 response.extend_from_slice(&decoded);
                 server_socket
-                    .send_to(&encode_packet(&response, &server_obfuscation).unwrap(), shim_peer)
+                    .send_to(&encode_server_packet(&response, &server_obfuscation), shim_peer)
                     .await
                     .unwrap();
             }
@@ -177,7 +177,7 @@
     #[tokio::test]
     async fn shim_shutdown_mid_flight_exits_cleanly() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA));
+        let obfuscation = test_obfuscation();
         let server_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .unwrap();
@@ -220,7 +220,7 @@
     #[tokio::test]
     async fn shim_forwards_ipv6_loopback_packets() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA));
+        let obfuscation = test_obfuscation();
         let server_socket = UdpSocket::bind("[::1]:0").await.unwrap();
         let server_addr = server_socket.local_addr().unwrap();
         let (listen_addr, shim_task) = spawn_with_addrs(
@@ -237,11 +237,11 @@
             let mut buf = [0u8; 2048];
             let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
             assert_eq!(
-                decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap(),
+                decode_client_packet(&buf[..len], &obfuscation),
                 b"ipv6"
             );
             server_socket
-                .send_to(&encode_packet(b"ipv6-reply", &obfuscation).unwrap(), shim_peer)
+                .send_to(&encode_server_packet(b"ipv6-reply", &obfuscation), shim_peer)
                 .await
                 .unwrap();
         });
@@ -263,10 +263,9 @@
     #[tokio::test]
     async fn shim_and_relay_round_trip_with_aead_framing() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA))
+        let obfuscation = test_obfuscation()
             .with_encryption_mode(EncryptionMode::Aead)
-            .with_padding(PacketPadding::PowerOfTwo)
-            .with_magic_position(MagicPositionMode::Randomized);
+            .with_padding(PacketPadding::PowerOfTwo);
 
         let internal_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
@@ -326,7 +325,7 @@
     #[tokio::test]
     async fn shim_and_server_relay_round_trip_end_to_end() {
         let shutdown = CancellationToken::new();
-        let obfuscation = test_obfuscation(Some(0xAA));
+        let obfuscation = test_obfuscation();
 
         let internal_socket = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await

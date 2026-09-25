@@ -17,8 +17,8 @@ impl ShimSession {
             last_activity_millis: AtomicU64::new(now_millis),
             shutdown: CancellationToken::new(),
             receiver_task: Mutex::new(None),
-            client_to_server_encode: PacketEncodeState::new(now_millis),
-            server_to_client_replay: Mutex::new(ReplayWindow::default()),
+            client_to_server_encode: PacketEncodeState::new(),
+            server_to_client_replay: Mutex::new(SessionReplayWindow::default()),
             rate_limiter: rate_limit.map(|config| Mutex::new(TokenBucket::new(config, now_millis))),
             first_send_logged: AtomicBool::new(false),
             send_queue_depth: AtomicUsize::new(0),
@@ -345,8 +345,8 @@ async fn run_shim(context: ShimSessionContext) {
             .local_addr()
             .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 0))),
         server_addrs = ?startup_config.server_addrs,
-        magic_byte = ?startup_config.obfuscation.magic_byte,
         encryption_mode = ?startup_config.obfuscation.encryption_mode,
+        padding = ?startup_config.obfuscation.padding,
         idle_timeout_secs = startup_config.idle_timeout.as_secs(),
         cleanup_interval_secs = startup_config.cleanup_interval().as_secs_f64(),
         max_datagram_bytes = startup_config.max_datagram_bytes(),
@@ -428,7 +428,6 @@ async fn run_shim(context: ShimSessionContext) {
                     &session.config.obfuscation,
                     &session.client_to_server_encode,
                     PacketDirection::ClientToServer,
-                    now,
                 ) {
                     Ok(encoded_range) => encoded_range,
                     Err(err) => {
