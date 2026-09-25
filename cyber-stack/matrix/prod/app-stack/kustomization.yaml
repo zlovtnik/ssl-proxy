@@ -15,10 +15,10 @@ resources:
 - ../../../base/cloudflared
 - ../../../base/public-gateway
 images:
-- digest: sha256:46c74129a08bf0b36e5b5c54b186153306b35622a206a395181992e24da06913
+- digest: sha256:f99cb4ab2e59b211f6370a6ee474bea734efee5cc01966579df93145ef39c6a3
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
-- digest: sha256:3fb089dd1b443bd1451430fc1ef925f55f6b65b1d7bbd2573b2bb9edd839f591
+- digest: sha256:f3ae9c05186cd4f8711ed6ed4ffd946011ccd2ac3d234e31f194fe9288de53b1
   name: atheros-search-ui
   newName: 192.168.1.242:5000/atheros-search-ui
 - digest: sha256:bf61b27b6ff140d51e3f34ff7115c611eb5ca02afc26e43019faa234d3059665
