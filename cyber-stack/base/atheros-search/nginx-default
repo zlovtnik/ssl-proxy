@@ -17,10 +17,6 @@ server {
     try_files /index.html =503;
   }
 
-  location = /api-healthz {
-    proxy_pass http://ssl-proxy-atheros-search:8080/healthz;
-  }
-
   location = /readyz {
     proxy_pass http://ssl-proxy-atheros-search:8080/readyz;
   }

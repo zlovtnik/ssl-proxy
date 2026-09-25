@@ -1,10 +1,10 @@
 engine: postgres
 layer: atheros_search
 database: sync
-schema_version: 007
+schema_version: 008
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: 4dfcf8724ec1d8db5ae5795a26408659c481b1066c52f91c4bf72938b82412d3
+manifest_sha256: b8cfcfc73ce73ac2b1093306e6ea6fe76dff9d38574f51a3e46a9507968662cf
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:
@@ -21,5 +21,6 @@ apply_order:
   - 01_tables/011_identity_graph.sql
   - 01_tables/012_proxy_search_documents.sql
   - 01_tables/013_merge_decisions_decided_by.sql
+  - 01_tables/014_similarity_scan_state.sql
 retired:
   - graph_inventory_identity

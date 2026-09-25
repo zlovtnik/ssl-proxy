@@ -14,6 +14,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.embedding_jobs TO {{OCTOP
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.search_document_tokens TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.search_document_tags TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.devices TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE ON atheros_search.similarity_scan_state TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, DELETE ON atheros_search.embeddings TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, DELETE ON atheros_search.search_vectors_event, atheros_search.search_vectors_device,
   atheros_search.search_vectors_behaviour, atheros_search.search_vectors_sequence TO {{OCTOPUS_ACCOUNT}};
