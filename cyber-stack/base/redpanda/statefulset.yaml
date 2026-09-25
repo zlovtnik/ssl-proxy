@@ -167,8 +167,16 @@ spec:
           args:
             - |
               brokers=ssl-proxy-redpanda:9092
-              admin=127.0.0.1:9644
-              until rpk cluster info --brokers "$brokers" </dev/null >/dev/null 2>&1; do sleep 2; done
+              admin=ssl-proxy-redpanda:9644
+              attempts=0
+              until rpk cluster info --brokers "$brokers" </dev/null >/dev/null 2>&1; do
+                attempts="$((attempts + 1))"
+                if [ "$attempts" -ge 30 ]; then
+                  echo "redpanda kafka API is not reachable at $brokers" >&2
+                  exit 1
+                fi
+                sleep 2
+              done
               attempts=0
               until rpk --api-addr "$admin" cluster config get log_retention_ms </dev/null >/dev/null 2>&1; do
                 attempts="$((attempts + 1))"
