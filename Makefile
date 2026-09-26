@@ -47,11 +47,19 @@ BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
+PAGES_PROJECT ?= ssl-proxy-migrator
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
 .PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health pvc-audit argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry registry-clean-plan registry-clean registry-recreate registry-gc octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check gitops-check topics-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
+
+.PHONY: pages-watch-paths pages-fix-watch-paths
+pages-watch-paths:
+	python3 scripts/pages_watch_paths.py --project "$(PAGES_PROJECT)"
+
+pages-fix-watch-paths:
+	python3 scripts/pages_watch_paths.py --project "$(PAGES_PROJECT)" --apply
 
 publish: octopus-source-integrity
 	python3 scripts/publish_images.py \

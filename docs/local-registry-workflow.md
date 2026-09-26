@@ -191,6 +191,34 @@ current pins. Jenkins never changes Git or Kubernetes. Jenkins publication and
 Kubernetes pulls both use the private server authority declared by the
 production image contract.
 
+## Public UI releases
+
+The public UIs are Git-integrated Cloudflare Pages projects:
+`ssl-proxy-search` serves `search.rclabs.uk`, and `ssl-proxy-migrator` serves
+`migrator.rclabs.uk`. They build the pinned UI sources from this repository's
+`main` branch separately from the Jenkins container builds. Argo CD updates
+the Kubernetes images; it does not publish the Pages sites.
+
+Pages build watch paths must include the parent repository's submodule entry
+(`apps/integration-console` or `apps/schema-migrator`) and `.gitmodules`.
+Watching only files inside a submodule misses a parent commit that changes its
+pinned revision. The UI sources and commands live in
+[`apps/integration-console/atheros-search-ui`](../apps/integration-console/atheros-search-ui)
+and [`apps/schema-migrator/schema-migrator-ui`](../apps/schema-migrator/schema-migrator-ui).
+
+Run `make pages-watch-paths` for a read-only Migrator settings check, or add
+`PAGES_PROJECT=ssl-proxy-search` to check Search. The check uses
+`CLOUDFLARE_ACCOUNT_ID` (or the existing Wrangler Pages account cache) and
+`CLOUDFLARE_API_TOKEN` (or the current Wrangler login). It returns a proposed
+correction when the submodule entry is missing. `make pages-fix-watch-paths`
+explicitly applies only that correction. The implementation is
+[`scripts/pages_watch_paths.py`](../scripts/pages_watch_paths.py).
+
+After correcting an existing Pages project, retry its latest `main` deployment
+in Cloudflare Pages and verify the public login page serves the new build.
+Future submodule updates then trigger Pages automatically. No additional image
+digest bump is needed for this settings repair.
+
 ## Retention and garbage collection
 
 The registry allows manifest deletion so storage can be reclaimed, but cleanup
