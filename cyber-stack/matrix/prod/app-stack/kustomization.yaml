@@ -27,10 +27,10 @@ images:
 - digest: sha256:c2717e84cdbdca282b503df5a533197e4a82dea75ba3663c29ed3c75bb1c2ce6
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
-- digest: sha256:ff49acb61038b4b4bcbd211ca917bbce5a553193cfbedcb9e7bdd25d5478d4e6
+- digest: sha256:cd6f9944ef68fadbf045b1ac250f93ee0f5b463f56a5ef5fd5f9a053fb65a721
   name: schema-migrator-backend
   newName: 192.168.1.242:5000/schema-migrator-backend
-- digest: sha256:192a0ef19662b37c0b1415a8a142507ab9650b0b273d348d7b9ed94027e40965
+- digest: sha256:1ffbfa5cb4753bbdb1191c91728943b4c6f7c7f68c8938f0171b13430d3ecea3
   name: schema-migrator-ui
   newName: 192.168.1.242:5000/schema-migrator-ui
 - digest: sha256:b8047697f73ed6e64d9e6b4a4a94c375c35ffcf3b4a865a8aea37b08e7256978
