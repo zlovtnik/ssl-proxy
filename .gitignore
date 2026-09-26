@@ -12,7 +12,7 @@ Thumbs.db
 # Local agent/workspace state
 .omx/
 /wallet/
-
+.wrangler/
 # Logs and temp files
 *.log
 *.tmp

@@ -4,7 +4,7 @@ database: sync
 schema_version: 008
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: c8fd8123cfc2407a8ef0812fc2fa8a2bc935eab463def64b605d4176186e44be
+manifest_sha256: 0ad28596abd5dd33191d4aa19c39d99501cbc825047024250cdfbe980254cd8f
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:
@@ -23,5 +23,6 @@ apply_order:
   - 01_tables/013_merge_decisions_decided_by.sql
   - 01_tables/014_similarity_scan_state.sql
   - 01_tables/015_graph_edge_weight_basis.sql
+  - 01_tables/016_guarded_identity_confirmation.sql
 retired:
   - graph_inventory_identity
