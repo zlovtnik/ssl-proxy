@@ -2225,8 +2225,7 @@ def _check_schema_migrator_source_contract(root: Path) -> list[str]:
     return errors
 
 
-def _octopus_contract_checksum(root: Path, errors: list[str]) -> str | None:
-    relative = "sql/postgres/octopus_core/manifest.yaml"
+def _manifest_contract_checksum(root: Path, relative: str, errors: list[str]) -> str | None:
     text = _read_required(root, relative, errors, "manifest")
     if text is None:
         return None
@@ -2238,6 +2237,46 @@ def _octopus_contract_checksum(root: Path, errors: list[str]) -> str | None:
         errors.append(f"{relative}: missing canonical manifest checksum")
         return None
     return str(checksum)
+
+
+def _octopus_contract_checksum(root: Path, errors: list[str]) -> str | None:
+    return _manifest_contract_checksum(
+        root, "sql/postgres/octopus_core/manifest.yaml", errors
+    )
+
+
+def _atheros_contract_checksum(root: Path, errors: list[str]) -> str | None:
+    return _manifest_contract_checksum(
+        root, "sql/postgres/atheros_search/manifest.yaml", errors
+    )
+
+
+def _check_atheros_schema_contract(
+    rendered: Documents | str, relative: str, expected_checksum: str
+) -> list[str]:
+    deployments = _find(
+        _documents(rendered), "Deployment", "ssl-proxy-atheros-search"
+    )
+    if len(deployments) != 1:
+        return [f"{relative}: expected one Atheros Search Deployment"]
+    containers = [
+        container
+        for container in _pod_containers(deployments[0])
+        if container.get("name") == "atheros-search"
+    ]
+    if len(containers) != 1:
+        return [f"{relative}: expected one Atheros Search container"]
+    entries = [
+        _mapping(entry)
+        for entry in _environment(containers)
+        if _mapping(entry).get("name") == "ATHSEARCH_SCHEMA_MANIFEST_SHA256"
+    ]
+    if len(entries) != 1 or entries[0].get("value") != expected_checksum:
+        return [
+            f"{relative}: Atheros Search ATHSEARCH_SCHEMA_MANIFEST_SHA256 must equal "
+            "sql/postgres/atheros_search/manifest.yaml"
+        ]
+    return []
 
 
 def _check_octopus_schema_contract(
@@ -2722,6 +2761,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
     errors.extend(_check_schema_migrator_source_contract(root))
     expected_schema_marker = _schema_migrator_contract_marker(root, errors)
     expected_octopus_checksum = _octopus_contract_checksum(root, errors)
+    expected_atheros_checksum = _atheros_contract_checksum(root, errors)
 
     for relative in CANONICAL_KUSTOMIZATIONS:
         path = root / relative
@@ -2776,14 +2816,25 @@ def check_repository(root: Path, executable: str) -> list[str]:
             continue
         for check in checks:
             errors.extend(check(rendered_kustomizations[relative], relative))
-    if expected_octopus_checksum is not None:
+    if expected_octopus_checksum is not None or expected_atheros_checksum is not None:
         for relative in (f"cyber-stack/matrix/{environment}/app-stack" for environment in ENVIRONMENTS):
-            if relative in rendered_kustomizations:
+            if relative not in rendered_kustomizations:
+                continue
+            rendered = rendered_kustomizations[relative]
+            if expected_octopus_checksum is not None:
                 errors.extend(
                     _check_octopus_schema_contract(
-                        rendered_kustomizations[relative],
+                        rendered,
                         relative,
                         expected_octopus_checksum,
+                    )
+                )
+            if expected_atheros_checksum is not None:
+                errors.extend(
+                    _check_atheros_schema_contract(
+                        rendered,
+                        relative,
+                        expected_atheros_checksum,
                     )
                 )
     prod_data_plane = "cyber-stack/matrix/prod/data-plane"

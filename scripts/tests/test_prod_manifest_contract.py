@@ -152,6 +152,22 @@ spec:
     )
 
 
+def atheros() -> list[dict[str, object]]:
+    return documents(
+        """apiVersion: apps/v1
+kind: Deployment
+metadata: {name: ssl-proxy-atheros-search}
+spec:
+  template:
+    spec:
+      containers:
+        - name: atheros-search
+          env:
+            - {name: ATHSEARCH_SCHEMA_MANIFEST_SHA256, value: canonical-checksum}
+"""
+    )
+
+
 class ProductionManifestContractTest(unittest.TestCase):
     def bootstrap_container(self) -> dict:
         return documents(
@@ -463,6 +479,58 @@ mock_kcadm() {
             rendered, "prod", "canonical-checksum"
         )
         self.assertTrue(any("octopus_core/manifest.yaml" in error for error in errors))
+
+    def test_atheros_schema_checksum_matches_canonical_manifest(self) -> None:
+        rendered = atheros()
+        self.assertEqual(
+            [],
+            check_gitops._check_atheros_schema_contract(
+                rendered, "prod", "canonical-checksum"
+            ),
+        )
+
+        environment = rendered[0]["spec"]["template"]["spec"]["containers"][0][
+            "env"
+        ]
+        next(
+            entry
+            for entry in environment
+            if entry["name"] == "ATHSEARCH_SCHEMA_MANIFEST_SHA256"
+        )["value"] = "stale-checksum"
+        errors = check_gitops._check_atheros_schema_contract(
+            rendered, "prod", "canonical-checksum"
+        )
+        self.assertTrue(any("atheros_search/manifest.yaml" in error for error in errors))
+
+        environment[:] = [
+            entry
+            for entry in environment
+            if entry["name"] != "ATHSEARCH_SCHEMA_MANIFEST_SHA256"
+        ]
+        errors = check_gitops._check_atheros_schema_contract(
+            rendered, "prod", "canonical-checksum"
+        )
+        self.assertTrue(
+            any("ATHSEARCH_SCHEMA_MANIFEST_SHA256" in error for error in errors)
+        )
+
+    def test_deployed_atheros_checksum_matches_repository_manifest(self) -> None:
+        expected = check_gitops._atheros_contract_checksum(ROOT, [])
+        self.assertIsNotNone(expected)
+        rendered = check_gitops._load_documents(
+            (ROOT / "cyber-stack/base/atheros-search/deployment.yaml").read_text(),
+            "cyber-stack/base/atheros-search/deployment.yaml",
+            [],
+        )
+        assert rendered is not None
+        self.assertEqual(
+            [],
+            check_gitops._check_atheros_schema_contract(
+                rendered,
+                "cyber-stack/base/atheros-search/deployment.yaml",
+                expected,
+            ),
+        )
 
 
 if __name__ == "__main__":
