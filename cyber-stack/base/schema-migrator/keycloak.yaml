@@ -304,6 +304,13 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: schema-migrator-bootstrap
+        # API services fetch the realm's public signing keys over this port.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: schema-migrator-backend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: atheros-search
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system

@@ -349,6 +349,43 @@ mock_kcadm() {
         self.assertIn("/dev/tcp/ssl-proxy-schema-migrator-keycloak/8080", script)
         self.assertNotIn("curl ", script)
 
+    def test_internal_jwks_clients_can_reach_keycloak_without_management_access(self) -> None:
+        resources = documents(
+            (ROOT / "cyber-stack/base/schema-migrator/keycloak.yaml").read_text()
+        )
+        policy = next(resource for resource in resources if resource["kind"] == "NetworkPolicy")
+
+        def allows(labels: dict[str, str], port: int) -> bool:
+            return any(
+                any(entry["port"] == port for entry in rule.get("ports", []))
+                and any(
+                    "namespaceSelector" not in peer
+                    and "podSelector" in peer
+                    and all(
+                        labels.get(key) == value
+                        for key, value in peer["podSelector"].get("matchLabels", {}).items()
+                    )
+                    for peer in rule.get("from", [])
+                )
+                for rule in policy["spec"]["ingress"]
+            )
+
+        for path, variable in (
+            ("schema-migrator/backend.yaml", "BEDROCK_KEYCLOAK_JWKS_URI"),
+            ("atheros-search/deployment.yaml", "ATHSEARCH_JWT_JWKS_URI"),
+        ):
+            with self.subTest(workload=path):
+                workload = documents((ROOT / "cyber-stack/base" / path).read_text())[0]
+                template = workload["spec"]["template"]
+                env = template["spec"]["containers"][0]["env"]
+                jwks = next(entry["value"] for entry in env if entry["name"] == variable)
+                self.assertTrue(jwks.startswith("http://ssl-proxy-schema-migrator-keycloak:8080/"))
+                labels = template["metadata"]["labels"]
+                self.assertTrue(allows(labels, 8080), f"{path} cannot fetch Keycloak signing keys")
+                self.assertFalse(allows(labels, 9000), f"{path} can access Keycloak management")
+
+        self.assertFalse(allows({"app.kubernetes.io/component": "schema-migrator-ui"}, 8080))
+
     def test_alloy_positions_requires_empty_dir_without_host_path(self) -> None:
         rendered = alloy()
         self.assertEqual(
