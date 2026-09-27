@@ -111,6 +111,12 @@ use `outbox://` references and must resolve to JSON in the shared outbox.
 
 ## Search and embedding flow
 
+The [reporting workmap](atheros-reporting-workmap.md) covers the business and UI
+plan for the Integration Console. The [reporting data contract](atheros-reporting-data-contract.md)
+defines observed identifier, AP context, pending candidate and confirmed
+identity semantics across its tables and APIs. These documents record proposed
+changes separately from implemented runtime flows.
+
 ```mermaid
 sequenceDiagram
     participant O as Octopus

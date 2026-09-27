@@ -34,7 +34,7 @@ overrides a rule for its subtree.
   service-specific conventions.
 - `apps/wg-key-rotator/` is an Elixir WireGuard key rotation tool.
 - `apps/integration-console/atheros-search-ui/` is a standalone SolidJS/Bun UI.
-  `apps/integration-console/atheros-search/` and the UI have local `AGENTS.md` files.
+  `apps/integration-console/atheros-search/` has a local `AGENTS.md` file.
 - `sql/postgres/` is the canonical runtime schema source for four schemas in
   the external `sync` database: `octopus_core`, `atheros_search`,
   `schema_migrator`, and `keycloak`, plus the shared `contracts/` layer.

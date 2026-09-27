@@ -131,6 +131,8 @@ python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 - [GitOps management and onboarding](cyber-stack/README.md)
 - [Jenkins image CI](docs/jenkins-ci.md)
 - [System architecture](docs/architecture.md)
+- [Atheros reporting workmap](docs/atheros-reporting-workmap.md)
+- [Reporting data and relationship contract](docs/atheros-reporting-data-contract.md)
 - [Operations runbook](docs/runbook.md)
 - [Redpanda daily maintenance](docs/runbooks/redpanda-maintenance.md)
 - [Observability architecture](docs/observability-architecture-jaeger.md)

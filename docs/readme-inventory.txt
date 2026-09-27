@@ -13,3 +13,4 @@ services/atheros-sensor/README.md
 services/octopus/README.md
 services/platform-sync/README.md
 ops/disk/README.md
+plans/README.md
