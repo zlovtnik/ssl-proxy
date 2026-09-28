@@ -80,6 +80,27 @@ func TestAtherosSearchRuntimeExcludesCoordinatorAndUnknownTables(t *testing.T) {
 	}
 }
 
+func TestAtherosSearchRuntimeCanFinalizeMergeCandidates(t *testing.T) {
+	t.Parallel()
+
+	fixture, err := os.ReadFile(canonicalAtherosGrantFixture(t))
+	if err != nil {
+		t.Fatalf("read canonical grant fixture: %v", err)
+	}
+	grantsBySource := map[string]objectPrivileges{
+		"Go grant matrix": tablePrivilegeMap(atherosSearchGrants()),
+		"canonical SQL":   parseGrantFixture(t, string(fixture))["{{ATHEROS_SEARCH_ACCOUNT}}"].tables,
+	}
+
+	for source, grants := range grantsBySource {
+		for _, privilege := range []string{"SELECT", "UPDATE"} {
+			if !grants["atheros_search.merge_candidates"][privilege] {
+				t.Errorf("%s: Atheros Search runtime needs %s on merge_candidates for merge decisions", source, privilege)
+			}
+		}
+	}
+}
+
 func TestOctopusCoreGrantMatrixMatchesCanonicalSQL(t *testing.T) {
 	t.Parallel()
 
