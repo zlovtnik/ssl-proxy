@@ -13,6 +13,7 @@ data:
       "resetPasswordAllowed": true,
       "loginWithEmailAllowed": true,
       "sslRequired": "external",
+      "loginTheme": "custom-login",
       "requiredActions": [
         {
           "alias": "CONFIGURE_TOTP",

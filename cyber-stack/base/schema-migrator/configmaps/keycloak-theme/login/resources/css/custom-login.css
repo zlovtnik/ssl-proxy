@@ -1,0 +1,105 @@
+html,
+body {
+  background: #09090b;
+}
+
+.pf-v5-c-login {
+  isolation: isolate;
+  position: relative;
+  z-index: 1;
+}
+
+.glow {
+  border-radius: 9999px;
+  filter: blur(100px);
+  pointer-events: none;
+  position: fixed;
+  z-index: 0;
+}
+
+.glow-1 {
+  animation: float-1 20s ease-in-out infinite;
+  background: rgb(37 99 235 / 24%);
+  height: 22rem;
+  left: -8rem;
+  top: -8rem;
+  width: 22rem;
+}
+
+.glow-2 {
+  animation: float-2 25s ease-in-out infinite;
+  background: rgb(147 51 234 / 20%);
+  bottom: -7rem;
+  height: 20rem;
+  right: -7rem;
+  width: 20rem;
+}
+
+@keyframes float-1 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(2rem, 1rem, 0) scale(1.08); }
+}
+
+@keyframes float-2 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-1.5rem, -1rem, 0) scale(1.06); }
+}
+
+.pf-v5-c-login__main {
+  animation: card-enter 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  background: rgb(24 24 27 / 94%);
+  border: 1px solid rgb(63 63 70 / 70%);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 45%);
+  position: relative;
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    top: 20px;
+  }
+  to {
+    opacity: 1;
+    top: 0;
+  }
+}
+
+.pf-v5-c-alert.pf-m-danger,
+.kc-feedback-text.pf-m-error {
+  animation: error-enter 240ms ease-out both;
+}
+
+@keyframes error-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+:where(a, button, input, select):focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 3px;
+}
+
+@media (max-width: 576px) {
+  .pf-v5-c-login__container {
+    padding-inline: 1rem;
+  }
+
+  .pf-v5-c-login__main {
+    border-radius: 0.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glow,
+  .pf-v5-c-alert.pf-m-danger,
+  .kc-feedback-text.pf-m-error,
+  .pf-v5-c-login__main {
+    animation: none;
+  }
+}

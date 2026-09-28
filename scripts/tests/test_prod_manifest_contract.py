@@ -206,6 +206,7 @@ class ProductionManifestContractTest(unittest.TestCase):
                     if item["clientId"] == env["CLIENT_ID"]["value"]
                 )
                 self.assertEqual(realm["realm"], env["REALM"]["value"])
+                self.assertEqual(realm["loginTheme"], env["LOGIN_THEME"]["value"])
                 self.assertIn(
                     env["ADMIN_ROLE"]["value"],
                     [role["name"] for role in realm["roles"]["client"][client["clientId"]]],
@@ -280,6 +281,7 @@ mock_kcadm() {
       esac
       [ "$KC_CLI_PASSWORD" = "$expected" ] || return 97 ;;
     "update clients/client-uuid") return 0 ;;
+    "update realms/middleware") return 0 ;;
     "update users/user-uuid") return 0 ;;
     "add-roles --config") return 0 ;;
     *) echo 'Unexpected admin command' >&2; return 98 ;;
@@ -306,6 +308,8 @@ mock_kcadm() {
         self.assertIn("bootstrap completed successfully", result.stdout)
         self.assertEqual(4, calls.count("set-password --config"))
         self.assertIn('redirectUris=["https://migrator.example.internal/callback"]', calls)
+        self.assertIn("update realms/middleware --config", calls)
+        self.assertIn("-s loginTheme=custom-login", calls)
         self.assertIn("--uusername search-admin --cclientid atheros-search-ui --rolename admin", calls)
         self.assertIn("--uusername search-operator --cclientid atheros-search-ui --rolename operator", calls)
         self.assertIn("--uusername search-viewer --cclientid atheros-search-ui --rolename viewer", calls)
@@ -348,6 +352,77 @@ mock_kcadm() {
         self.assertIn("timeout 3 bash -c", script)
         self.assertIn("/dev/tcp/ssl-proxy-schema-migrator-keycloak/8080", script)
         self.assertNotIn("curl ", script)
+
+    def test_keycloak_custom_login_theme_is_packaged_and_mounted(self) -> None:
+        deployment = next(
+            resource
+            for resource in documents(
+                (ROOT / "cyber-stack/base/schema-migrator/keycloak.yaml").read_text()
+            )
+            if resource["kind"] == "Deployment"
+        )
+        pod_spec = deployment["spec"]["template"]["spec"]
+        keycloak_container = next(
+            container for container in pod_spec["containers"]
+            if container["name"] == "keycloak"
+        )
+        theme_mount = next(
+            mount for mount in keycloak_container["volumeMounts"]
+            if mount["name"] == "login-theme"
+        )
+        self.assertEqual("/opt/keycloak/themes/custom-login", theme_mount["mountPath"])
+        self.assertTrue(theme_mount["readOnly"])
+        self.assertTrue(all(
+            mount["name"] != "login-theme"
+            for container in pod_spec["initContainers"]
+            for mount in container.get("volumeMounts", [])
+        ))
+
+        theme_volume = next(
+            volume for volume in pod_spec["volumes"]
+            if volume["name"] == "login-theme"
+        )
+        self.assertEqual(
+            "ssl-proxy-schema-migrator-keycloak-theme",
+            theme_volume["configMap"]["name"],
+        )
+        self.assertEqual(
+            {
+                "theme.properties": "login/theme.properties",
+                "login.ftl": "login/login.ftl",
+                "custom-login.css": "login/resources/css/custom-login.css",
+            },
+            {
+                item["key"]: item["path"]
+                for item in theme_volume["configMap"]["items"]
+            },
+        )
+
+        kustomization = documents(
+            (ROOT / "cyber-stack/base/schema-migrator/kustomization.yaml").read_text()
+        )[0]
+        generator = next(
+            item for item in kustomization["configMapGenerator"]
+            if item["name"] == "ssl-proxy-schema-migrator-keycloak-theme"
+        )
+        self.assertEqual(
+            {
+                "theme.properties=configmaps/keycloak-theme/login/theme.properties",
+                "login.ftl=configmaps/keycloak-theme/login/login.ftl",
+                "custom-login.css=configmaps/keycloak-theme/login/resources/css/custom-login.css",
+            },
+            set(generator["files"]),
+        )
+
+        theme_root = ROOT / "cyber-stack/base/schema-migrator/configmaps/keycloak-theme/login"
+        properties = (theme_root / "theme.properties").read_text()
+        template = (theme_root / "login.ftl").read_text()
+        stylesheet = (theme_root / "resources/css/custom-login.css").read_text()
+        self.assertIn("parent=keycloak.v2", properties)
+        self.assertIn("styles=css/styles.css css/custom-login.css", properties)
+        self.assertEqual(2, template.count('aria-hidden="true"'))
+        self.assertIn("prefers-reduced-motion: reduce", stylesheet)
+        self.assertIn(":focus-visible", stylesheet)
 
     def test_internal_jwks_clients_can_reach_keycloak_without_management_access(self) -> None:
         resources = documents(

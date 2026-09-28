@@ -22,3 +22,16 @@ configMapGenerator:
         app.kubernetes.io/name: ssl-proxy
         app.kubernetes.io/component: schema-migrator-ui
         app.kubernetes.io/managed-by: kustomize
+  - name: ssl-proxy-schema-migrator-keycloak-theme
+    behavior: create
+    files:
+      - theme.properties=configmaps/keycloak-theme/login/theme.properties
+      - login.ftl=configmaps/keycloak-theme/login/login.ftl
+      - custom-login.css=configmaps/keycloak-theme/login/resources/css/custom-login.css
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "1"
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: schema-migrator-keycloak
+        app.kubernetes.io/managed-by: kustomize

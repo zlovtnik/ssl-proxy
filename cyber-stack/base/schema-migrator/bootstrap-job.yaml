@@ -156,6 +156,11 @@ spec:
                 fi
               fi
 
+              stage="configuring realm login theme"
+              echo "Configuring Keycloak login theme $LOGIN_THEME..."
+              "$KCADM" update "realms/$REALM" --config "$ADMIN_CONFIG" \
+                -s "loginTheme=$LOGIN_THEME" >/dev/null
+
               stage="resolving application client"
               echo "Resolving Keycloak client $CLIENT_ID in realm $REALM..."
               # The realm is imported before Keycloak becomes ready. A missing
@@ -257,6 +262,8 @@ spec:
                   key: bootstrap-admin-password
             - name: REALM
               value: "middleware"
+            - name: LOGIN_THEME
+              value: "custom-login"
             - name: CLIENT_ID
               value: "schema-migrator-ui"
             - name: PUBLIC_ORIGIN

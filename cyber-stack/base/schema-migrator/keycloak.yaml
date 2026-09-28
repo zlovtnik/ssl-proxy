@@ -234,6 +234,9 @@ spec:
               mountPath: /opt/keycloak/data/import/realm.json
               subPath: realm.json
               readOnly: true
+            - name: login-theme
+              mountPath: /opt/keycloak/themes/custom-login
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             - name: postgres-ca
@@ -249,6 +252,16 @@ spec:
         - name: realm
           configMap:
             name: ssl-proxy-schema-migrator-keycloak-realm
+        - name: login-theme
+          configMap:
+            name: ssl-proxy-schema-migrator-keycloak-theme
+            items:
+              - key: theme.properties
+                path: login/theme.properties
+              - key: login.ftl
+                path: login/login.ftl
+              - key: custom-login.css
+                path: login/resources/css/custom-login.css
         - name: tmp
           emptyDir: {}
         - name: postgres-ca

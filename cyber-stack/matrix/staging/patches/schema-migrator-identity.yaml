@@ -13,6 +13,7 @@ data:
       "resetPasswordAllowed": true,
       "loginWithEmailAllowed": true,
       "sslRequired": "external",
+      "loginTheme": "custom-login",
       "requiredActions": [{"alias":"CONFIGURE_TOTP","name":"Configure OTP","providerId":"CONFIGURE_TOTP","enabled":true,"defaultAction":true,"priority":10}],
       "roles": {
         "realm":[{"name":"admin"},{"name":"operator"},{"name":"viewer"}],
