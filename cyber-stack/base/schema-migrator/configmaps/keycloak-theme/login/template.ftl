@@ -102,26 +102,18 @@
   <div class="glow glow-2" aria-hidden="true"></div>
 
   <div class="auth-shell">
-    <header id="kc-header" class="auth-brand">
-      <div class="auth-brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" role="img">
-          <path d="M12 3a9 9 0 1 0 9 9" />
-          <path d="M12 7a5 5 0 1 0 5 5" />
-          <path d="M12 11a1 1 0 1 0 1 1" />
-          <path d="m13 11 7-7" />
-        </svg>
-      </div>
-      <div id="kc-header-wrapper" class="auth-brand-copy">
-        <span class="auth-brand-name">${kcSanitize(msg("loginTitleHtml",(realm.displayNameHtml!'')))?no_esc}</span>
-        <span class="auth-brand-status"><i aria-hidden="true"></i> Identity gateway</span>
-      </div>
-    </header>
-
     <main class="auth-card" aria-labelledby="kc-page-title">
-      <div class="auth-card-header">
-        <div>
-          <p class="auth-eyebrow">Protected access</p>
+      <header id="kc-header" class="auth-card-header">
+        <div class="auth-security-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" role="img">
+            <path d="M12 3 5.5 5.8v5.5c0 4.2 2.7 7.9 6.5 9.2 3.8-1.3 6.5-5 6.5-9.2V5.8L12 3Z" />
+            <path d="m9.2 11.8 1.8 1.8 3.9-4" />
+          </svg>
+        </div>
+        <div id="kc-header-wrapper">
+          <p class="auth-eyebrow">Secure access</p>
           <h1 id="kc-page-title"><#nested "header"></h1>
+          <p class="auth-intro">Enter your account details to continue.</p>
         </div>
         <#if realm.internationalizationEnabled && locale.supported?size gt 1>
           <label class="auth-language" for="login-select-toggle">
@@ -133,7 +125,7 @@
             </select>
           </label>
         </#if>
-      </div>
+      </header>
 
       <div class="auth-card-body">
         <#if auth?has_content && auth.showUsername() && !auth.showResetCredentials()>
@@ -181,7 +173,10 @@
       </div>
     </main>
 
-    <p class="auth-footnote"><span aria-hidden="true"></span> Encrypted session · Authorized users only</p>
+    <p class="auth-footnote">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.8 8V6.2a3.2 3.2 0 0 1 6.4 0V8m-7.4 0h8.4v7.2H5.8V8Z" /></svg>
+      Encrypted connection
+    </p>
   </div>
 </div>
 </body>
