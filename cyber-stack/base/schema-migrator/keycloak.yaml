@@ -263,6 +263,8 @@ spec:
                 path: login/theme.properties
               - key: login.ftl
                 path: login/login.ftl
+              - key: template.ftl
+                path: login/template.ftl
               - key: custom-login.css
                 path: login/resources/css/custom-login.css
         - name: tmp

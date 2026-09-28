@@ -27,6 +27,7 @@ configMapGenerator:
     files:
       - theme.properties=configmaps/keycloak-theme/login/theme.properties
       - login.ftl=configmaps/keycloak-theme/login/login.ftl
+      - template.ftl=configmaps/keycloak-theme/login/template.ftl
       - custom-login.css=configmaps/keycloak-theme/login/resources/css/custom-login.css
     options:
       annotations:

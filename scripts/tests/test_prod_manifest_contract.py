@@ -390,6 +390,7 @@ mock_kcadm() {
             {
                 "theme.properties": "login/theme.properties",
                 "login.ftl": "login/login.ftl",
+                "template.ftl": "login/template.ftl",
                 "custom-login.css": "login/resources/css/custom-login.css",
             },
             {
@@ -409,6 +410,7 @@ mock_kcadm() {
             {
                 "theme.properties=configmaps/keycloak-theme/login/theme.properties",
                 "login.ftl=configmaps/keycloak-theme/login/login.ftl",
+                "template.ftl=configmaps/keycloak-theme/login/template.ftl",
                 "custom-login.css=configmaps/keycloak-theme/login/resources/css/custom-login.css",
             },
             set(generator["files"]),
@@ -416,13 +418,22 @@ mock_kcadm() {
 
         theme_root = ROOT / "cyber-stack/base/schema-migrator/configmaps/keycloak-theme/login"
         properties = (theme_root / "theme.properties").read_text()
-        template = (theme_root / "login.ftl").read_text()
+        login_template = (theme_root / "login.ftl").read_text()
+        shell_template = (theme_root / "template.ftl").read_text()
         stylesheet = (theme_root / "resources/css/custom-login.css").read_text()
         self.assertIn("parent=keycloak.v2", properties)
         self.assertIn("styles=css/styles.css css/custom-login.css", properties)
-        self.assertEqual(2, template.count('aria-hidden="true"'))
+        self.assertIn('<@layout.registrationLayout', login_template)
+        self.assertIn('class="auth-page"', shell_template)
+        self.assertIn('class="auth-card"', shell_template)
+        self.assertIn('aria-labelledby="kc-page-title"', shell_template)
+        self.assertIn('aria-live="polite"', shell_template)
+        self.assertIn("startSessionPolling", shell_template)
+        self.assertIn("checkAuthSession", shell_template)
+        self.assertIn('<#nested "socialProviders">', shell_template)
         self.assertIn("prefers-reduced-motion: reduce", stylesheet)
         self.assertIn(":focus-visible", stylesheet)
+        self.assertIn(".login-pf body#keycloak-bg", stylesheet)
 
     def test_keycloak_rollout_keeps_an_available_backend(self) -> None:
         deployment = next(
