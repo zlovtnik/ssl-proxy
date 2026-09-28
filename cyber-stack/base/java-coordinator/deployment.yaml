@@ -300,7 +300,7 @@ spec:
             - name: POSTGRES_ENABLED
               value: "true"
             - name: POSTGRES_SCHEMA_MANIFEST_SHA256
-              value: "459bb0bcbd222f7978ed0507c70ef4dc84db1681bc36db5566f7e69e8da9201d"
+              value: "b522676cce9fc385a935bd52fc50867d655fe6b34ae0088a11b4c51ec595755e"
             - name: POSTGRES_HOST
               value: "postgres-pgbouncer"
             - name: POSTGRES_PORT

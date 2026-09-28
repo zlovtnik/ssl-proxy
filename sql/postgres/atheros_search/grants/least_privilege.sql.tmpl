@@ -28,7 +28,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.behaviour_snapshots,
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.graph_nodes,
   atheros_search.graph_edges, atheros_search.identity_clusters,
-  atheros_search.identity_cluster_members, atheros_search.merge_candidates TO {{OCTOPUS_ACCOUNT}};
+  atheros_search.identity_cluster_members, atheros_search.merge_candidates,
+  atheros_search.ap_catalog, atheros_search.wireless_signal_summaries,
+  atheros_search.investigation_watermarks TO {{OCTOPUS_ACCOUNT}};
 
 GRANT SELECT ON atheros_search.merge_decisions TO {{OCTOPUS_ACCOUNT}};
 
@@ -39,7 +41,11 @@ GRANT SELECT, INSERT, UPDATE ON atheros_search.search_vectors_event, atheros_sea
   atheros_search.search_vectors_behaviour, atheros_search.search_vectors_sequence TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT ON atheros_search.devices TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT ON atheros_search.graph_nodes, atheros_search.graph_edges,
-  atheros_search.merge_candidates TO {{ATHEROS_SEARCH_ACCOUNT}};
+  atheros_search.merge_candidates, atheros_search.ap_catalog,
+  atheros_search.wireless_signal_summaries, atheros_search.investigation_watermarks,
+  atheros_search.asset_annotations, atheros_search.asset_annotation_audit TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT INSERT, UPDATE ON atheros_search.asset_annotations TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT INSERT ON atheros_search.asset_annotation_audit TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.merge_decisions TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.search_queries TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.worker_heartbeat TO {{ATHEROS_SEARCH_ACCOUNT}};
@@ -50,3 +56,4 @@ GRANT USAGE, SELECT ON SEQUENCE atheros_search.search_vectors_event_vector_id_se
   atheros_search.search_vectors_behaviour_vector_id_seq,
   atheros_search.search_vectors_sequence_vector_id_seq TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT USAGE, SELECT ON SEQUENCE atheros_search.search_queries_query_id_seq TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT USAGE, SELECT ON SEQUENCE atheros_search.asset_annotation_audit_audit_id_seq TO {{ATHEROS_SEARCH_ACCOUNT}};
