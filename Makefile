@@ -309,14 +309,30 @@ registry-gc: require-registry
 mirror-minio: require-registry
 	@docker info >/dev/null
 	docker pull --platform "$(PLATFORM)" "$(MINIO_MIRROR_SOURCE)"
+	@release="$$(docker image inspect --platform "$(PLATFORM)" "$(MINIO_MIRROR_SOURCE)" \
+		--format '{{ index .Config.Labels "release" }}')"; \
+	if [ "$$release" != "$(MINIO_RELEASE)" ]; then \
+		echo "$(MINIO_MIRROR_SOURCE) reports release '$$release', expected '$(MINIO_RELEASE)'." >&2; \
+		echo "Refusing to publish a mislabelled image. Override MINIO_MIRROR_SOURCE to a matching build." >&2; \
+		exit 2; \
+	fi
 	docker tag "$(MINIO_MIRROR_SOURCE)" "$(REGISTRY)/minio:$(MINIO_RELEASE)"
-	docker push "$(REGISTRY)/minio:$(MINIO_RELEASE)"
+	@if ! docker push "$(REGISTRY)/minio:$(MINIO_RELEASE)"; then \
+		echo >&2; \
+		if curl -fsS -o /dev/null --max-time 5 "http://$(REGISTRY)/v2/"; then \
+			echo "$(REGISTRY) serves plain HTTP, but this Docker daemon does not trust it." >&2; \
+			echo "Add \"$(REGISTRY)\" to insecure-registries in the daemon configuration and restart," >&2; \
+			echo "then rerun. See docs/local-registry-workflow.md." >&2; \
+		fi; \
+		exit 1; \
+	fi
 	@echo "Published $(REGISTRY)/minio:$(MINIO_RELEASE). Record this digest in the"
 	@echo "images: block of both matrix data-plane kustomizations:"
-	@docker buildx imagetools inspect "$(REGISTRY)/minio:$(MINIO_RELEASE)" 2>/dev/null \
-		|| curl -fsSI -H "Accept: application/vnd.oci.image.manifest.v1+json" \
-			"http://$(REGISTRY)/v2/minio/manifests/$(MINIO_RELEASE)" \
-			| grep -i '^docker-content-digest:'
+	@scheme=https; if [ "$(REGISTRY_PLAIN_HTTP)" = "1" ]; then scheme=http; fi; \
+	curl -fsS -D - -o /dev/null -X GET \
+		-H "Accept: application/vnd.oci.image.manifest.v1+json" \
+		"$$scheme://$(REGISTRY)/v2/minio/manifests/$(MINIO_RELEASE)" \
+		| grep -i '^docker-content-digest:'
 
 buildx-ready: require-registry
 	@docker info >/dev/null
