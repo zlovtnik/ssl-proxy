@@ -14,7 +14,7 @@
   labels: {service: keycloak, module: http_2xx}
 - targets: ["http://ssl-proxy-schema-migrator-traefik:8082/ping"]
   labels: {service: schema-migrator-traefik, module: http_2xx}
-- targets: ["http://ssl-proxy-minio:9000/minio/health/ready"]
+- targets: ["http://ssl-proxy-minio-api:9000/minio/health/ready"]
   labels: {service: minio, module: http_2xx}
 - targets: ["http://ssl-proxy-redpanda:9644/v1/status/ready"]
   labels: {service: redpanda, module: http_2xx}

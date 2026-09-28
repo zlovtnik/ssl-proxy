@@ -52,7 +52,7 @@ scrape_configs:
     authorization:
       credentials_file: /etc/prometheus/secrets/minio-prometheus-bearer-token
     static_configs:
-      - targets: ["ssl-proxy-minio:9000"]
+      - targets: ["ssl-proxy-minio-api:9000"]
         labels: {service: minio}
 
   - job_name: ssl-proxy-redis

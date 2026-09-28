@@ -113,6 +113,26 @@ spec:
       port: 9001
       targetPort: console
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-minio-api
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: minio
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: minio
+  ports:
+    - name: api
+      port: 9000
+      protocol: TCP
+      targetPort: api
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

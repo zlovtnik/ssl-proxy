@@ -497,6 +497,40 @@ spec: {type: ClusterIP, clusterIP: None}
             [], check_gitops._check_phase_one_workload_edge(rendered, "prod")
         )
 
+    def test_minio_uses_headless_identity_and_stable_api_discovery(self) -> None:
+        rendered = documents(
+            """apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: ssl-proxy-minio}
+spec: {serviceName: ssl-proxy-minio}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: ssl-proxy-minio}
+spec: {clusterIP: None}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: ssl-proxy-minio-api}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: ssl-proxy, app.kubernetes.io/component: minio}
+  ports: [{name: api, port: 9000, protocol: TCP, targetPort: api}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: minio-telemetry}
+data:
+  prometheus.yml: 'targets: ["ssl-proxy-minio-api:9000"]'
+  service-catalog.yml: 'targets: ["http://ssl-proxy-minio-api:9000/minio/health/ready"]'
+"""
+        )
+        self.assertEqual([], check_gitops._check_minio_service(rendered, "prod"))
+
+        rendered[2]["spec"]["type"] = "ExternalName"
+        errors = check_gitops._check_minio_service(rendered, "prod")
+        self.assertTrue(any("normal ClusterIP" in error for error in errors))
+
     def test_phase_one_allows_only_the_grafana_lan_nodeport(self) -> None:
         rendered = documents(
             """kind: Service

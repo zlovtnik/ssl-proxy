@@ -895,6 +895,7 @@ def _check_octopus_runtime(
         "OCTOPUS_PROCESSORS_ENABLED": "true",
         "OCTOPUS_CONSUMERS_ENABLED": "true",
         "OCTOPUS_ARCHIVE_ENABLED": "true",
+        "MINIO_ENDPOINT": "http://ssl-proxy-minio-api.$(POD_NAMESPACE).svc.cluster.local:9000",
         "OCTOPUS_ENVIRONMENT": expected_environment,
     }
     errors: list[str] = []
@@ -961,6 +962,78 @@ def _check_octopus_runtime(
             f"{relative}: Octopus contains retired cutover inputs: "
             f"{', '.join(unexpected)}"
         )
+    return errors
+
+
+def _check_minio_service(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    documents = _documents(rendered)
+    errors: list[str] = []
+    stateful_sets = _find(documents, "StatefulSet", "ssl-proxy-minio")
+    headless_services = _find(documents, "Service", "ssl-proxy-minio")
+    api_services = _find(documents, "Service", "ssl-proxy-minio-api")
+
+    if len(stateful_sets) != 1:
+        errors.append(f"{relative}: expected one MinIO StatefulSet")
+    elif _path(stateful_sets[0], "spec", "serviceName") != "ssl-proxy-minio":
+        errors.append(
+            f"{relative}: MinIO StatefulSet must retain its headless governing Service"
+        )
+
+    if len(headless_services) != 1:
+        errors.append(f"{relative}: expected one MinIO headless Service")
+    elif _path(headless_services[0], "spec", "clusterIP") != "None":
+        errors.append(f"{relative}: MinIO governing Service must remain headless")
+
+    if len(api_services) != 1:
+        errors.append(f"{relative}: expected one MinIO API Service")
+    else:
+        service = api_services[0]
+        selector = _mapping(_path(service, "spec", "selector"))
+        expected_selector = {
+            "app.kubernetes.io/name": "ssl-proxy",
+            "app.kubernetes.io/component": "minio",
+        }
+        ports = [_mapping(port) for port in _list(_path(service, "spec", "ports"))]
+        if (
+            _path(service, "spec", "type") != "ClusterIP"
+            or _path(service, "spec", "clusterIP") == "None"
+        ):
+            errors.append(
+                f"{relative}: MinIO API Service must be a normal ClusterIP Service"
+            )
+        if selector != expected_selector:
+            errors.append(
+                f"{relative}: MinIO API Service selector must target MinIO pods"
+            )
+        if ports != [
+            {
+                "name": "api",
+                "port": 9000,
+                "protocol": "TCP",
+                "targetPort": "api",
+            }
+        ]:
+            errors.append(
+                f"{relative}: MinIO API Service must expose only TCP port 9000"
+            )
+
+    config_text = "\n".join(
+        str(value)
+        for document in documents
+        if document.get("kind") == "ConfigMap"
+        for value in _mapping(document.get("data")).values()
+    )
+    for target in (
+        'targets: ["ssl-proxy-minio-api:9000"]',
+        'targets: ["http://ssl-proxy-minio-api:9000/minio/health/ready"]',
+    ):
+        if target not in config_text:
+            errors.append(
+                f"{relative}: MinIO telemetry must use the stable API Service target {target}"
+            )
+
     return errors
 
 
@@ -2802,6 +2875,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
         f"cyber-stack/matrix/{environment}/data-plane": (
             _check_prod_alloy_positions,
             _check_prod_pgbouncer_external_postgres,
+            _check_minio_service,
         )
         for environment in ENVIRONMENTS
     } | {

@@ -146,6 +146,7 @@ spec:
             - {name: OCTOPUS_PROCESSORS_ENABLED, value: "true"}
             - {name: OCTOPUS_CONSUMERS_ENABLED, value: "true"}
             - {name: OCTOPUS_ARCHIVE_ENABLED, value: "true"}
+            - {name: MINIO_ENDPOINT, value: "http://ssl-proxy-minio-api.$(POD_NAMESPACE).svc.cluster.local:9000"}
             - {name: OCTOPUS_ENABLED_PROCESSORS, value: "__PROCESSORS__"}
             - {name: OCTOPUS_ENVIRONMENT, value: production}
 """.replace("__PROCESSORS__", processors)
