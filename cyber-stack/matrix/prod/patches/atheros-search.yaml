@@ -12,7 +12,9 @@ spec:
             - name: ATHSEARCH_WORKER_COUNT
               value: "2"
             - name: ATHSEARCH_EMBEDDING_BATCH_SIZE
-              value: "16"
+              value: "32"
+            - name: ATHSEARCH_EMBEDDING_REQUEST_CONCURRENCY
+              value: "4"
             - name: ATHSEARCH_EMBEDDING_BACKEND
               value: "http://192.168.1.242:9931"
             - name: ATHSEARCH_JWT_JWKS_URI

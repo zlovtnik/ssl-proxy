@@ -80,3 +80,10 @@ GRANT SELECT (
 GRANT SELECT ON octopus_core.wireless_observations TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT ON octopus_core.wireless_alerts TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT ON octopus_core.sensors TO {{ATHEROS_SEARCH_ACCOUNT}};
+
+-- ETL health gauges count the live ingest ledger and dispatch queue. Only the
+-- columns those counts read are exposed.
+GRANT SELECT (status) ON octopus_core.sync_events TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT (status) ON octopus_core.sync_batches TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT (status, created_at) ON octopus_core.sync_jobs TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT (status) ON octopus_core.sync_backlog TO {{ATHEROS_SEARCH_ACCOUNT}};

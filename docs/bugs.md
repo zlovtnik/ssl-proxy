@@ -188,3 +188,235 @@ T5.1 → T5.5                   (docs, any time)
 3. Check `window_is_partial: true` events — these are timer-flushed windows and should appear once per `DEFAULT_BANDWIDTH_WINDOW_SECS` (60s) even when no frames arrived.
 4. Inject a Redpanda outage for 60 seconds, restore, and confirm `window_start` resumes from current wall time rather than the pre-outage timestamp.
 5. Monitor `atheros_bandwidth_window_lag_ms` gauge — should stay below 5000ms under normal load.
+
+---
+
+## Embedding backlog and ETL health — diagnosis (2026-09-27)
+
+A console report was raised with three symptoms: "50 loaded / 9551 total",
+"Data freshness: unavailable", and "719552 embeddings pending". Measured on
+`wiretrap-k3s` / namespace `prod-ssl-proxy` between 23:25Z and 23:53Z.
+
+### Symptom 1 — "50 loaded / 9551" is correct behaviour
+
+`apps/integration-console/atheros-search-ui/src/components/InventoryTable.tsx:21-22`
+requests `scope: 'page', page_size: 50`. `internal/search/inventory_table.go:54`
+slices page 1 and `internal/search/inventory_table.go:92-101` runs a separate
+`COUNT(*)` for the total. 9551 is the device inventory size; 50 is the first
+page. **No fix required.**
+
+### Symptom 2 — `freshness: unavailable` is a hard-coded literal
+
+`internal/search/report.go:30` sets `Freshness: "unavailable"` and
+`IncompleteCoverage: true` unconditionally, as documented in
+`docs/atheros-reporting-data-contract.md`. The UI copy in
+`ReportStatus.tsx` renders it verbatim. It is not measuring anything and
+therefore cannot become fresh by itself.
+
+### Symptom 3 — the embedding backlog is real and growing
+
+| Signal | Value |
+| --- | --- |
+| Pending jobs | 721,359 (event 653,507 / behaviour 43,389 / sequence 24,039 / device 424) |
+| Claimable now / deferred / attempts exhausted | 721,199 / 160 / 0 |
+| Pending jobs with an orphan owner (head-of-line risk) | 0 |
+| Oldest pending job | 2026-09-26 16:41:36Z (~31h) |
+| Drain rate | 124 jobs/min (worker logs) to 171 jobs/min (30-min `completed_at` mean) |
+| Produce rate | ~21.6k–24k documents and embedding jobs per hour, 1:1, sustained 24h |
+| Net growth | ~+79 jobs/min |
+| Dead work | 63,876 pending jobs (8.9%) target `superseded` documents |
+| Largest pending document | 1,393,097 chars `normalized_text` (~600 chunks) |
+
+The claim path is healthy: `internal/worker/lease.go` finds nothing orphaned
+and nothing attempt-exhausted, so this is a throughput problem, not a stall.
+
+### Where the time goes
+
+Call chain per job batch (`internal/worker/worker.go` →
+`internal/embed/client.go`):
+
+1. **`ChunkText` tokenizes one text at a time over HTTP.** Every text is
+   POSTed to the backend's `/tokenize` and `/detokenize` inside a loop
+   (`client.go:146-153`, `internal/embed/tokens.go:29-52`). One 480-token
+   chunk costs two HTTP round trips before any embedding starts.
+2. **Requests are packed up to 4096 tokens each.** `RequestTokenLimit`
+   (`tokens.go:19`, applied in `client.go:165-184`) packs 8–10 chunks into a
+   single `/v1/embeddings` request. The backend has **4 slots**, so one
+   packed request occupies one slot for the whole batch while the other
+   three sit idle. Measured on the live backend: 4 separate 400-token
+   requests in parallel = **1.66s wall**; one request with 4×400 tokens =
+   **7.20s**; one request with 4×480 tokens = **12.33s**.
+3. **Request concurrency is hard-coded to 2.** `client.go:191` starts 2
+   goroutines regardless of slot count or configuration.
+4. **One database transaction per completed job.** `worker.go:185-192`
+   calls `storeCompletion` per job (`internal/store/postgres.go`), so a
+   batch of 16 pays 16 commits.
+5. **A 30s HTTP timeout defers the whole remaining batch.**
+   `client.go:81` sets the client timeout; on expiry the worker defers the
+   claimed jobs without consuming an attempt (`internal/worker/lease.go`),
+   which is why `failed` is structurally 0 while hundreds of thousands of
+   jobs age out. Batch latency observed: median 6–9s, p90 19s, **max 429s**,
+   plus 35 defers and 88 `readyz` failures in a 17.8-minute window.
+
+Consequence: the consumer sustains ~124–171 jobs/min against a producer
+running ~383 jobs/min, so the queue grows without bound. At the measured
+drain rate the 31-day-old head of the queue will not clear on its own.
+
+### Producer side
+
+- `services/octopus/.../sql/SearchPreparationSql.scala:443-447` supersedes
+  the previous document version but leaves that version's pending
+  embedding job behind; 63,876 pending jobs are for superseded documents.
+- `documentsMissingEmbeddingJobs` (`SearchPreparationSql.scala:526`) only
+  enqueues for `status = 'active'`, so the leak comes from documents
+  superseded *after* their job was created.
+- `embedding-preparer` injects up to 4 kinds x 250 documents per 10s
+  (`cyber-stack/base/java-coordinator/deployment.yaml`,
+  `OCTOPUS_PROCESSOR_BATCH_SIZE=250`,
+  `OCTOPUS_PROCESSOR_INTERVAL_SECONDS=10`).
+
+### Why the health gauges report nonsense
+
+- `internal/worker/health.go:77-90` counts `octopus_core.ingestion_receipts`
+  — the table has **0 rows** — so `ingest_pending` and `ingest_failed` are
+  always 0.
+- `internal/worker/health.go:64-72` counts
+  `octopus_core.wireless_observations` — also **0 rows** — so
+  `wireless_events_24h` is always 0.
+- `internal/worker/health.go:151-157` reports
+  `embedding_dependency: healthy` whenever `failed == 0` and
+  `pending > 0`, i.e. healthy at 721k pending.
+- `internal/worker/health.go:159-176` never filters
+  `octopus_core.work_items.last_seen_at`, so a dead worker still looks
+  alive.
+
+### Health gauge sources as implemented
+
+`internal/worker/health.go` now reads the table that actually owns each
+gauge (values measured against the live database on 2026-09-28 00:50Z):
+
+| Gauge | Source | Measured |
+| --- | --- | --- |
+| `wireless_events_24h`, `wireless_last_observed_at` | `atheros_search.search_documents`, `source_kind = 'event'` (two index-bounded subqueries) | 0 events in 24h; newest 2026-09-26 23:15:23Z |
+| `ingest_pending`, `ingest_processing`, `ingest_failed` | `octopus_core.sync_events`, status filter | 0 / 0 / 0 |
+| `batch_pending`, `batch_processing`, `batch_completed`, `batch_failed` | `octopus_core.sync_batches` | 5,323,943 / 0 / 56,119 / 4,285 |
+| `job_stored_*`, `job_effective_*`, `job_orphaned` | `octopus_core.sync_jobs` | 5,323,888 pending; 5,310,000 older than 5 minutes |
+| `backlog_pending`, `backlog_failed` | `octopus_core.sync_backlog` | 0 / 0 |
+| `embedding_*` | `atheros_search.embedding_jobs` (unchanged) | 738,362 pending |
+
+Notes:
+
+- Events are inserted with `status = 'batched'`
+  (`IngestionSql.insertSyncEvent`), so `ingest_pending` and
+  `ingest_processing` are structurally 0 and `ingest_failed` is the only
+  live transition on that ledger.
+- `job_effective_*` mirror `job_stored_*`: the legacy per-job batch rollup
+  needs a `sync_batches.job_id` index the schema does not define and would
+  be a 10M-row join per refresh. Batch-side state is reported through
+  `batch_*`; `job_orphaned` carries the staleness signal.
+- Grants: `sql/postgres/octopus_core/grants/least_privilege.sql.tmpl` adds
+  column-level `SELECT` on `sync_events`, `sync_batches`, `sync_jobs`, and
+  `sync_backlog` for the Atheros Search account. The fixture sits outside
+  the manifest `apply_order`, so `manifest_sha256` and
+  `POSTGRES_SCHEMA_MANIFEST_SHA256` are unchanged.
+- Rollout window: the schema executor Job (sync wave 1) applies the new
+  grants after wave-0 pods start, so `/v1/etl/health` can return 500 until
+  that hook finishes. Every request retries the refresh, so it self-heals.
+- Cost: one refresh measures about 3.5s of database time — the
+  `sync_batches` pending count alone is ~2.2s over 5.3M rows — so
+  `Snapshot` serves a 30-second cache with a background refresh and
+  `cmd/server` warms it at startup. Without the cache the refresh exceeds
+  the 3000ms UI budget and reproduces the "Pipeline health unavailable"
+  banner.
+
+### Adjacent findings from the gauge repoint
+
+- `octopus_core.sync_jobs` and `octopus_core.sync_batches` hold about 5.3M
+  pending rows each with `attempt_count = 0` and `owner_id NULL`; nothing
+  has completed since 2026-09-26 16:51Z (jobs) and 17:37Z (batches). The
+  dispatch queue is stalled, which the old `work_items` gauges reported as
+  0.
+- `octopus_core.wireless_frames`, the `search_documents` source table,
+  stops at 2026-09-26 23:15:23Z while `octopus_core.sync_events` for
+  `wireless.audit` is still live (3,633,205 rows in the last 24h, newest
+  2026-09-28 00:51Z): ingest is running and the frames projection is what
+  stopped.
+
+### Task list
+
+- [x] **E1.1** — Add `RequestPackTokenLimit` (~512, matching the backend slot
+  context) and pack each `/v1/embeddings` request to that budget instead of
+  `RequestTokenLimit`; keep `RequestTokenLimit` as the hard safety bound.
+- [x] **E1.2** — Replace the hard-coded 2-way request concurrency with
+  `ATHSEARCH_EMBEDDING_REQUEST_CONCURRENCY` (default 4, one per backend slot).
+- [x] **E1.3** — Fan out `ChunkText` tokenization across the chunk list with
+  bounded concurrency while preserving chunk order and offsets.
+- [x] **E1.4** — Add a batched completion path (one transaction per batch,
+  per-job fallback on failure) in `internal/worker`.
+- [x] **E1.5** — Add a per-job chunk/time budget so a single oversized
+  document defers instead of monopolizing a worker.
+- [x] **E2.1** — Bump `ATHSEARCH_EMBEDDING_BATCH_SIZE` 16 → 32 and set
+  `ATHSEARCH_EMBEDDING_REQUEST_CONCURRENCY=4` in
+  `cyber-stack/matrix/prod/patches/atheros-search.yaml`, one variable at a
+  time.
+- [ ] **E3.1** — Measure and tune the host `llama-server.service` (slot count
+  and thread budget) with explicit approval; the host also runs the k3s
+  control plane.
+- [x] **E4.1** — Cancel pending embedding jobs when their document is
+  superseded in `SearchPreparationSql.persist`.
+- [x] **E4.2** — Add a high-water mark so `embedding-preparer` backs off when
+  the pending queue exceeds a threshold.
+- [x] **E5.1** — Repoint `wireless_events_24h` at
+  `atheros_search.search_documents` (already granted).
+- [x] **E5.2** — Repoint `ingest_*` at `octopus_core.sync_events`
+  (`pending` / `processing` / `failed`), the status-for-status successor of
+  the legacy `sync_scan_ingest` these gauges came from; add the column-level
+  SELECT grants. `ingestion_evidence` was rejected as the source because it
+  has no `processing` state (100% of its 5.45M rows are `processed`), so it
+  cannot back all three fields.
+- [x] **E5.2b** — Repoint `batch_*`, `job_stored_*`, `job_effective_*`,
+  `job_orphaned`, and `backlog_*` from the empty `octopus_core.work_items`
+  table at `octopus_core.sync_batches`, `sync_jobs`, and `sync_backlog`.
+- [x] **E5.3** — Report a `backlog` state for `embedding_dependency` driven
+  by pending age, and freshness-filter `worker_heartbeat`.
+- [x] **E5.4** — Update `ReportStatus.tsx`, `api/client.ts`, and the e2e
+  fixtures for the repointed gauges while preserving the `/v1/etl/*` field
+  contract.
+
+---
+
+## Implementation Order (embedding backlog)
+
+```
+E1.1 → E1.2 → E1.3 → E1.4 → E1.5   (client fix, one Go change set)
+E2.1                                 (prod config, one variable at a time)
+E4.1 → E4.2                         (producer, separate sbt change set)
+E3.1                                 (host tuning, gated on approval)
+E5.1 → E5.2 → E5.3 → E5.4           (observability, can run in parallel)
+```
+
+---
+
+## Quick Verification Steps (after E1)
+
+1. Re-measure the pack effect against the live backend: one request with
+   4×480 tokens should no longer be produced; four 480-token requests should
+   complete in parallel in roughly the time of one.
+2. Watch `embedding_jobs` growth with:
+
+   ```sql
+   SELECT count(*) FROM atheros_search.embedding_jobs WHERE status = 'pending';
+   SELECT date_trunc('hour', created_at), count(*)
+     FROM atheros_search.embedding_jobs GROUP BY 1 ORDER BY 1 DESC LIMIT 5;
+   SELECT date_trunc('hour', completed_at), count(*)
+     FROM atheros_search.embedding_jobs
+    WHERE completed_at IS NOT NULL GROUP BY 1 ORDER BY 1 DESC LIMIT 5;
+   ```
+
+   Success is a sustained drain rate above the ~383/min produce rate and a
+   negative pending slope.
+3. Confirm `failed` and `defer` counts are explained rather than silently
+   zero: `kubectl -n prod-ssl-proxy logs deploy/ssl-proxy-atheros-search | rg 'deferred|failed|readyz'`.
+4. `go test ./...` in `apps/integration-console/atheros-search`, then
+   `make atheros-search-test`, `make lint`, and
+   `python3 scripts/check-docs.py`.
