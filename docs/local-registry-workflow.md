@@ -140,10 +140,48 @@ First-party publish targets are:
 | `publish-postgres-runtime-schema` | `$REGISTRY/postgres-runtime-schema:$TAG` |
 
 The deployment identity `java-coordinator` is the Scala Octopus service. The
-former standalone vec-worker is retired. Third-party images are not mirrored by
-the root Makefile. The Compose-only `wg-key-rotator` remains part of
-`publish-all`; it is intentionally excluded from environment-aware
-`make publish` because it has no Kubernetes image contract.
+former standalone vec-worker is retired. The Compose-only `wg-key-rotator`
+remains part of `publish-all`; it is intentionally excluded from
+environment-aware `make publish` because it has no Kubernetes image contract.
+
+## The MinIO third-party mirror
+
+MinIO is the only third-party image served from the internal registry, and it is
+the only image the root Makefile copies rather than builds. `make mirror-minio`
+is deliberately excluded from `publish-all`, `SERVICES`, and `PUBLISH_TARGETS`,
+because those targets build from a `Dockerfile` via `service_rules` and MinIO
+has no build context in this repository.
+
+Upstream MinIO Community Edition is source-only and its repository is archived
+and read-only. The `minio/minio` and `quay.io/minio/minio` container
+repositories were both deleted, so the previously pinned digest can no longer be
+pulled from any official MinIO channel. The archive is republished from a
+community build of the identical upstream release:
+
+```bash
+make mirror-minio REGISTRY=192.168.1.242:5000 REGISTRY_PLAIN_HTTP=1
+```
+
+`MINIO_MIRROR_SOURCE` (`elestio/minio:latest`) and `MINIO_RELEASE`
+(`RELEASE.2025-09-07T16-13-09Z`) are overridable. The republished image carries
+the same `release` label as the upstream `Dockerfile.release` for that version
+and an identical `docker-entrypoint.sh` and `ENV` block, so the
+`cyber-stack/base/minio/statefulset.yaml` container contract is unchanged. The
+target is idempotent: re-running it re-pushes identical layers and prints the
+registry's authoritative digest.
+
+That printed digest, not the upstream digest, is the value pinned in
+`cyber-stack/base/minio/statefulset.yaml` and in the `images:` block of both
+`cyber-stack/matrix/prod/data-plane/kustomization.yaml` and
+`cyber-stack/matrix/staging/data-plane/kustomization.yaml`. The overlays must
+carry it: `scripts/registry_cleanup.py` only treats a digest as Git-protected
+when it appears in a matrix `images:` entry whose `newName` is in the internal
+registry, so a base-only pin could be garbage collected while the pod is down.
+
+The mirrored release carries CVE-2025-62506, a MinIO application issue present
+in every build of that release rather than a packaging defect. MinIO CE receives
+no further upstream fixes, so a supported object store is the durable answer;
+see [runbook.md](runbook.md).
 
 Octopus publication is fail-closed. Before `publish-java-coordinator` can build
 or push, the parent checkout and `services/octopus` worktree must both be clean,

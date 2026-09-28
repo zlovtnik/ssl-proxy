@@ -22,6 +22,8 @@ BUILDER ?= ssl-proxy-publisher
 BUILDER_NETWORK ?=
 BUILDX_READY ?= 0
 PLATFORM ?= linux/amd64
+MINIO_MIRROR_SOURCE ?= elestio/minio:latest
+MINIO_RELEASE ?= RELEASE.2025-09-07T16-13-09Z
 TAG ?= $(shell git rev-parse --short HEAD)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LOCAL_IMAGE_PREFIX ?= ssl-proxy-local
@@ -50,7 +52,7 @@ ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-pr
 PAGES_PROJECT ?= ssl-proxy-migrator
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health pvc-audit argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry registry-clean-plan registry-clean registry-recreate registry-gc octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check gitops-check topics-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health pvc-audit argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry registry-clean-plan registry-clean registry-recreate registry-gc mirror-minio octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check gitops-check topics-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 
@@ -303,6 +305,18 @@ registry-gc: require-registry
 		garbage-collect /etc/docker/registry/config.yml || status=$$?; \
 	docker compose -f docker-compose.ci.yaml up -d registry; \
 	exit $$status
+
+mirror-minio: require-registry
+	@docker info >/dev/null
+	docker pull --platform "$(PLATFORM)" "$(MINIO_MIRROR_SOURCE)"
+	docker tag "$(MINIO_MIRROR_SOURCE)" "$(REGISTRY)/minio:$(MINIO_RELEASE)"
+	docker push "$(REGISTRY)/minio:$(MINIO_RELEASE)"
+	@echo "Published $(REGISTRY)/minio:$(MINIO_RELEASE). Record this digest in the"
+	@echo "images: block of both matrix data-plane kustomizations:"
+	@docker buildx imagetools inspect "$(REGISTRY)/minio:$(MINIO_RELEASE)" 2>/dev/null \
+		|| curl -fsSI -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+			"http://$(REGISTRY)/v2/minio/manifests/$(MINIO_RELEASE)" \
+			| grep -i '^docker-content-digest:'
 
 buildx-ready: require-registry
 	@docker info >/dev/null

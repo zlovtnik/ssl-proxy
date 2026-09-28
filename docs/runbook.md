@@ -388,6 +388,22 @@ missing Application, unhealthy status or timeout is a failed release check.
 - Confirm the canonical manifest and versioned Kafka consumer-group settings.
 - Do not fall back to PostgreSQL.
 
+### MinIO cannot start or the raw archive stalls
+
+- Check the pod is not in `ImagePullBackOff`. Upstream MinIO CE no longer
+  publishes container images; the archive is served from the internal registry
+  only. See [local-registry-workflow.md](local-registry-workflow.md).
+- Republish with `make mirror-minio` and confirm the digest it prints matches the
+  pin in `cyber-stack/base/minio/statefulset.yaml` and both data-plane overlays.
+- Confirm `ssl-proxy-minio-0` reaches `1/1` and that the `ssl-proxy-minio-api`
+  Service is the only ingress on TCP 9000.
+- Expect `event-retention` to leave backoff. While the archive is unavailable the
+  Octopus coordinator stays unready and logs `minio dependency temporarily
+  unavailable during provision_bucket`.
+- Nothing is lost while stalled: `PayloadArchiver` refuses to delete PostgreSQL
+  rows before a successful archive, so rows accumulate. Confirm the retention
+  backlog after recovery, and treat the outage as a retention-compliance window.
+
 ### Search readiness fails
 
 - Validate the discrete PostgreSQL host/port/user/password settings and manifest hash.

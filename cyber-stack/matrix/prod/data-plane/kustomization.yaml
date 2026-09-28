@@ -28,6 +28,9 @@ images:
   name: grafana/grafana
 - digest: sha256:58a6c186ce78ba04d58bfe2a927eff296ba733a430df09645d56cdc158f3ba08
   name: grafana/loki
+- digest: sha256:e7ffdea1db8e1830237169cbc481d52604f68447ce35df8ed5062202c3e3dc29
+  name: minio/minio
+  newName: 192.168.1.242:5000/minio
 - digest: sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
   name: otel/opentelemetry-collector-contrib
 - digest: sha256:01b25fffbda5f627f4444f7c20441fff42ed57e24d96a5500174d82965ddfbc3
