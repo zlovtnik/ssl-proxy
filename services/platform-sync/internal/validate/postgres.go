@@ -310,6 +310,11 @@ func atherosSearchGrants() []tableGrant {
 		{table: "atheros_search.graph_nodes", privileges: []string{"SELECT"}},
 		{table: "atheros_search.graph_edges", privileges: []string{"SELECT"}},
 		{table: "atheros_search.merge_candidates", privileges: []string{"SELECT", "UPDATE"}},
+		{table: "atheros_search.ap_catalog", privileges: []string{"SELECT"}},
+		{table: "atheros_search.wireless_signal_summaries", privileges: []string{"SELECT"}},
+		{table: "atheros_search.investigation_watermarks", privileges: []string{"SELECT"}},
+		{table: "atheros_search.asset_annotations", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
+		{table: "atheros_search.asset_annotation_audit", privileges: []string{"SELECT", "INSERT"}},
 		{table: "atheros_search.merge_decisions", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 		{table: "atheros_search.search_queries", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 		{table: "atheros_search.worker_heartbeat", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
@@ -325,6 +330,7 @@ func atherosSearchSequenceGrants() []sequenceGrant {
 		{sequence: "atheros_search.search_vectors_behaviour_vector_id_seq", privileges: privileges},
 		{sequence: "atheros_search.search_vectors_sequence_vector_id_seq", privileges: privileges},
 		{sequence: "atheros_search.search_queries_query_id_seq", privileges: privileges},
+		{sequence: "atheros_search.asset_annotation_audit_audit_id_seq", privileges: privileges},
 	}
 }
 
@@ -384,12 +390,14 @@ func octopusAtherosGrants() []tableGrant {
 		{table: "atheros_search.search_vectors_device", privileges: selectDelete},
 		{table: "atheros_search.search_vectors_behaviour", privileges: selectDelete},
 		{table: "atheros_search.search_vectors_sequence", privileges: selectDelete},
+		{table: "atheros_search.similarity_scan_state", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 	}
 	for _, table := range []string{
 		"behaviour_snapshots", "baseline_profiles", "frame_sequences", "sequence_transitions",
 		"timing_profiles", "similarity_pairs", "threat_signals", "ap_risk_scores",
 		"sequence_transition_contributions", "sequence_previous_totals", "graph_nodes", "graph_edges",
-		"identity_clusters", "identity_cluster_members", "merge_candidates",
+		"identity_clusters", "identity_cluster_members", "merge_candidates", "ap_catalog",
+		"wireless_signal_summaries", "investigation_watermarks",
 	} {
 		grants = append(grants, tableGrant{table: "atheros_search." + table, privileges: crud})
 	}
