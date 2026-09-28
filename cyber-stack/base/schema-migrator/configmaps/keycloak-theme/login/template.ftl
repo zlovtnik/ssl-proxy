@@ -100,27 +100,82 @@
   <div class="auth-grid" aria-hidden="true"></div>
   <div class="glow glow-1" aria-hidden="true"></div>
   <div class="glow glow-2" aria-hidden="true"></div>
+  <div class="glow glow-3" aria-hidden="true"></div>
 
-  <div class="auth-shell">
-    <main class="auth-card" aria-labelledby="kc-page-title">
-      <header id="kc-header" class="auth-card-header">
-        <div class="auth-security-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" role="img">
-            <path d="M12 3 5.5 5.8v5.5c0 4.2 2.7 7.9 6.5 9.2 3.8-1.3 6.5-5 6.5-9.2V5.8L12 3Z" />
-            <path d="m9.2 11.8 1.8 1.8 3.9-4" />
-          </svg>
-        </div>
-        <div id="kc-header-wrapper">
-          <p class="auth-eyebrow">Secure access</p>
-          <h1 id="kc-page-title"><#nested "header"></h1>
-          <p class="auth-intro">Enter your account details to continue.</p>
-        </div>
+  <div class="auth-split">
+    <aside class="auth-brand" aria-label="Enterprise identity platform">
+      <div class="auth-brand-top">
+        <span class="auth-brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 2.5 4.5 5.6v6.1c0 4.6 3.1 8.4 7.5 9.8 4.4-1.4 7.5-5.2 7.5-9.8V5.6L12 2.5Z" /><path d="M12 7.2c-1.8.3-3.2 1.8-3.4 3.7l-.1 1.1h2.1l.1-.9c.2-1 1-1.7 2-1.9-.4.6-.5 1.3-.3 2l.4 1.3 1.1 2.5.4 2.4" /></svg>
+        </span>
+        <span class="auth-brand-name">RCLabs Gateway</span>
+      </div>
+
+      <div class="auth-brand-main">
+        <p class="auth-brand-eyebrow">Enterprise Identity Platform</p>
+        <p class="auth-brand-title">Secure access to your infrastructure</p>
+        <p class="auth-brand-lede">Manage identities, enforce policies, and control access across your entire organization &mdash; from a single pane of glass.</p>
+
+        <ul class="auth-trust">
+          <li>
+            <span class="auth-trust-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 2.5 4.5 5.6v6.1c0 4.6 3.1 8.4 7.5 9.8 4.4-1.4 7.5-5.2 7.5-9.8V5.6L12 2.5Z" /><path d="m9.2 11.8 1.8 1.8 3.9-4" /></svg>
+            </span>
+            <span class="auth-trust-text"><span class="auth-trust-label">SOC 2 Type II Certified</span><span class="auth-trust-sub">Audited security controls</span></span>
+          </li>
+          <li>
+            <span class="auth-trust-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="5.5" y="10" width="13" height="9.5" rx="2" /><path d="M8.5 10V7.8a3.5 3.5 0 0 1 7 0V10" /></svg>
+            </span>
+            <span class="auth-trust-text"><span class="auth-trust-label">End-to-end Encrypted</span><span class="auth-trust-sub">256-bit TLS in transit</span></span>
+          </li>
+          <li>
+            <span class="auth-trust-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17M12 3.5c2.3 2.4 3.4 5.3 3.4 8.5s-1.1 6.1-3.4 8.5c-2.3-2.4-3.4-5.3-3.4-8.5s1.1-6.1 3.4-8.5Z" /></svg>
+            </span>
+            <span class="auth-trust-text"><span class="auth-trust-label">Zero-trust Architecture</span><span class="auth-trust-sub">Least-privilege access</span></span>
+          </li>
+          <li>
+            <span class="auth-trust-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M13 2.5 4.5 13.5H11l-1 8 8.5-11H12l1-8Z" /></svg>
+            </span>
+            <span class="auth-trust-text"><span class="auth-trust-label">99.99% Uptime SLA</span><span class="auth-trust-sub">Enterprise reliability</span></span>
+          </li>
+        </ul>
+      </div>
+
+      <p class="auth-brand-foot">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m8.5 12.2 2.4 2.4 4.6-5" /></svg>
+        <span>Trusted by 2,400+ organizations worldwide</span>
+      </p>
+    </aside>
+
+    <div class="auth-shell">
+      <main class="auth-card" aria-labelledby="kc-page-title">
+        <header id="kc-header" class="auth-card-header">
+          <div class="auth-mobile-brand" aria-hidden="true">
+            <span class="auth-brand-logo auth-brand-logo-sm">
+              <svg viewBox="0 0 24 24"><path d="M12 2.5 4.5 5.6v6.1c0 4.6 3.1 8.4 7.5 9.8 4.4-1.4 7.5-5.2 7.5-9.8V5.6L12 2.5Z" /><path d="M12 7.2c-1.8.3-3.2 1.8-3.4 3.7l-.1 1.1h2.1l.1-.9c.2-1 1-1.7 2-1.9-.4.6-.5 1.3-.3 2l.4 1.3 1.1 2.5.4 2.4" /></svg>
+            </span>
+            <span class="auth-brand-name">RCLabs Gateway</span>
+          </div>
+          <div class="auth-security-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M12 3 5.5 5.8v5.5c0 4.2 2.7 7.9 6.5 9.2 3.8-1.3 6.5-5 6.5-9.2V5.8L12 3Z" />
+              <path d="m9.2 11.8 1.8 1.8 3.9-4" />
+            </svg>
+          </div>
+          <div id="kc-header-wrapper">
+            <p class="auth-eyebrow">Secure access</p>
+            <h1 id="kc-page-title"><#nested "header"></h1>
+            <p class="auth-intro">Enter your account details to continue.</p>
+          </div>
         <#if realm.internationalizationEnabled && locale.supported?size gt 1>
           <label class="auth-language" for="login-select-toggle">
             <span class="sr-only">${msg("languages")}</span>
             <select aria-label="${msg("languages")}" id="login-select-toggle" onchange="if (this.value) window.location.href=this.value">
               <#list locale.supported?sort_by("label") as l>
-                <option value="${l.url}" ${(l.languageTag == locale.currentLanguageTag)?then('selected','')}>${l.label}</option>
+                <option value="${l.url}" <#if l.languageTag == locale.currentLanguageTag>selected</#if>>${l.label}</option>
               </#list>
             </select>
           </label>
@@ -128,6 +183,10 @@
       </header>
 
       <div class="auth-card-body">
+        <#if social?? && social.providers?? && social.providers?has_content>
+          <div class="auth-sso"><#nested "socialProviders"></div>
+          <div class="auth-divider" aria-hidden="true"><span>or</span></div>
+        </#if>
         <#if auth?has_content && auth.showUsername() && !auth.showResetCredentials()>
           <div class="${properties.kcFormClass} auth-attempted-user">
             <#nested "show-username">
@@ -162,7 +221,6 @@
         </#if>
 
         <div class="auth-card-footer">
-          <#nested "socialProviders">
           <#if displayInfo>
             <div id="kc-info" class="auth-info ${properties.kcFormClass}">
               <div id="kc-info-wrapper"><#nested "info"></div>
@@ -175,8 +233,9 @@
 
     <p class="auth-footnote">
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.8 8V6.2a3.2 3.2 0 0 1 6.4 0V8m-7.4 0h8.4v7.2H5.8V8Z" /></svg>
-      Encrypted connection
+      256-bit TLS &middot; SOC 2 Type II &middot; GDPR compliant
     </p>
+  </div>
   </div>
 </div>
 </body>
