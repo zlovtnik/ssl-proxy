@@ -424,6 +424,22 @@ mock_kcadm() {
         self.assertIn("prefers-reduced-motion: reduce", stylesheet)
         self.assertIn(":focus-visible", stylesheet)
 
+    def test_keycloak_rollout_keeps_an_available_backend(self) -> None:
+        deployment = next(
+            resource
+            for resource in documents(
+                (ROOT / "cyber-stack/base/schema-migrator/keycloak.yaml").read_text()
+            )
+            if resource["kind"] == "Deployment"
+        )
+        self.assertEqual(
+            {
+                "type": "RollingUpdate",
+                "rollingUpdate": {"maxSurge": 1, "maxUnavailable": 0},
+            },
+            deployment["spec"]["strategy"],
+        )
+
     def test_internal_jwks_clients_can_reach_keycloak_without_management_access(self) -> None:
         resources = documents(
             (ROOT / "cyber-stack/base/schema-migrator/keycloak.yaml").read_text()
