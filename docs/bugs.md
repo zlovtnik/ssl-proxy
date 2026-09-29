@@ -359,9 +359,12 @@ Notes:
   `ATHSEARCH_EMBEDDING_REQUEST_CONCURRENCY=4` in
   `cyber-stack/matrix/prod/patches/atheros-search.yaml`, one variable at a
   time.
-- [ ] **E3.1** — Measure and tune the host `llama-server.service` (slot count
-  and thread budget) with explicit approval; the host also runs the k3s
-  control plane.
+- [x] **E3.1** — Measured the host `llama-server.service` on `wiretrap` and
+  found the real limiter is the Vulkan drop-in's physical batch size, not slot
+  or thread count. See "E3.1 llama-server throughput" below.
+- [x] **E6.1** — Add `cancel-superseded` to `cmd/embedding-job-repair` so the
+  pending jobs that target superseded documents can be reaped instead of
+  embedded.
 - [x] **E4.1** — Cancel pending embedding jobs when their document is
   superseded in `SearchPreparationSql.persist`.
 - [x] **E4.2** — Add a high-water mark so `embedding-preparer` backs off when
@@ -394,6 +397,81 @@ E4.1 → E4.2                         (producer, separate sbt change set)
 E3.1                                 (host tuning, gated on approval)
 E5.1 → E5.2 → E5.3 → E5.4           (observability, can run in parallel)
 ```
+
+---
+
+## E3.1 llama-server throughput (measured 2026-09-28)
+
+`llama-server.service` is host-local on `wiretrap` and is not tracked in this
+repository. The base unit
+(`/etc/systemd/system/llama-server.service`) is overridden by
+`/etc/systemd/system/llama-server.service.d/vulkan.conf`, which lowered the
+physical batch size when the build was switched to Vulkan:
+
+| | base unit | vulkan drop-in (running) | proposed |
+| --- | --- | --- | --- |
+| `--ctx-size` | 2048 | 512 | 2048 |
+| `--batch-size` | 16384 | 512 | 8192 |
+| `--ubatch-size` | 16384 | 512 | 4096 |
+| `--parallel` | unset (4) | unset (4) | 4 |
+
+Measured with production serving live traffic on the same iGPU throughout, so
+every number is conservative. Each figure is a sustained burst of the packed
+request shape the worker sends (4 documents, ~128 tokens each):
+
+| Config | docs/min |
+| --- | --- |
+| ubatch 512, 4 slots (running) | 197–232 |
+| **ubatch 4096, batch 8192, 4 slots** | **389** |
+| ubatch 8192, batch 16384, 4 slots | 339 |
+| ubatch 4096, batch 8192, 8 slots | 388–426 |
+
+Raising `--ubatch-size` is worth about 1.7x. More slots and more threads are
+not: `gpu_busy_percent` on the AMD Renoir iGPU sits at 93–99% throughout, so
+the GPU is the ceiling and additional concurrency has nothing to schedule.
+
+### Paths ruled out
+
+- **CPU backend is worse, not better.** The same model on `build/bin` (no
+  Vulkan) needs 102 CPU-seconds for 19 documents where the Vulkan build needs
+  3.9, and sustains 143 docs/min against the Vulkan build's 232 in a burst.
+  A single short request looks 14x faster on CPU, but that is serial small-input
+  latency overlapping badly across 4 slots; throughput is what matters and
+  Vulkan wins. Do not drop `-ngl 99`.
+- **Re-quantization is not viable.** Only `Q8_0` is present in the Hugging Face
+  cache. Q5_K_M or Q4_K_M would cut work per document, but the model identity
+  is part of the `embedding_jobs` unique key, so a new quantization orphans
+  all 1,686,546 completed embeddings. At the achievable rate a re-embed is not
+  affordable.
+- **More slots/threads.** See the `gpu_busy_percent` reading above.
+
+### Latent risk: `n_ctx_slot` is clamped to 512
+
+`n_ctx_train` for this GGUF is 512, so llama.cpp clamps
+`n_ctx_slot = ctx_size / parallel` to 512 and logs
+`n_ctx_seq (4096) > n_ctx_train (512)`. `ChunkTokenLimit` is 480, which leaves
+room for the template, but the historical journal shows inputs of 532, 552,
+569, 597, 642, 688, 737 and 757 tokens rejected with
+`input (N tokens) is larger than the max context size (512 tokens)`.
+
+Those rejections are all from 2026-09-11 and 2026-09-12. There are none in
+current production, and the running worker log shows only
+`context deadline exceeded` and `context canceled` defers, not HTTP 500s. So
+this is a boundary to keep in mind if `ChunkTokenLimit` is ever raised, not a
+live defect. `RequestPackTokenLimit` was deliberately left at 512.
+
+### Apply
+
+```bash
+sudo cp -a /etc/systemd/system/llama-server.service.d/vulkan.conf \
+        /etc/systemd/system/llama-server.service.d/vulkan.conf.bak-20260928
+# write the proposed column above into the drop-in
+sudo systemctl daemon-reload && sudo systemctl restart llama-server.service
+```
+
+A restart is safe: the worker pool treats connection failure as
+`BackendUnavailableError`, defers the claimed batch without consuming an
+attempt, and resumes on the next poll.
 
 ---
 
