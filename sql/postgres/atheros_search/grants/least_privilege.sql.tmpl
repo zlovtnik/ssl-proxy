@@ -50,6 +50,7 @@ GRANT INSERT ON atheros_search.asset_annotation_audit TO {{ATHEROS_SEARCH_ACCOUN
 GRANT SELECT, INSERT, UPDATE ON atheros_search.merge_decisions TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.search_queries TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.worker_heartbeat TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.saved_views TO {{ATHEROS_SEARCH_ACCOUNT}};
 
 GRANT USAGE, SELECT ON SEQUENCE atheros_search.embeddings_embedding_id_seq TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT USAGE, SELECT ON SEQUENCE atheros_search.search_vectors_event_vector_id_seq,
