@@ -201,9 +201,12 @@ guarded garbage-collection step for weekly scheduling.
 
 ### Host storage metrics
 
-The node exporter textfile collector publishes host Docker-volume, K3s PVC and
-Redpanda topic sizes. Install the tracked collector and timer on Wiretrap as
-root; the service runs with idle I/O priority every 45 minutes:
+The node exporter textfile collector publishes host Docker-volume, K3s PVC,
+PostgreSQL and Redpanda sizes, plus per-host-path usage that attributes
+filesystem growth to a named directory. Install the tracked collector and timer
+on Wiretrap as root; the service runs with idle I/O priority every 45 minutes.
+Root is required because the K3s and Docker volume roots are not readable by
+unprivileged processes:
 
 ```bash
 install -m 0755 scripts/pv-usage-textfile.sh /usr/local/sbin/ssl-proxy-pv-usage-textfile
@@ -214,9 +217,40 @@ systemctl enable --now ssl-proxy-pv-usage-textfile.timer
 systemctl start ssl-proxy-pv-usage-textfile.service
 ```
 
-Verify that `/var/lib/node_exporter/textfile_collector/ssl_proxy_storage.prom`
-exists, then use the Infrastructure Capacity dashboard to inspect the emitted
-`docker_volume_used_bytes` and `redpanda_topic_log_bytes` metrics.
+The unit sets `K3S_PVC_ROOT`, `DOCKER_VOLUME_ROOT`, `KUBECONFIG` and
+`KUBERNETES_NAMESPACE` explicitly. Operator overrides go in
+`/etc/default/ssl-proxy-storage`, which is read with `EnvironmentFile=-` and
+overrides the defaults:
+
+```bash
+install -m 0644 /dev/null /etc/default/ssl-proxy-storage
+printf 'HOST_PATHS=/var/lib/docker /var/lib/rancher/k3s/agent/containerd /var/lib/rancher/k3s/storage /var/log\n' \
+  >/etc/default/ssl-proxy-storage
+```
+
+Verify all of the following. A missing metric is not a healthy reading: the
+alerts that consume it are silently unevaluated, which is what
+`StorageMetricsMissing` exists to catch.
+
+```bash
+systemctl status ssl-proxy-pv-usage-textfile.timer
+journalctl -u ssl-proxy-pv-usage-textfile.service -n 50
+ls -la /var/lib/node_exporter/textfile_collector/ssl_proxy_storage.prom
+grep -E 'host_path_capacity_bytes|docker_volume_used_bytes|postgres_database_bytes' \
+  /var/lib/node_exporter/textfile_collector/ssl_proxy_storage.prom
+```
+
+Expected series: `ssl_proxy_storage_textfile_timestamp_seconds`,
+`ssl_proxy_host_path_used_bytes` with `class="host_path"` and `class="k3s_pvc"`,
+`ssl_proxy_host_path_capacity_bytes` for each bound local-path volume,
+`docker_volume_used_bytes` for each Docker volume, and
+`ssl_proxy_postgres_database_bytes` for the `sync` database. Then use the
+Infrastructure Capacity dashboard to inspect the emitted metrics.
+
+The service aborts before replacing the snapshot if any step fails, so a partial
+file is never published and `StorageTextfileStale` fires instead. That is
+intended: an unparseable capacity quantity is a bug to fix, not a value to
+round to zero.
 
 `make pvc-audit` reports only claims that simultaneously have no owner
 reference, no Argo tracking annotation and no pod reference. It never deletes:

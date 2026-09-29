@@ -40,7 +40,28 @@ groups:
         expr: max by (node) (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
       - record: node:filesystem_utilization:ratio
         expr: max by (node, mountpoint, fstype) (1 - (node_filesystem_avail_bytes{fstype!~"vfat|tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"vfat|tmpfs|overlay"}))
+      # k3s local-path volumes are bind mounts on the host filesystem rather
+      # than separate filesystems, so kubelet_volume_stats_* reports the host
+      # rootfs numbers for every one of them. The host textfile measurement from
+      # scripts/pv-usage-textfile.sh is the authority for those volumes and is
+      # listed first so `or` prefers it; the kubelet series remains the fallback
+      # for volumes backed by a real filesystem.
+      - record: pvc:available_bytes
+        expr: |
+          max by (node, namespace, persistentvolumeclaim) (
+            ssl_proxy_host_path_capacity_bytes{class="k3s_pvc"}
+            - ssl_proxy_host_path_used_bytes{class="k3s_pvc"}
+          )
+          or
+          max by (node, namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes)
+      - record: pvc:capacity_bytes
+        expr: |
+          max by (node, namespace, persistentvolumeclaim) (ssl_proxy_host_path_capacity_bytes{class="k3s_pvc"})
+          or
+          max by (node, namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes)
+      # clamp_min keeps a missing or zero capacity from producing +Inf. A volume
+      # measured at its full declared capacity still alerts.
       - record: pvc:utilization:ratio
-        expr: max by (node, namespace, persistentvolumeclaim) (1 - (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes))
+        expr: 1 - (pvc:available_bytes / clamp_min(pvc:capacity_bytes, 1))
       - record: container:memory_limit_utilization:ratio
         expr: sum by (node, namespace, pod, container) (container_memory_working_set_bytes{container!="",image!=""}) / on (namespace, pod, container) group_left sum by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0)

@@ -3,15 +3,27 @@ global:
 
 route:
   receiver: private-webhook
-  group_by: [alertname, environment, service, severity]
+  # environment is not set by any rule in this repository, so grouping on it
+  # only padded the group key. Kept out so a group matches on what exists.
+  group_by: [alertname, service, severity]
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
+  routes:
+    # A sustained critical alert repeating every four hours is a silenced
+    # alert: FilesystemFreeSpaceCritical was firing for twenty hours straight
+    # and the node still reached disk pressure. Repeat criticals until they
+    # resolve.
+    - receiver: private-webhook
+      matchers: ['severity="critical"']
+      group_wait: 10s
+      group_interval: 2m
+      repeat_interval: 30m
 
 inhibit_rules:
   - source_matchers: ['severity="critical"']
     target_matchers: ['severity="warning"']
-    equal: [alertname, environment, service]
+    equal: [alertname, service]
 
 receivers:
   - name: private-webhook

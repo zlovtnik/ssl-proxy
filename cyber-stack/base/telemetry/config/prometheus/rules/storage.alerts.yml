@@ -64,3 +64,46 @@ groups:
           diagnostic: "Volume and topic size alerts cannot fire while the node_exporter textfile collector is stale."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#storage-metrics-are-stale"
+      # An absent producer is indistinguishable from a healthy zero, which is how
+      # five storage rules sat unevaluated for days. This fires when the metrics
+      # those rules read do not exist at all.
+      - alert: StorageMetricsMissing
+        expr: absent(docker_volume_used_bytes) or absent(ssl_proxy_storage_textfile_timestamp_seconds) or absent(ssl_proxy_postgres_database_bytes)
+        for: 15m
+        labels: {severity: critical, service: storage}
+        annotations:
+          summary: "Host storage metrics are not being produced"
+          diagnostic: "At least one of docker_volume_used_bytes, ssl_proxy_storage_textfile_timestamp_seconds or ssl_proxy_postgres_database_bytes has no series, so the registry, Docker-in-Docker and PostgreSQL size alerts cannot fire. Check ssl-proxy-pv-usage-textfile.timer on the host."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#storage-metrics-are-missing"
+      - alert: HostPathVolumeHigh
+        expr: ssl_proxy_host_path_used_bytes{class="k3s_pvc"} / ssl_proxy_host_path_capacity_bytes{class="k3s_pvc"} > 0.85
+        for: 15m
+        labels: {severity: warning, service: storage}
+        annotations:
+          summary: "Volume {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is above 85% full"
+          diagnostic: "A k3s local-path volume has outgrown its declared capacity. Reclaim from the subsystem that owns it; see the storage workmap for targets."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#host-path-volume-pressure"
+      # Size thresholds cannot see a burst. This node once lost 374 GiB in about
+      # eighty minutes and held disk pressure long enough to evict the Argo CD
+      # control plane. The rate alert fires while there is still headroom and
+      # names a writer rather than a total.
+      - alert: FilesystemShrinkingFast
+        expr: max by (node, mountpoint, fstype) (deriv(node_filesystem_avail_bytes{mountpoint="/", fstype!~"tmpfs|overlay"}[1h]) * 3600) < -53687091200
+        for: 15m
+        labels: {severity: warning, service: storage}
+        annotations:
+          summary: "Node {{ $labels.node }} is losing more than 50 GiB of free space per hour"
+          diagnostic: "Free space on {{ $labels.mountpoint }} has fallen by more than 50 GiB per hour for fifteen minutes. Query ssl_proxy_host_path_used_bytes{class=\"host_path\"} to identify the growing path before the node reaches disk pressure."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#node-disk-pressure-and-eviction"
+      - alert: NodeDiskPressure
+        expr: kube_node_status_condition{condition="DiskPressure"} == 1
+        for: 5m
+        labels: {severity: critical, service: infrastructure}
+        annotations:
+          summary: "Node {{ $labels.node }} is under disk pressure"
+          diagnostic: "Kubelet has set DiskPressure and may be evicting workloads, including the Argo CD control plane, which breaks commands such as argocd app get --show-operation. Free space before the condition clears."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/disk-full.md#node-disk-pressure-and-eviction"

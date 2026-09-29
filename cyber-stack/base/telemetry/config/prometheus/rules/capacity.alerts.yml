@@ -11,7 +11,7 @@ groups:
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#storage-pressure"
       - alert: PVCDaysToFull
-        expr: ((kubelet_volume_stats_available_bytes / -deriv(kubelet_volume_stats_available_bytes[6h])) / 86400 and deriv(kubelet_volume_stats_available_bytes[6h]) < 0) < 7
+        expr: ((pvc:available_bytes / -deriv(pvc:available_bytes[6h])) / 86400 and deriv(pvc:available_bytes[6h]) < 0) < 7
         for: 15m
         labels: {severity: warning, service: storage}
         annotations:

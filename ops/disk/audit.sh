@@ -148,6 +148,41 @@ dind_container() {
     fi
   done
 
+  section "attribution"
+  # du cannot read /var/lib/docker or /var/lib/rancher/k3s/agent without root,
+  # and du still prints a total for a partially readable tree, so an
+  # unprivileged snapshot looks plausible while under-reporting by hundreds of
+  # gigabytes. Report the filesystem total and which monitored paths are
+  # unreadable, so the gap is explicit instead of inferred. A full du of / is
+  # deliberately not used: it walks the whole disk and this runs on a timer.
+  printf 'root filesystem: %s\n' "$(df -h / 2>/dev/null | awk 'NR == 2 { print $3 " used, " $4 " free (" $5 ")" }')"
+  unreadable=0
+  for path in "${host_paths[@]}"; do
+    if [ -d "$path" ] && [ ! -r "$path" ]; then
+      printf 'root-only, not accounted for below: %s\n' "$path"
+      unreadable=$((unreadable + 1))
+    fi
+  done
+  if [ "$unreadable" -gt 0 ]; then
+    printf '\n'
+    printf 'NOTE: %s monitored path(s) need root. The du totals in this snapshot\n' "$unreadable"
+    printf 'exclude them, so the sum below is lower than the filesystem total.\n'
+    printf 'Re-run as root for a complete picture, or use the textfile snapshot.\n'
+  fi
+
+  section "host storage textfile snapshot"
+  textfile_dir="${NODE_EXPORTER_TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+  if [ -f "$textfile_dir/ssl_proxy_storage.prom" ]; then
+    as_root cat "$textfile_dir/ssl_proxy_storage.prom"
+    printf '\n'
+    printf 'note: a timestamp older than two hours means the publisher is not\n'
+    printf 'running; see the storage metrics runbook.\n'
+  else
+    printf 'absent: %s/ssl_proxy_storage.prom\n' "$textfile_dir"
+    printf 'note: no host storage metrics are being published, so volume and\n'
+    printf 'PostgreSQL size alerts cannot fire. See the storage runbook.\n'
+  fi
+
   section "container runtime images and containers"
   as_root k3s crictl images
   printf '\n'

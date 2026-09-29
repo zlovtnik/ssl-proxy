@@ -1,8 +1,22 @@
 [Unit]
 Description=Publish ssl-proxy host storage usage for node_exporter
+Documentation=https://github.com/zlovtnik/ssl-proxy/blob/main/ops/disk/README.md
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/ssl-proxy-pv-usage-textfile
 Nice=19
 IOSchedulingClass=idle
+# Without these the script falls back to a /k3s path that does not exist on
+# this host, so no k3s_pvc series are published and pvc:utilization:ratio
+# keeps reporting the host rootfs numbers for every volume.
+Environment=K3S_PVC_ROOT=/var/lib/rancher/k3s/storage
+Environment=DOCKER_VOLUME_ROOT=/var/lib/docker/volumes
+Environment=KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+Environment=KUBERNETES_NAMESPACE=prod-ssl-proxy
+Environment=POSTGRES_CONTAINER=ssl-proxy-platform-postgres
+Environment=REDPANDA_POD=ssl-proxy-redpanda-0
+Environment=HOST_PATHS=/var/lib/docker /var/lib/rancher/k3s/agent/containerd /var/lib/rancher/k3s/storage /var/log
+# Operator overrides, matching ops/disk/README.md. Unset values in the file
+# replace the defaults above.
+EnvironmentFile=-/etc/default/ssl-proxy-storage

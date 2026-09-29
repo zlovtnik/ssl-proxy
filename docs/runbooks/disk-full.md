@@ -119,6 +119,108 @@ Order of operations:
 The partitioning sketch for `sync_batches` and `sync_events` is a proposal
 only; it is not wired into `sql/postgres/`.
 
+## Host path volume pressure
+
+`HostPathVolumeHigh` fires when a k3s local-path volume passes 85% of its
+declared capacity. These volumes are bind mounts on the host filesystem, not
+separate filesystems, so the measurement comes from the host textfile collector
+rather than from kubelet. Reclaim from the subsystem that owns the volume: Loki
+for the log volume, MinIO for archived payloads, Redpanda for the topic volume.
+The per-volume budgets are in the [storage workmap](../../ops/disk/README.md).
+
+```bash
+kubectl -n prod-ssl-proxy get pvc
+cat /var/lib/node_exporter/textfile_collector/ssl_proxy_storage.prom | grep k3s_pvc
+```
+
+## Storage metrics are missing
+
+`StorageMetricsMissing` is critical and means at least one of
+`docker_volume_used_bytes`, `ssl_proxy_storage_textfile_timestamp_seconds` or
+`ssl_proxy_postgres_database_bytes` has **no series at all**. Every size alert
+that reads those metrics is silently unevaluated while this is true, so treat it
+as "storage is currently unmonitored" rather than as a metrics problem.
+
+The usual cause is that the host collector was never installed. A missing
+producer and a healthy reading of zero look identical to an alert rule, which is
+why this check exists.
+
+```bash
+systemctl status ssl-proxy-pv-usage-textfile.timer
+systemctl list-timers | grep ssl-proxy
+journalctl -u ssl-proxy-pv-usage-textfile.service -n 50
+ls -la /var/lib/node_exporter/textfile_collector/
+```
+
+Install it with the procedure in
+[host storage metrics](../platform-storage-operations.md#host-storage-metrics).
+The unit requires root because the k3s and Docker volume roots are not readable
+by unprivileged processes. If `/var/lib/node_exporter/textfile_collector/` is
+empty or holds no `ssl_proxy_storage.prom`, the timer is not installed.
+
+## Node disk pressure and eviction
+
+`NodeDiskPressure` is the condition that takes a cluster down, and
+`FilesystemShrinkingFast` is its early warning. A size threshold only fires once
+the disk is already full, which on this node was too late: kubelet had begun
+evicting pods.
+
+**The symptom people report is a broken Argo CD command**, not a storage error:
+
+```
+argocd --core app get ssl-proxy-prod-app-stack --show-operation
+{"level":"fatal","msg":"cannot find ready pod with selector:
+ [app.kubernetes.io/name=argocd-repo-server]"}
+```
+
+`--show-operation` is one of the few read commands that needs a live Ready
+repo-server pod to render manifests. Under disk pressure kubelet evicts it and
+the command fails even though the application is healthy. Do not debug Argo CD
+first. Triage in this order:
+
+```bash
+kubectl get nodes -o wide                 # DiskPressure column
+kubectl get node wiretrap -o jsonpath='{.status.conditions[?(@.type=="DiskPressure")]}{"\n"}'
+kubectl get events -A --field-selector type=Warning | grep -E "Evicted|EvictionThreshold|FreeDiskSpace"
+kubectl get pods -A --field-selector status.phase=Failed
+```
+
+`EvictionThresholdMet` on the node means kubelet is reclaiming ephemeral storage
+by killing pods, and `FreeDiskSpaceFailed` means image garbage collection could
+not free enough. Both point at the host filesystem, not at any one workload.
+
+**Find the writer before reclaiming anything.** A size-based view hides a
+sustained writer. Ask what grew:
+
+```bash
+# Which monitored host path is growing, without leaving the cluster
+kubectl -n prod-ssl-proxy exec deploy/ssl-proxy-telemetry-node-exporter -- \
+  sh -c 'grep host_path /var/lib/node_exporter/textfile_collector/ssl_proxy_storage.prom'
+
+# Rate over the incident window, per host path
+# ssl_proxy_host_path_used_bytes{class="host_path"}
+```
+
+`FilesystemShrinkingFast` fires at 50 GiB lost per hour. The recorded incident
+lost about 374 GiB in eighty minutes and then released it, so it fired roughly
+an hour before `NodeDiskPressure` would have.
+
+Note that `du` run unprivileged under-reports this host badly: `/var/lib/docker`
+and `/var/lib/rancher/k3s/agent` are root-only, so an unprivileged snapshot
+reports roughly 31 GiB for a filesystem with around 493 GiB used. Attribute
+sizes with the textfile collector or with `ops/disk/audit.sh` as root, not with
+an unprivileged `du`.
+
+Recovery is not self-evident. Disk pressure clears on the next kubelet disk
+manager poll, which can be several minutes after the space returns, and evicted
+pods are not automatically replaced in a useful timeframe. Confirm the workloads
+are actually back before declaring the incident over:
+
+```bash
+kubectl get deploy -n argocd
+kubectl get pods -A --field-selector status.phase!=Running | head
+```
+
 ## Storage metrics are stale
 
 `StorageTextfileStale` means the host textfile collector has not published

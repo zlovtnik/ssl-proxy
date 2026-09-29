@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -443,18 +444,33 @@ PV_USAGE_DOCKER_STUB = (
     "exit 0\n"
 )
 
+# The PV lookup and the Redpanda report are both kubectl calls with different
+# shapes, so the stub dispatches on the subcommand instead of answering every
+# invocation with the same table.
+PV_USAGE_KUBECTL_STUB = (
+    "printf '%s\\n' \"$*\" >> \"$STUB_LOG\"\n"
+    "for arg in \"$@\"; do\n"
+    "  case \"$arg\" in\n"
+    "    pv)\n"
+    "      printf 'pvc-demo\\tprod-ssl-proxy\\tssl-proxy-telemetry-loki-0\\t20Gi\\n'\n"
+    "      printf 'pvc-orphan\\t10Gi\\n'\n"
+    "      exit 0 ;;\n"
+    "    exec)\n"
+    "      printf '%s\\n' 'BROKER DIRECTORY TOPIC BYTES' \\\n"
+    "        '1 /var/lib/redpanda wireless.audit 12345'\n"
+    "      exit 0 ;;\n"
+    "  esac\n"
+    "done\n"
+    "exit 0\n"
+)
+
 
 class PvUsageTextfileScriptTest(unittest.TestCase):
     def setUp(self) -> None:
         self.env = StubEnvironment()
         self.addCleanup(self.env.close)
         self.env.stub("docker", PV_USAGE_DOCKER_STUB)
-        self.env.stub(
-            "kubectl",
-            "printf '%s\\n' \"$*\" >> \"$STUB_LOG\"\n"
-            "printf '%s\\n' 'BROKER DIRECTORY TOPIC BYTES' "
-            "'1 /var/lib/redpanda wireless.audit 12345'\n",
-        )
+        self.env.stub("kubectl", PV_USAGE_KUBECTL_STUB)
         self.output = self.env.root / "textfile"
         self.output.mkdir()
         self.kubeconfig = self.env.root / "kubeconfig"
@@ -462,13 +478,107 @@ class PvUsageTextfileScriptTest(unittest.TestCase):
         self.pvc_root = self.env.root / "k3s"
         (self.pvc_root / "pvc-demo").mkdir(parents=True)
         (self.pvc_root / "pvc-demo" / "data").write_text("x", encoding="utf-8")
+        self.host_path = self.env.root / "hostdata"
+        self.host_path.mkdir()
+        (self.host_path / "blob").write_text("z" * 32, encoding="utf-8")
         self.volume_root = self.env.root / "volumes"
         (self.volume_root / "registry" / "_data").mkdir(parents=True)
         (self.volume_root / "registry" / "_data" / "blob").write_text(
             "y", encoding="utf-8"
         )
 
+    def publish(self, **extra: str) -> str:
+        result = subprocess.run(
+            ["bash", str(REPOSITORY_ROOT / "scripts" / "pv-usage-textfile.sh")],
+            cwd=REPOSITORY_ROOT,
+            env=self.env.environment(
+                NODE_EXPORTER_TEXTFILE_DIR=str(self.output),
+                K3S_PVC_ROOT=str(self.pvc_root),
+                DOCKER_VOLUME_ROOT=str(self.volume_root),
+                KUBECONFIG=str(self.kubeconfig),
+                **extra,
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        return (self.output / "ssl_proxy_storage.prom").read_text(encoding="utf-8")
+
     def test_publishes_metrics_with_container_side_password(self) -> None:
+        prom = self.publish()
+        self.assertIn('ssl_proxy_postgres_database_bytes{datname="sync"} 1048576', prom)
+        self.assertIn(
+            'ssl_proxy_postgres_relation_bytes{schema="octopus_core",'
+            'relation="sync_events"} 1024',
+            prom,
+        )
+        self.assertIn('redpanda_topic_log_bytes{topic="wireless.audit"} 12345', prom)
+        self.assertIn('docker_volume_used_bytes{volume="registry"}', prom)
+        calls = "\n".join(self.env.calls())
+        self.assertIn("/run/platform-secrets/platform_admin.password", calls)
+        self.assertIn(f"--kubeconfig {self.kubeconfig}", calls)
+
+    def test_publishes_pvc_identity_and_capacity(self) -> None:
+        """k3s local-path volumes need names and a real byte capacity.
+
+        Without these the recording rule has no local-path source and falls back
+        to kubelet, which reports the host filesystem for every volume.
+        """
+        prom = self.publish(NODE_NAME="wiretrap")
+        self.assertIn(
+            'ssl_proxy_host_path_capacity_bytes{class="k3s_pvc",node="wiretrap",'
+            'namespace="prod-ssl-proxy",persistentvolumeclaim='
+            '"ssl-proxy-telemetry-loki-0"} 21474836480',
+            prom,
+        )
+        used = re.search(
+            r'ssl_proxy_host_path_used_bytes\{class="k3s_pvc",node="wiretrap",'
+            r'namespace="prod-ssl-proxy",'
+            r'persistentvolumeclaim="ssl-proxy-telemetry-loki-0"\} (\d+)',
+            prom,
+        )
+        self.assertIsNotNone(used, prom)
+        self.assertGreater(int(used.group(1)), 0)
+
+    def test_skips_an_unbound_persistent_volume(self) -> None:
+        """A PV with no claimRef has two fields and must not be published."""
+        prom = self.publish()
+        self.assertNotIn("pvc-orphan", prom)
+
+    def test_publishes_named_host_paths_for_growth_attribution(self) -> None:
+        prom = self.publish(HOST_PATHS=str(self.host_path), NODE_NAME="wiretrap")
+        self.assertIn(
+            f'ssl_proxy_host_path_used_bytes{{class="host_path",node="wiretrap",'
+            f'path="{self.host_path}"}}',
+            prom,
+        )
+
+    def test_a_failed_pv_lookup_aborts_without_replacing_the_snapshot(self) -> None:
+        """Silently publishing zero volume series would look like empty volumes.
+
+        Only the PV lookup fails here, so this exercises the load-bearing guard
+        rather than the Redpanda path, which is allowed to degrade.
+        """
+        self.publish()
+        (self.output / "ssl_proxy_storage.prom").write_text(
+            "# previous snapshot\n", encoding="utf-8"
+        )
+        self.env.stub(
+            "kubectl",
+            "printf '%s\\n' \"$*\" >> \"$STUB_LOG\"\n"
+            "for arg in \"$@\"; do\n"
+            "  case \"$arg\" in\n"
+            "    pv) exit 7 ;;\n"
+            "    exec)\n"
+            "      printf '%s\\n' 'BROKER DIRECTORY TOPIC BYTES' \\\n"
+            "        '1 /var/lib/redpanda wireless.audit 12345'\n"
+            "      exit 0 ;;\n"
+            "  esac\n"
+            "done\n"
+            "exit 0\n",
+        )
         result = subprocess.run(
             ["bash", str(REPOSITORY_ROOT / "scripts" / "pv-usage-textfile.sh")],
             cwd=REPOSITORY_ROOT,
@@ -483,19 +593,101 @@ class PvUsageTextfileScriptTest(unittest.TestCase):
             text=True,
             check=False,
         )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(
+            (self.output / "ssl_proxy_storage.prom").read_text(encoding="utf-8"),
+            "# previous snapshot\n",
+        )
+
+    def test_a_redpanda_outage_still_publishes_volume_metrics(self) -> None:
+        """Redpanda has its own availability alert.
+
+        Its failure must not suppress the host path and volume measurements that
+        feed pvc:utilization:ratio, or one broken subsystem blinds the rest.
+        """
+        self.env.stub(
+            "kubectl",
+            "printf '%s\\n' \"$*\" >> \"$STUB_LOG\"\n"
+            "for arg in \"$@\"; do\n"
+            "  case \"$arg\" in\n"
+            "    pv)\n"
+            "      printf 'pvc-demo\\tprod-ssl-proxy\\tssl-proxy-telemetry-loki-0\\t20Gi\\n'\n"
+            "      exit 0 ;;\n"
+            "    exec) exit 7 ;;\n"
+            "  esac\n"
+            "done\n"
+            "exit 0\n",
+        )
+        result = subprocess.run(
+            ["bash", str(REPOSITORY_ROOT / "scripts" / "pv-usage-textfile.sh")],
+            cwd=REPOSITORY_ROOT,
+            env=self.env.environment(
+                NODE_EXPORTER_TEXTFILE_DIR=str(self.output),
+                K3S_PVC_ROOT=str(self.pvc_root),
+                DOCKER_VOLUME_ROOT=str(self.volume_root),
+                KUBECONFIG=str(self.kubeconfig),
+                HOST_PATHS=str(self.host_path),
+                NODE_NAME="wiretrap",
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
         self.assertEqual(result.returncode, 0, result.stdout)
         prom = (self.output / "ssl_proxy_storage.prom").read_text(encoding="utf-8")
-        self.assertIn('ssl_proxy_postgres_database_bytes{datname="sync"} 1048576', prom)
+        self.assertNotIn("redpanda_topic_log_bytes{", prom)
         self.assertIn(
-            'ssl_proxy_postgres_relation_bytes{schema="octopus_core",'
-            'relation="sync_events"} 1024',
+            'ssl_proxy_host_path_capacity_bytes{class="k3s_pvc",node="wiretrap",'
+            'namespace="prod-ssl-proxy",persistentvolumeclaim='
+            '"ssl-proxy-telemetry-loki-0"} 21474836480',
             prom,
         )
-        self.assertIn('redpanda_topic_log_bytes{topic="wireless.audit"} 12345', prom)
+        self.assertIn(
+            f'ssl_proxy_host_path_used_bytes{{class="host_path",node="wiretrap",'
+            f'path="{self.host_path}"}}',
+            prom,
+        )
         self.assertIn('docker_volume_used_bytes{volume="registry"}', prom)
-        calls = "\n".join(self.env.calls())
-        self.assertIn("/run/platform-secrets/platform_admin.password", calls)
-        self.assertIn(f"--kubeconfig {self.kubeconfig}", calls)
+        self.assertIn('ssl_proxy_postgres_database_bytes{datname="sync"}', prom)
+
+    def test_an_unparseable_capacity_aborts_without_replacing_the_snapshot(self) -> None:
+        """A silent zero would report a volume as 0% full."""
+        good = self.publish()
+        (self.output / "ssl_proxy_storage.prom").write_text(
+            "# previous snapshot\n", encoding="utf-8"
+        )
+        self.assertIn('ssl_proxy_storage_textfile_timestamp_seconds', good)
+        self.env.stub(
+            "kubectl",
+            "printf '%s\\n' \"$*\" >> \"$STUB_LOG\"\n"
+            "for arg in \"$@\"; do\n"
+            "  case \"$arg\" in\n"
+            "    pv) printf 'pvc-demo\\tns\\tclaim\\tnot-a-quantity\\n'; exit 0 ;;\n"
+            "  esac\n"
+            "done\n"
+            "exit 0\n",
+        )
+        result = subprocess.run(
+            ["bash", str(REPOSITORY_ROOT / "scripts" / "pv-usage-textfile.sh")],
+            cwd=REPOSITORY_ROOT,
+            env=self.env.environment(
+                NODE_EXPORTER_TEXTFILE_DIR=str(self.output),
+                K3S_PVC_ROOT=str(self.pvc_root),
+                DOCKER_VOLUME_ROOT=str(self.volume_root),
+                KUBECONFIG=str(self.kubeconfig),
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unparseable capacity quantity", result.stdout)
+        self.assertEqual(
+            (self.output / "ssl_proxy_storage.prom").read_text(encoding="utf-8"),
+            "# previous snapshot\n",
+        )
 
 
 class DiskAuditMakeTargetTest(unittest.TestCase):

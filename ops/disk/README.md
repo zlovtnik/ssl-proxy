@@ -6,6 +6,23 @@ the phase map for Redpanda, PostgreSQL, the CI registry and the Jenkins
 Docker-in-Docker engine. Nothing here runs by itself: a script changes state
 only with `--apply` plus its confirmation token.
 
+## Current state (2026-09-29)
+
+The node sits at roughly 54% steady-state usage, but the filesystem is not
+stable. Three separate incidents on 2026-09-29 lost about 374 GiB in roughly
+eighty minutes at around 5 GiB per minute, dropping the root filesystem to 95%
+used and releasing the space again within a single 30-second interval. The
+writer has not been attributed yet. Until it is, treat a sudden free-space drop
+as a known recurring event rather than a new symptom.
+
+The critical observability gap from that incident is now addressed in Git but
+**not yet deployed**: the host storage publisher was never installed, so five
+storage alerts had no series to evaluate and `du` run unprivileged could not see
+the two root-only directories holding most of the usage. See
+[host storage metrics](../../docs/platform-storage-operations.md#host-storage-metrics)
+for the install and [disk full](../../docs/runbooks/disk-full.md#node-disk-pressure-and-eviction)
+for triage.
+
 ## Targets
 
 | Subsystem | Target | Owner |
