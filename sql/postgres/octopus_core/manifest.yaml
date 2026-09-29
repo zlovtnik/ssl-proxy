@@ -4,7 +4,7 @@ database: sync
 schema_version: 2026092101
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: b522676cce9fc385a935bd52fc50867d655fe6b34ae0088a11b4c51ec595755e
+manifest_sha256: 82cee5ae93bf11031b1f9f960d3a5055b6f0ee6c6f27ccac9507ece7d383d140
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:
@@ -22,6 +22,7 @@ apply_order:
   - 01_tables/012_retention_and_reconciliation_runs.sql
   - 01_tables/013_proxy_search_indexes.sql
   - 01_tables/014_projection_dispatch_indexes.sql
+  - 01_tables/015_projection_cooccurrence_indexes.sql
 retired:
   - sync_state_pipeline
   - duplicated_wireless_projections
