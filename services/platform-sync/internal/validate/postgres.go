@@ -318,6 +318,7 @@ func atherosSearchGrants() []tableGrant {
 		{table: "atheros_search.merge_decisions", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 		{table: "atheros_search.search_queries", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 		{table: "atheros_search.worker_heartbeat", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
+		{table: "atheros_search.saved_views", privileges: []string{"SELECT", "INSERT", "UPDATE", "DELETE"}},
 	}
 }
 
