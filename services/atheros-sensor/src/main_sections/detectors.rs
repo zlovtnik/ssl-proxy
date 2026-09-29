@@ -1,6 +1,7 @@
 /// Hot path: decodes raw packet -> extracts handshake -> resolves identity -> checks
 /// authorized network -> tags threats -> enriches with MAC device lookup -> observes
 /// bandwidth -> publishes to Redpanda.
+#[allow(clippy::too_many_arguments)]
 async fn process_packet(
     packet: RawPacket,
     context: &AuditContext,
@@ -83,13 +84,14 @@ async fn process_packet(
                 Duration::from_secs(config.authorized_network_cache_ttl_secs),
             )
             .await;
-        if refresh_result.is_err() && pipeline.authorized_network_cache.should_log_failure(true) {
-            warn!(
-                error = %refresh_result.as_ref().unwrap_err(),
-                "authorized wireless network cache refresh failed"
-            );
-        } else if refresh_result.is_ok() {
-            pipeline.authorized_network_cache.should_log_failure(false);
+        match refresh_result {
+            Err(error) if pipeline.authorized_network_cache.should_log_failure(true) => {
+                warn!(%error, "authorized wireless network cache refresh failed");
+            }
+            Ok(_) => {
+                pipeline.authorized_network_cache.should_log_failure(false);
+            }
+            Err(_) => {}
         }
     }
     if try_decrypt_frame(
@@ -330,11 +332,10 @@ async fn process_packet(
     let backlog_pct = {
         let ps = publish_state.lock().unwrap();
         let capacity = ps.memory_backlog_capacity().get();
-        if capacity > 0 {
-            ps.memory_backlog_len() * 100 / capacity
-        } else {
-            0
-        }
+        ps.memory_backlog_len()
+            .saturating_mul(100)
+            .checked_div(capacity)
+            .unwrap_or(0)
     };
     let skip_mac_lookup =
         backlog_pct > 80 || !config.mac_device_lookup_enabled || !inline_request_reply_enabled;

@@ -22,7 +22,6 @@
 /// let peer_ip = client.peer_addr().ok().map(|a| a.ip().to_string());
 /// crate::tunnel::transparent::run_transparent(client, orig_dst, host, state, category, "allowed_sni", tls, peer_ip, profile).await;
 /// # }
-
 /// ```
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_transparent(

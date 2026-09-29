@@ -135,6 +135,7 @@ python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 - [Reporting data and relationship contract](docs/atheros-reporting-data-contract.md)
 - [Operations runbook](docs/runbook.md)
 - [Redpanda daily maintenance](docs/runbooks/redpanda-maintenance.md)
+- [Atheros Search degraded mode](docs/runbooks/atheros-search-degraded.md)
 - [Observability architecture](docs/observability-architecture-jaeger.md)
 - [Secret management](docs/secret-management.md)
 - [Threat model](docs/threat-model.md)

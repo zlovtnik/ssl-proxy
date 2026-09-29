@@ -4,8 +4,6 @@
 /// is true, the function returns an error immediately. This avoids pulling in the heavyweight
 /// `rdkafka` crate dependency — the sensor only needs three simple SUB connections, and raw TCP
 /// with the Redpanda text protocol keeps the binary lean. Callers implement the reconnect loop;
-
-/// this function returns `Err` on any connection, protocol, or payload processing error.
 async fn run_message_loop<F>(
     config: &SyncConfig,
     topic: &'static str,

@@ -377,9 +377,11 @@ mod payload_ref_tests {
     #[test]
     fn outbox_payload_ref_file_contains_valid_json() {
         let outbox = tempfile::tempdir().unwrap();
-        let mut config = SyncConfig::default();
-        config.inline_payload_max_bytes = 1;
-        config.outbox_dir = outbox.path().display().to_string();
+        let config = SyncConfig {
+            inline_payload_max_bytes: 1,
+            outbox_dir: outbox.path().display().to_string(),
+            ..SyncConfig::default()
+        };
         let publisher = SyncPublisher::new(&config);
         let payload_ref = publisher
             .payload_ref_for_event(

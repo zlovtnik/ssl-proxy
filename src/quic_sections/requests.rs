@@ -28,8 +28,6 @@
 ///     .uri("https://example.com:443")
 ///     .body(())
 ///     .unwrap();
-
-///
 /// // Pass `req` to an H3 handler along with a stream, state, config, peer, and optional creds.
 /// // The full call requires runtime resources and types from the surrounding crate and
 /// // therefore is not shown here.

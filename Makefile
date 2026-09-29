@@ -249,7 +249,7 @@ test:
 	$(MAKE) dependency-boundaries
 
 lint:
-	cargo clippy -- -D warnings
+	cargo clippy --workspace --all-targets -- -D warnings
 
 dependency-boundaries:
 	@command -v rg >/dev/null

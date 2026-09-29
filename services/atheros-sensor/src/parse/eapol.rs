@@ -151,7 +151,7 @@ pub(super) fn extract_pmkid(
         .and_then(find_pmkid_in_key_data)
 }
 
-fn eapol_key_data<'a>(frame_control: u16, subtype: u8, frame_bytes: &'a [u8]) -> Option<&'a [u8]> {
+fn eapol_key_data(frame_control: u16, subtype: u8, frame_bytes: &[u8]) -> Option<&[u8]> {
     let payload_offset = data_payload_offset(frame_control, subtype, frame_bytes)?;
     let eapol = frame_bytes.get(payload_offset + 8..)?;
     let key_data_len = u16::from_be_bytes(eapol.get(97..99)?.try_into().ok()?) as usize;

@@ -279,6 +279,7 @@ fn is_bandwidth_candidate(entry: &AuditEntry) -> bool {
         && (entry.destination_bssid.is_some() || entry.bssid.is_some())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_bandwidth_event(
     key: TrafficKey,
     counters: TrafficCounters,

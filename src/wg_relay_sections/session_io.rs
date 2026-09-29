@@ -1,3 +1,4 @@
+#[allow(clippy::too_many_arguments)]
 async fn get_or_create_session(
     client_addr: SocketAddr,
     public_socket: Arc<UdpSocket>,
@@ -99,6 +100,7 @@ fn evict_oldest_idle_session(
     true
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_session_receiver(
     client_addr: SocketAddr,
     session: Arc<RelaySession>,

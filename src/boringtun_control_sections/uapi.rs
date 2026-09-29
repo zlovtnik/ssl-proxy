@@ -316,10 +316,8 @@ fn parse_get_response(response: &str) -> Result<RuntimeDevice, ControlError> {
             "listen_port" => {
                 device.listen_port = Some(parse_u16_config_field("uapi.listen_port", value)?);
             }
-            "fwmark" => {
-                if value != "0" && !value.eq_ignore_ascii_case("off") {
-                    device.fwmark = Some(value.to_string());
-                }
+            "fwmark" if value != "0" && !value.eq_ignore_ascii_case("off") => {
+                device.fwmark = Some(value.to_string());
             }
             "public_key" => {
                 let decoded = hex_key_to_base64(value)?;
@@ -332,11 +330,9 @@ fn parse_get_response(response: &str) -> Result<RuntimeDevice, ControlError> {
                     }
                 }
             }
-            "preshared_key" => {
-                if !value.is_empty() && !value.chars().all(|ch| ch == '0') {
-                    if let Some(peer) = current_peer.as_mut() {
-                        peer.preshared_key = Some(hex_key_to_base64(value)?);
-                    }
+            "preshared_key" if !value.is_empty() && !value.chars().all(|ch| ch == '0') => {
+                if let Some(peer) = current_peer.as_mut() {
+                    peer.preshared_key = Some(hex_key_to_base64(value)?);
                 }
             }
             "endpoint" => {

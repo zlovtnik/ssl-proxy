@@ -229,7 +229,7 @@ impl ProbeDetector {
                     now.saturating_duration_since(state.window_started) >= config.window;
                 let block_expired = state
                     .blocked_until
-                    .map_or(true, |blocked_until| blocked_until <= now);
+                    .is_none_or(|blocked_until| blocked_until <= now);
                 (window_expired && block_expired).then_some(*entry.key())
             })
             .collect::<Vec<_>>();
@@ -744,6 +744,7 @@ fn log_decode_drop(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_decode_error(
     header_tag_drop_notice: &mut RateLimitedDropNotice,
     empty_drop_notice: &mut RateLimitedDropNotice,

@@ -32,7 +32,7 @@ fn admin_api_key_matches_rejects_empty_keys() {
 
 #[test]
 fn configured_unreadable_tls_material_is_rejected() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir().expect("create temp dir");
     let mut config = ssl_proxy::config::Config::default();
     config.proxy.explicit_enabled = true;
     config.tls.cert_path = Some(directory.path().join("missing.crt").display().to_string());
@@ -46,7 +46,7 @@ fn configured_unreadable_tls_material_is_rejected() {
 
 #[test]
 fn cert_only_tls_config_is_rejected() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir().expect("create temp dir");
     let mut config = ssl_proxy::config::Config::default();
     config.proxy.explicit_enabled = true;
     config.tls.cert_path = Some(directory.path().join("cert.crt").display().to_string());
@@ -60,7 +60,7 @@ fn cert_only_tls_config_is_rejected() {
 
 #[test]
 fn key_only_tls_config_is_rejected() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir().expect("create temp dir");
     let mut config = ssl_proxy::config::Config::default();
     config.proxy.explicit_enabled = true;
     config.tls.cert_path = None;
@@ -117,15 +117,20 @@ fn admin_auth_rate_limiter_fails_closed_when_saturated() {
 
 #[tokio::test]
 async fn observability_listener_exposes_no_admin_routes() {
-    let state = build_state(&ssl_proxy::config::Config::default()).unwrap();
+    let state = build_state(&ssl_proxy::config::Config::default()).expect("build state");
     let router = build_observability_router(state);
 
     for path in ["/hosts", "/stats/summary", "/devices", "/dashboard"] {
         let response = router
             .clone()
-            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
             .await
-            .unwrap();
+            .expect("dispatch observability request");
         assert_eq!(
             response.status(),
             axum::http::StatusCode::NOT_FOUND,

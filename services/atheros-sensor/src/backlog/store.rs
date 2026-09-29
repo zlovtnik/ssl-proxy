@@ -5,9 +5,10 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum BacklogFailureStage {
+    #[default]
     PrePublish,
     PostPublish,
 }
@@ -18,12 +19,6 @@ impl BacklogFailureStage {
             Self::PrePublish => "pre_publish",
             Self::PostPublish => "post_publish",
         }
-    }
-}
-
-impl Default for BacklogFailureStage {
-    fn default() -> Self {
-        Self::PrePublish
     }
 }
 

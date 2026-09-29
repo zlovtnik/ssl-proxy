@@ -17,10 +17,11 @@ impl PmfAttackTracker {
         ) {
             if let Some(src_norm) = entry.source_mac.as_deref().and_then(MacAddr::parse) {
                 if let Some(&pmf_required) = self.ap_pmf_state.get(&src_norm) {
-                    if !entry.protected.unwrap_or(false) && pmf_required {
-                        if !tags.contains(&"threat:pmf_deauth_attack".to_string()) {
-                            tags.push("threat:pmf_deauth_attack".to_string());
-                        }
+                    if !entry.protected.unwrap_or(false)
+                        && pmf_required
+                        && !tags.contains(&"threat:pmf_deauth_attack".to_string())
+                    {
+                        tags.push("threat:pmf_deauth_attack".to_string());
                     }
                 }
             }
@@ -75,10 +76,10 @@ impl PmfAttackTracker {
                 let key = (bssid, client);
                 if let Some(&reconnect_time) = self.forced_reconnects.get(&key) {
                     let delta = (observed - reconnect_time).num_milliseconds();
-                    if delta >= 0 && delta <= 10_000 {
-                        if !tags.contains(&"threat:handshake_harvest_attack".to_string()) {
-                            tags.push("threat:handshake_harvest_attack".to_string());
-                        }
+                    if (0..=10_000).contains(&delta)
+                        && !tags.contains(&"threat:handshake_harvest_attack".to_string())
+                    {
+                        tags.push("threat:handshake_harvest_attack".to_string());
                     }
                 }
             }

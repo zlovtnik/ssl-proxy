@@ -204,7 +204,7 @@ impl PublishState {
             "timestamp": crate::timing::now_rfc3339(),
         });
         let line = serde_json::to_string(&entry).unwrap_or_default();
-        let pending_bytes = line.as_bytes().len() as u64 + 1; // +1 for trailing newline
+        let pending_bytes = line.len() as u64 + 1; // +1 for trailing newline
         let existing_size = std::fs::metadata(journal_path)
             .map(|m| m.len())
             .unwrap_or(0);

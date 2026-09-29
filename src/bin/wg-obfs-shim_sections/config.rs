@@ -16,7 +16,7 @@ fn parse_single_shim_process_config(
         "health address",
     )?;
 
-    let key = load_key(&options)?.ok_or_else(|| {
+    let key = load_key(options)?.ok_or_else(|| {
         ConfigParseOutcome::Error(
             "missing required obfuscation key; set --key, --key-file, WG_OBFUSCATION_KEY, or WG_OBFUSCATION_KEY_FILE".to_string(),
         )
@@ -85,7 +85,7 @@ fn parse_single_shim_process_config(
         "drain timeout",
     )?
     .unwrap_or_else(|| Duration::from_secs(DEFAULT_DRAIN_TIMEOUT_SECS));
-    config.rate_limit = parse_rate_limit(&options)?;
+    config.rate_limit = parse_rate_limit(options)?;
     config.buffer_pool_capacity = parse_optional_usize(
         optional_value(
             &options.buffer_pool_capacity,
@@ -294,7 +294,7 @@ async fn run_health_server(
             buffer_pool_wait_millis_total =
                 buffer_pool_wait_millis_total.saturating_add(queue.buffer_pool_wait_millis_total);
             for reason in &queue.reasons {
-                push_unique_reason(&mut reasons, *reason);
+                push_unique_reason(&mut reasons, reason);
             }
         }
 

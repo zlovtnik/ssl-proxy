@@ -4,7 +4,7 @@ use ssl_proxy::wg_packet_obfuscation::{
 };
 
 fn bench_legacy_xor_max_packet(c: &mut Criterion) {
-    let settings = WgPacketObfuscation::new(b"bench-obfuscation-key".to_vec(), Some(0xAA)).unwrap();
+    let settings = WgPacketObfuscation::new(b"bench-obfuscation-key".to_vec()).unwrap();
     let packet = vec![0x42; MAX_UDP_PACKET_SIZE - 1];
     let encoded = encode_packet(&packet, &settings).unwrap();
 

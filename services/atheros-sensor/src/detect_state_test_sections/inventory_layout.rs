@@ -16,13 +16,15 @@
         use super::{AuthorizedNetworkCache, ClientInventory};
         use crate::backlog::AuthorizedWirelessNetwork;
 
-        let mut cache = AuthorizedNetworkCache::default();
-        cache.entries = vec![AuthorizedWirelessNetwork {
-            ssid: Some("CorpWiFi".to_string()),
-            bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
-            location_id: Some("loc1".to_string()),
-            psk: None,
-        }];
+        let cache = AuthorizedNetworkCache {
+            entries: vec![AuthorizedWirelessNetwork {
+                ssid: Some("CorpWiFi".to_string()),
+                bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
+                location_id: Some("loc1".to_string()),
+                psk: None,
+            }],
+            ..AuthorizedNetworkCache::default()
+        };
 
         let inventory = ClientInventory::default();
         let mut entry = create_test_audit_entry();
@@ -43,13 +45,15 @@
         use super::{AuthorizedNetworkCache, ClientInventory};
         use crate::backlog::AuthorizedWirelessNetwork;
 
-        let mut cache = AuthorizedNetworkCache::default();
-        cache.entries = vec![AuthorizedWirelessNetwork {
-            ssid: Some("CorpWiFi".to_string()),
-            bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
-            location_id: Some("loc1".to_string()),
-            psk: None,
-        }];
+        let cache = AuthorizedNetworkCache {
+            entries: vec![AuthorizedWirelessNetwork {
+                ssid: Some("CorpWiFi".to_string()),
+                bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
+                location_id: Some("loc1".to_string()),
+                psk: None,
+            }],
+            ..AuthorizedNetworkCache::default()
+        };
 
         let inventory = ClientInventory::default();
         let mut entry = create_test_audit_entry();
@@ -66,13 +70,15 @@
         use super::{AuthorizedNetworkCache, ClientInventory};
         use crate::backlog::AuthorizedWirelessNetwork;
 
-        let mut cache = AuthorizedNetworkCache::default();
-        cache.entries = vec![AuthorizedWirelessNetwork {
-            ssid: Some("CorpWiFi".to_string()),
-            bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
-            location_id: Some("loc1".to_string()),
-            psk: None,
-        }];
+        let cache = AuthorizedNetworkCache {
+            entries: vec![AuthorizedWirelessNetwork {
+                ssid: Some("CorpWiFi".to_string()),
+                bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
+                location_id: Some("loc1".to_string()),
+                psk: None,
+            }],
+            ..AuthorizedNetworkCache::default()
+        };
 
         let inventory = ClientInventory::default();
         let mut entry = create_test_audit_entry();
@@ -200,14 +206,16 @@
         use super::{AuthorizationStatus, AuthorizedNetworkCache};
         use crate::backlog::AuthorizedWirelessNetwork;
 
-        let mut cache = AuthorizedNetworkCache::default();
-        cache.has_loaded = true;
-        cache.entries = vec![AuthorizedWirelessNetwork {
-            ssid: Some("CorpWiFi".to_string()),
-            bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
-            location_id: Some("loc1".to_string()),
-            psk: None,
-        }];
+        let cache = AuthorizedNetworkCache {
+            has_loaded: true,
+            entries: vec![AuthorizedWirelessNetwork {
+                ssid: Some("CorpWiFi".to_string()),
+                bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
+                location_id: Some("loc1".to_string()),
+                psk: None,
+            }],
+            ..AuthorizedNetworkCache::default()
+        };
 
         assert_eq!(
             cache.authorization_status(Some("CorpWiFi"), Some("aa:bb:cc:dd:ee:ff"), "loc1"),

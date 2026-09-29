@@ -69,7 +69,7 @@ impl RedpandaBacklog {
             .sync
             .redpanda_bootstrap_servers
             .as_deref()
-            .ok_or_else(|| BacklogError::Disabled { operation })?;
+            .ok_or(BacklogError::Disabled { operation })?;
         let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers).map_err(|source| {
             BacklogError::Redpanda {
                 operation,
@@ -385,7 +385,6 @@ impl RedpandaBacklog {
             return result;
         }
     }
-
 }
 
 async fn discard_redpanda_msg_payload<R>(

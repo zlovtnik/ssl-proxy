@@ -18,23 +18,12 @@ pub const EXTERNAL_BANDWIDTH_THRESHOLD_BYTES: u64 = 500 * 1024 * 1024;
 const DEFAULT_TRAFFIC_BUCKET_MAX_ENTRIES: usize = 65_536;
 const ARRIVAL_RESERVOIR_SIZE: usize = 1024;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FrameSizeHistogram {
     pub under_100: u64,
     pub range_100_500: u64,
     pub range_500_1000: u64,
     pub range_1000_1500: u64,
-}
-
-impl Default for FrameSizeHistogram {
-    fn default() -> Self {
-        Self {
-            under_100: 0,
-            range_100_500: 0,
-            range_500_1000: 0,
-            range_1000_1500: 0,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

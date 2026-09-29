@@ -319,25 +319,6 @@ fn spawn_handshake_export(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::pinned_handshake_filter;
-    use pcap::{Capture, Linktype};
-
-    #[test]
-    fn pinned_handshake_filter_compiles_with_libbpf() {
-        let filter = pinned_handshake_filter(6);
-        let capture = Capture::dead(Linktype::IEEE802_11_RADIOTAP).unwrap();
-
-        assert_eq!(
-            filter,
-            "(wlan[0] & 0x0c) == 0x08 and (wlan[0] & 0xf0) == 0x80 and (wlan[1] & 0x40) == 0"
-        );
-        assert!(!filter.contains("subtype 0x08"));
-        capture.compile(&filter, true).unwrap();
-    }
-}
-
 fn spawn_partial_handshake_export(
     dir: String,
     context: AuditContext,
@@ -407,5 +388,24 @@ fn export_handshake_bundle(
     });
     if let Err(error) = fs::write(path.join(filename), payload.to_string()) {
         tracing::warn!(%error, "failed to write handshake export bundle");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pinned_handshake_filter;
+    use pcap::{Capture, Linktype};
+
+    #[test]
+    fn pinned_handshake_filter_compiles_with_libbpf() {
+        let filter = pinned_handshake_filter(6);
+        let capture = Capture::dead(Linktype::IEEE802_11_RADIOTAP).unwrap();
+
+        assert_eq!(
+            filter,
+            "(wlan[0] & 0x0c) == 0x08 and (wlan[0] & 0xf0) == 0x80 and (wlan[1] & 0x40) == 0"
+        );
+        assert!(!filter.contains("subtype 0x08"));
+        capture.compile(&filter, true).unwrap();
     }
 }

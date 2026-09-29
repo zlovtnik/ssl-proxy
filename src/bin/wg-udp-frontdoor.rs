@@ -651,31 +651,27 @@ async fn main() {
     tasks.spawn(run_health_server(options.health_addr, state.clone()));
     tasks.spawn(run_reload_task(options.config_file.clone(), state.clone()));
 
-    loop {
-        tokio::select! {
-            signal_result = signal::ctrl_c() => {
-                match signal_result {
-                    Ok(()) => info!("shutdown signal received"),
-                    Err(error) => error!(%error, "failed to install shutdown signal handler"),
-                }
-                break;
+    tokio::select! {
+        signal_result = signal::ctrl_c() => {
+            match signal_result {
+                Ok(()) => info!("shutdown signal received"),
+                Err(error) => error!(%error, "failed to install shutdown signal handler"),
             }
-            task_result = tasks.join_next() => {
-                match task_result {
-                    Some(Ok(Ok(()))) => {
-                        warn!("frontdoor task exited");
-                        break;
-                    }
-                    Some(Ok(Err(error))) => {
-                        error!(%error, "frontdoor task failed");
-                        std::process::exit(1);
-                    }
-                    Some(Err(error)) => {
-                        error!(%error, "frontdoor task panicked");
-                        std::process::exit(1);
-                    }
-                    None => break,
+        }
+        task_result = tasks.join_next() => {
+            match task_result {
+                Some(Ok(Ok(()))) => {
+                    warn!("frontdoor task exited");
                 }
+                Some(Ok(Err(error))) => {
+                    error!(%error, "frontdoor task failed");
+                    std::process::exit(1);
+                }
+                Some(Err(error)) => {
+                    error!(%error, "frontdoor task panicked");
+                    std::process::exit(1);
+                }
+                None => {}
             }
         }
     }
@@ -1581,7 +1577,7 @@ impl RateLimiter {
         }
 
         self.sources.retain(|_, window| {
-            second.saturating_sub(window.second) <= RATE_LIMITER_STALE_SOURCE_SECS
+            second.saturating_sub(window.second) == RATE_LIMITER_STALE_SOURCE_SECS
         });
         self.last_cleanup_second = second;
     }

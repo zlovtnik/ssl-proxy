@@ -13,10 +13,11 @@ impl AuthorizedNetworkCache {
 
     #[cfg(test)]
     pub(crate) fn with_entries_for_test(entries: Vec<AuthorizedWirelessNetwork>) -> Self {
-        let mut cache = Self::default();
-        cache.entries = entries;
-        cache.has_loaded = true;
-        cache
+        Self {
+            entries,
+            has_loaded: true,
+            ..Self::default()
+        }
     }
 
     #[allow(dead_code)]
@@ -115,11 +116,11 @@ impl AuthorizedNetworkCache {
             entry
                 .location_id
                 .as_deref()
-                .map_or(true, |location| location == location_id)
-                && entry.ssid.as_deref().map_or(true, |known| {
+                .is_none_or(|location| location == location_id)
+                && entry.ssid.as_deref().is_none_or(|known| {
                     normalized_ssid.as_deref() == Some(known.trim().to_ascii_lowercase().as_str())
                 })
-                && entry.bssid.as_deref().map_or(true, |known| {
+                && entry.bssid.as_deref().is_none_or(|known| {
                     normalized_bssid.as_deref() == Some(known.trim().to_ascii_lowercase().as_str())
                 })
                 && (entry.ssid.is_some() || entry.bssid.is_some())

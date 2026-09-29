@@ -147,14 +147,14 @@ async fn refresh_wg_peers_replaces_snapshot_consistently() {
         ..WgPeerSnapshot::default()
     };
 
-    state.refresh_wg_peers(&[first.clone()]);
+    state.refresh_wg_peers(std::slice::from_ref(&first));
     assert_eq!(
         state.resolve_wg_pubkey(Some("10.0.0.2")),
         Some("pubkey-1".to_string())
     );
     assert!(state.wg_peers_snapshot().inventory.contains_key("pubkey-1"));
 
-    state.refresh_wg_peers(&[second.clone()]);
+    state.refresh_wg_peers(std::slice::from_ref(&second));
     let snapshot = state.wg_peers_snapshot();
     assert_eq!(snapshot.inventory.len(), 1);
     assert!(snapshot.inventory.contains_key("pubkey-2"));
@@ -163,7 +163,7 @@ async fn refresh_wg_peers_replaces_snapshot_consistently() {
         snapshot.pubkey_by_ip.get("10.0.0.3").map(String::as_str),
         Some("pubkey-2")
     );
-    assert!(snapshot.pubkey_by_ip.get("10.0.0.2").is_none());
+    assert!(!snapshot.pubkey_by_ip.contains_key("10.0.0.2"));
 }
 
 #[tokio::test]
@@ -193,10 +193,10 @@ async fn event_dedup_allows_existing_key_when_map_is_full() {
     let state = create_test_state().await;
     let event_name = "http_blocked";
     let host = "blocked.example";
-    let peer_ip = Some("10.13.13.2");
+    let peer_ip = "10.13.13.2";
 
-    assert!(state.should_emit_deduped_event(event_name, host, peer_ip, None, None));
-    let key = format!("{event_name}|{host}|{}||", peer_ip.unwrap());
+    assert!(state.should_emit_deduped_event(event_name, host, Some(peer_ip), None, None));
+    let key = format!("{event_name}|{host}|{peer_ip}||");
     {
         let mut seen_at = state.event_dedup.get_mut(&key).unwrap();
         *seen_at = Instant::now() - EVENT_DEDUP_WINDOW - Duration::from_millis(1);
@@ -209,5 +209,5 @@ async fn event_dedup_allows_existing_key_when_map_is_full() {
     }
 
     assert!(state.event_dedup.len() >= EVENT_DEDUP_MAX_KEYS);
-    assert!(state.should_emit_deduped_event(event_name, host, peer_ip, None, None));
+    assert!(state.should_emit_deduped_event(event_name, host, Some(peer_ip), None, None));
 }

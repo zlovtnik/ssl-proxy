@@ -183,7 +183,7 @@ pub async fn stats_peers(State(state): State<SharedState>) -> Json<Vec<PeerSumma
             }
         })
         .collect();
-    peers.sort_by(|a, b| b.bytes_down.cmp(&a.bytes_down));
+    peers.sort_by_key(|peer| std::cmp::Reverse(peer.bytes_down));
     Json(peers)
 }
 
@@ -197,8 +197,8 @@ pub async fn stats_hosts_top(
         .map(|entry| to_snapshot(entry.key().clone(), entry.value()))
         .collect();
     match query.metric.as_str() {
-        "blocks" => rows.sort_by(|a, b| b.blocked_attempts.cmp(&a.blocked_attempts)),
-        _ => rows.sort_by(|a, b| b.blocked_bytes_approx.cmp(&a.blocked_bytes_approx)),
+        "blocks" => rows.sort_by_key(|row| std::cmp::Reverse(row.blocked_attempts)),
+        _ => rows.sort_by_key(|row| std::cmp::Reverse(row.blocked_bytes_approx)),
     }
     rows.truncate(query.limit.min(rows.len()));
     Json(rows)

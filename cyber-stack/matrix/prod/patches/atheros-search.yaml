@@ -15,6 +15,8 @@ spec:
               value: "32"
             - name: ATHSEARCH_EMBEDDING_REQUEST_CONCURRENCY
               value: "4"
+            - name: ATHSEARCH_EMBEDDING_QUERY_RESERVED_SLOTS
+              value: "1"
             - name: ATHSEARCH_EMBEDDING_BACKEND
               value: "http://192.168.1.242:9931"
             - name: ATHSEARCH_JWT_JWKS_URI

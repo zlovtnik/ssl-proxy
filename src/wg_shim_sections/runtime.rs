@@ -375,6 +375,7 @@ async fn connect_next_upstream(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_with_failover(
     connection: &mut UpstreamConnection,
     packet: QueuedUpstreamPacket,

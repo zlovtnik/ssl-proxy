@@ -132,6 +132,7 @@ impl TunnelAuditContext {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn emit_close(
         &self,
         state: &SharedState,

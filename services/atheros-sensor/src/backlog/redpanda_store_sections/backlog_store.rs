@@ -1,12 +1,12 @@
 impl RedpandaBacklog {
     async fn ping_redpanda(&self) -> Result<(), BacklogError> {
-        let redpanda_bootstrap_servers = self
-            .sync
-            .redpanda_bootstrap_servers
-            .as_deref()
-            .ok_or_else(|| BacklogError::Disabled {
-                operation: "redpanda_health_check",
-            })?;
+        let redpanda_bootstrap_servers =
+            self.sync
+                .redpanda_bootstrap_servers
+                .as_deref()
+                .ok_or(BacklogError::Disabled {
+                    operation: "redpanda_health_check",
+                })?;
         if let Some(error) =
             request_transport_unsupported("redpanda_health_check", redpanda_bootstrap_servers)
         {

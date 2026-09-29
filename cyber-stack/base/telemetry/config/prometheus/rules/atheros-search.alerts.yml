@@ -1,0 +1,60 @@
+groups:
+  - name: atheros-search-alerts
+    rules:
+      - alert: AtherosSearchSemanticBackendUnavailable
+        expr: athsearch_embedding_backend_available{job="ssl-proxy-atheros-search",lane="interactive"} == 0
+        for: 2m
+        labels: {severity: warning, service: atheros-search}
+        annotations:
+          summary: "Atheros Search semantic backend is unavailable for interactive queries"
+          diagnostic: "The tokenizer preflight is not compatible or the interactive embedding circuit is open, so searches are answering with keyword ranking only."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/atheros-search-degraded.md#semantic-backend-unavailable"
+      - alert: AtherosSearchEmbeddingQueueUnattended
+        expr: |
+          max by () (athsearch_embedding_jobs{job="ssl-proxy-atheros-search",status="pending"} > 0)
+            and
+          max by () (athsearch_embedding_active_workers{job="ssl-proxy-atheros-search"} == 0)
+        for: 5m
+        labels: {severity: warning, service: atheros-search}
+        annotations:
+          summary: "Atheros Search embedding queue is pending with no workers running"
+          diagnostic: "Pending embedding jobs exist while no worker heartbeat is inside the freshness window, so vector coverage will stop improving."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/atheros-search-degraded.md#embedding-workers-not-running"
+      - alert: AtherosSearchEmbeddingQueueAging
+        expr: max by () (athsearch_embedding_oldest_pending_age_seconds{job="ssl-proxy-atheros-search"} > 3600)
+        for: 5m
+        labels: {severity: warning, service: atheros-search}
+        annotations:
+          summary: "Atheros Search oldest pending embedding job is over an hour old"
+          diagnostic: "The embedding queue is not draining, either because workers are deferring on an unavailable backend or because claims are stalled."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/atheros-search-degraded.md#embedding-queue-not-draining"
+      - alert: AtherosSearchEmbeddingQueueCritical
+        expr: max by () (athsearch_embedding_oldest_pending_age_seconds{job="ssl-proxy-atheros-search"} > 21600)
+        for: 5m
+        labels: {severity: critical, service: atheros-search}
+        annotations:
+          summary: "Atheros Search oldest pending embedding job is over six hours old"
+          diagnostic: "Six hours of embedding backlog means new wireless records stay keyword-only for a full working day."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/atheros-search-degraded.md#embedding-queue-not-draining"
+      - alert: AtherosSearchWirelessFeedStale
+        expr: time() - max by () (athsearch_wireless_newest_observation_seconds{job="ssl-proxy-atheros-search"}) > 1800
+        for: 5m
+        labels: {severity: warning, service: atheros-search}
+        annotations:
+          summary: "Atheros Search has no wireless observation newer than thirty minutes"
+          diagnostic: "The newest indexed wireless observation is older than thirty minutes, so search results are drifting behind the sensors."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/atheros-search-degraded.md#wireless-feed-stale"
+      - alert: AtherosSearchWirelessFeedCritical
+        expr: time() - max by () (athsearch_wireless_newest_observation_seconds{job="ssl-proxy-atheros-search"}) > 7200
+        for: 5m
+        labels: {severity: critical, service: atheros-search}
+        annotations:
+          summary: "Atheros Search has no wireless observation newer than two hours"
+          diagnostic: "Nothing has been indexed for two hours, including when the metric is zero and the index has never been written."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/atheros-search-degraded.md#wireless-feed-stale"
