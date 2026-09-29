@@ -14,3 +14,4 @@ services/octopus/README.md
 services/platform-sync/README.md
 ops/disk/README.md
 plans/README.md
+advisor-plans/README.md
