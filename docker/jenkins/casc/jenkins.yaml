@@ -24,6 +24,11 @@ jenkins:
               - "Overall/Read"
               - "Metrics/View"
 
+appearance:
+  themeManager:
+    disableUserThemes: false
+    theme: "dark"
+
 unclassified:
   location:
     url: "${JENKINS_URL}"

@@ -12,6 +12,7 @@ commons-text-api:1.15.0-218.va_61573470393
 configuration-as-code:2116.v98dde145b_dce
 credentials:1511.v2e3cb_0008ef0
 credentials-binding:728.v902a_273b_8947
+dark-theme:652.vea_da_dfea_e769
 display-url-api:2.217.va_6b_de84cc74b_
 durable-task:686.v80ff80875b_82
 echarts-api:6.1.0-1321.v86c4c5114494
@@ -60,6 +61,7 @@ snakeyaml-api:2.5-149.v72471e9c6371
 snakeyaml-engine-api:3.1.1-12.v4320c7d6f89c
 ssh-credentials:372.va_250881b_08cd
 structs:362.va_b_695ef4fdf9
+theme-manager:346.v06cca_64c6a_37
 timestamper:1.30
 variant:70.va_d9f17f859e0
 woodstox-core-api:7.2.2-10.vcb_629759b_2c2

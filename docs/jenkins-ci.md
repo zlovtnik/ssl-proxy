@@ -24,6 +24,12 @@ self-signup, anonymous read access and the setup wizard. Persistent named
 volumes hold Jenkins state, registry content, Docker layer data and the
 Docker-in-Docker client certificates.
 
+The controller uses Jenkins 2.580.1 on Java 21. The pinned Dark Theme plugin
+provides a dark default through Configuration as Code, independent of the
+browser's system color preference. Users can select another theme from their
+account menu or profile; global defaults live in
+[`jenkins.yaml`](../docker/jenkins/casc/jenkins.yaml).
+
 The Jenkins BuildKit container uses host networking inside the isolated
 Docker-in-Docker service. This keeps the Compose registry name resolvable from
 BuildKit without exposing the host Docker socket or hard-coding the registry
@@ -157,7 +163,7 @@ revision as well as the Octopus revision.
 
 ## Local development plugin lock workflow
 
-[`plugins.txt`](../docker/jenkins/plugins.txt) contains only the eight
+[`plugins.txt`](../docker/jenkins/plugins.txt) contains only the nine
 human-maintained direct plugin requirements. The sorted
 [`plugins.lock.txt`](../docker/jenkins/plugins.lock.txt) records the complete
 effective direct and transitive set resolved by the digest-pinned Jenkins base

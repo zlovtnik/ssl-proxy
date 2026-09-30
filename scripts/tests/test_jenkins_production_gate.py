@@ -266,7 +266,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         lock_path = REPOSITORY_ROOT / "docker/jenkins/plugins.lock.txt"
 
-        self.assertEqual(8, len([line for line in direct.splitlines() if line]))
+        self.assertEqual(9, len([line for line in direct.splitlines() if line]))
         self.assertTrue(lock_path.is_file())
         self.assertIn("COPY plugins.lock.txt", dockerfile)
         self.assertIn("--plugin-file /usr/share/jenkins/ref/plugins.lock.txt", dockerfile)
