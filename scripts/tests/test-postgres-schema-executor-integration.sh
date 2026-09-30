@@ -88,6 +88,40 @@ second_count="$(docker exec "${database_container}" psql --username postgres --d
   --command="SELECT count(*) FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/%'")"
 [ "${second_count}" = "${first_count}" ]
 
+# Reproduce the Octopus attestation from before migration 015, without a
+# per-file ledger. Historical migrations must be adopted, not replayed.
+readonly previous_octopus_checksum="b522676cce9fc385a935bd52fc50867d655fe6b34ae0088a11b4c51ec595755e"
+readonly current_octopus_checksum="$(awk '/^manifest_sha256:/{print $2; exit}' "${repo_root}/sql/postgres/octopus_core/manifest.yaml")"
+docker exec --interactive "${database_container}" psql \
+  --username postgres --dbname sync --set=ON_ERROR_STOP=1 <<SQL
+DROP INDEX octopus_core.wireless_frames_cooccurrence_idx;
+DELETE FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/octopus_core/%';
+UPDATE octopus_core.schema_readiness
+SET required_checksum = '${previous_octopus_checksum}',
+    applied_checksum = '${previous_octopus_checksum}'
+WHERE domain = 'octopus_core';
+SQL
+
+upgrade_output="$(run_executor 2>&1)" || {
+  printf '%s\n' "${upgrade_output}" >&2
+  exit 1
+}
+printf '%s\n' "${upgrade_output}" | grep -q "adopting trusted pre-ledger migrations: octopus_core (${previous_octopus_checksum})"
+printf '%s\n' "${upgrade_output}" | grep -q "migration already applied: runtime/octopus_core/01_tables/014_projection_dispatch_indexes.sql"
+printf '%s\n' "${upgrade_output}" | grep -q "migration applied: runtime/octopus_core/01_tables/015_projection_cooccurrence_indexes.sql"
+adopted_count="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align \
+  --command="SELECT count(*) FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/octopus_core/%' AND applied_by = 'legacy-manifest-attestation'")"
+[ "${adopted_count}" -eq 14 ]
+octopus_ready="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align \
+  --command="SELECT ready AND required_checksum = '${current_octopus_checksum}' AND applied_checksum = '${current_octopus_checksum}' AND to_regclass('octopus_core.wireless_frames_cooccurrence_idx') IS NOT NULL FROM octopus_core.schema_readiness WHERE domain = 'octopus_core'")"
+[ "${octopus_ready}" = "t" ]
+
+upgrade_replay_output="$(run_executor 2>&1)"
+printf '%s\n' "${upgrade_replay_output}" | grep -q "migration already applied: runtime/octopus_core/01_tables/015_projection_cooccurrence_indexes.sql"
+upgrade_replay_count="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align \
+  --command="SELECT count(*) FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/%'")"
+[ "${upgrade_replay_count}" = "${first_count}" ]
+
 docker exec "${database_container}" psql --username postgres --dbname sync --set=ON_ERROR_STOP=1 \
   --command="UPDATE schema_migrator.state_schema_migrations SET checksum = repeat('0', 64) WHERE version = 'runtime/global/00_extensions/001_runtime_extensions.sql'" >/dev/null
 set +e
@@ -115,4 +149,4 @@ if ownership_output="$(run_executor 2>&1)"; then
 fi
 printf '%s\n' "${ownership_output}" | grep -q "table atheros_search.merge_candidates is owned by octopus_runtime, expected schema_owner"
 
-echo "PostgreSQL schema executor ledger, replay, checksum, and ownership checks passed"
+echo "PostgreSQL schema executor ledger, Octopus upgrade, replay, checksum, and ownership checks passed"

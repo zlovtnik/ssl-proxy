@@ -57,6 +57,25 @@ environments. If rollback is required, revert the runtime configuration and
 digest promotion together because reverting only the digest can recreate a
 configuration/artifact mismatch.
 
+For an Octopus schema checksum failure, compare the configured
+`POSTGRES_SCHEMA_MANIFEST_SHA256` with the canonical
+[Octopus manifest](../sql/postgres/octopus_core/manifest.yaml) and the
+`octopus_core.schema_readiness` row. Inspect the schema executor hook result
+in the data-plane Application's last sync operation; `Synced` alone does not
+prove that the hook ran. An apply-strategy sync or a resource-selective sync
+skips hooks. Recovery uses a full application sync with the hook strategy at
+the approved Git revision so the schema executor applies pending migrations
+and records readiness before the app-stack proceeds. Keep the runtime checksum
+check enabled and verify that the executor completes, the recorded checksums
+match, and Octopus becomes ready.
+
+If an older attested database has no per-file migration ledger, the executor
+requires a trusted checksum baseline under
+[Octopus baselines](../sql/postgres/octopus_core/baselines/) before adopting
+historical migrations. Add the baseline from the attested manifest's exact
+file checksums, validate it, and promote the rebuilt schema executor image
+through the normal reviewed digest workflow.
+
 ## Health and readiness
 
 | Component | Check | Interpretation |

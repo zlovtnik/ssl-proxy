@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
 from pathlib import Path
 
@@ -9,6 +10,22 @@ ENTRYPOINT = ROOT / "k8s/postgres-schema-executor/entrypoint.sh"
 
 
 class PostgresSchemaExecutorTest(unittest.TestCase):
+    def test_octopus_previous_manifest_baseline_matches_attested_sql(self) -> None:
+        domain = ROOT / "sql/postgres/octopus_core"
+        checksum = "b522676cce9fc385a935bd52fc50867d655fe6b34ae0088a11b4c51ec595755e"
+        baseline = (domain / "baselines" / f"{checksum}.sha256").read_text()
+        current = (domain / "checksums.sha256").read_text()
+        self.assertTrue(current.startswith(baseline))
+        self.assertNotIn("015_projection_cooccurrence_indexes.sql", baseline)
+
+        digest = hashlib.sha256()
+        for row in baseline.splitlines():
+            recorded, relative = row.split("  ", 1)
+            data = (domain / relative).read_bytes()
+            self.assertEqual(recorded, hashlib.sha256(data).hexdigest(), relative)
+            digest.update(relative.encode("ascii") + b"\0" + data + b"\0")
+        self.assertEqual(checksum, digest.hexdigest())
+
     def test_manifest_files_are_applied_once_through_the_migration_ledger(self) -> None:
         script = ENTRYPOINT.read_text(encoding="utf-8")
 
