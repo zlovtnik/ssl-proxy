@@ -165,6 +165,37 @@ pipeline {
             sh "python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v"
           }
         }
+        stage('Keycloak login layout') {
+          options { timeout(time: 10, unit: 'MINUTES') }
+          steps {
+            sh '''
+              set -eu
+              docker_cmd() {
+                env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+                  DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
+              }
+              theme_container="keycloak-theme-${BUILD_NUMBER}"
+              cleanup_theme_container() {
+                mkdir -p artifacts/keycloak-theme
+                docker_cmd cp "$theme_container:/workspace/scripts/tests/keycloak-theme/test-results/." \
+                  artifacts/keycloak-theme/ >/dev/null 2>&1 || true
+                docker_cmd rm --force "$theme_container" >/dev/null 2>&1 || true
+              }
+              trap cleanup_theme_container EXIT
+              tar --exclude=node_modules --exclude=test-results -cf - \
+                scripts/tests/keycloak-theme \
+                cyber-stack/base/schema-migrator/configmaps/keycloak-theme | \
+                docker_cmd run --name "$theme_container" --init --shm-size=256m -i -w /workspace \
+                  mcr.microsoft.com/playwright:v1.60.0-noble \
+                  sh -c 'tar --no-same-owner -xf - && cd scripts/tests/keycloak-theme && npm ci --ignore-scripts && npm test'
+            '''
+          }
+          post {
+            always {
+              archiveArtifacts artifacts: 'artifacts/keycloak-theme/**', allowEmptyArchive: true
+            }
+          }
+        }
         stage('Platform sync') {
           options { timeout(time: 30, unit: 'MINUTES') }
           steps {

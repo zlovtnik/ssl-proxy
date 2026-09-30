@@ -1,0 +1,50 @@
+/* Layout subset of Keycloak 26.2.5's inherited PatternFly v5 stylesheet.
+ * Source: https://github.com/keycloak/keycloak/blob/26.2.5/themes/src/main/resources/theme/common/keycloak/vendor/patternfly-v5/patternfly.min.css
+ * Keep the grid areas and utilities: omitting them hides the error-state bug.
+ * Global spacing variables are resolved below so this fixture runs offline.
+ */
+html { font-size: 16px; line-height: 1.5; }
+body { margin: 0; }
+button, input { font: inherit; }
+.pf-v5-c-form { display: grid; gap: 1.5rem; }
+.pf-v5-c-form__group { display: grid; }
+.pf-v5-c-form-control {
+  align-items: start;
+  column-gap: 0.5rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  position: relative;
+  width: 100%;
+}
+.pf-v5-c-form-control::before,
+.pf-v5-c-form-control::after {
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+.pf-v5-c-form-control > :is(input, select, textarea) {
+  grid-area: 1 / 1 / 2 / -1;
+  padding: 0.375rem 0.5rem;
+}
+.pf-v5-c-form-control.pf-m-error > input { padding-inline-end: 2rem; }
+.pf-v5-c-form-control__utilities {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  grid-area: 1 / 2 / 2;
+  padding-inline-end: 0.5rem;
+  pointer-events: none;
+}
+.pf-v5-c-form-control__icon { padding-block-start: 0.375rem; }
+.pf-v5-c-form-control__icon.pf-m-status { color: #c9190b; }
+.pf-v5-c-form__helper-text { margin-block-start: 0.25rem; }
+.pf-v5-c-helper-text { display: flex; flex-wrap: wrap; }
+.pf-v5-c-helper-text__item { display: flex; }
+.pf-v5-c-input-group { display: flex; }
+.pf-v5-c-input-group__item.pf-m-fill { flex: 1; }
+.pf-v5-c-form__actions { display: flex; flex-wrap: wrap; }
+/* Use a fixed icon glyph without loading a remote Font Awesome font. */
+.fas { display: inline-block; font-style: normal; width: 1rem; text-align: center; }
+.fa-exclamation-circle::before { content: "!"; }
+.fa-eye::before { content: "*"; }

@@ -15,6 +15,8 @@
   --auth-blue: #2563eb;
   --auth-blue-deep: #1d4ed8;
   --auth-blue-bright: #60a5fa;
+  --auth-error: #fca5a5;
+  --auth-error-border: rgb(248 113 113 / 65%);
   --auth-ease: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
@@ -459,12 +461,13 @@ html.login-pf,
 }
 
 .auth-card .pf-v5-c-form-control {
+  align-items: center;
   background: var(--auth-control);
   border: 1px solid var(--auth-border);
   border-radius: 0.75rem;
   box-shadow: none;
   color: var(--auth-text);
-  display: block;
+  display: flex;
   min-height: 2.75rem;
   transition: background 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
 }
@@ -484,6 +487,10 @@ html.login-pf,
   box-shadow: 0 0 0 3px var(--auth-ring);
 }
 
+.auth-card .pf-v5-c-form-control.pf-m-error {
+  border-color: var(--auth-error-border);
+}
+
 .auth-card .pf-v5-c-form-control input,
 .auth-card .pf-v5-c-form-control select {
   appearance: none;
@@ -491,13 +498,29 @@ html.login-pf,
   border: 0;
   color: var(--auth-text);
   display: block;
+  flex: 1 1 auto;
   font-family: inherit;
   font-size: 0.875rem;
   line-height: 1.4;
   min-height: 2.65rem;
+  min-width: 0;
   outline: 0;
   padding: 0.65rem 0.875rem;
   width: 100%;
+}
+
+/* Keycloak adds these utilities inside the control only in the error state. */
+.auth-card .pf-v5-c-form-control__utilities {
+  flex: 0 0 auto;
+  padding-inline-end: 0.875rem;
+}
+
+.auth-card .pf-v5-c-form-control__icon {
+  padding-block-start: 0;
+}
+
+.auth-card .pf-v5-c-form-control.pf-m-error .pf-v5-c-form-control__icon.pf-m-status {
+  color: var(--auth-error);
 }
 
 .auth-card .pf-v5-c-form-control input::placeholder {
@@ -663,7 +686,7 @@ html.login-pf,
 }
 
 .auth-card .kc-feedback-text.pf-m-error {
-  color: #fca5a5;
+  color: var(--auth-error);
 }
 
 #kc-social-providers {
