@@ -16,7 +16,7 @@ bounded by available coverage. Layout position never suggests physical distance.
 [IdentityGraphSql.scala](../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/sql/IdentityGraphSql.scala)
 projects `'observed_at', COUNT(*), 'frame_count'` for any frame with source MAC
 and BSSID (lines 381-393). The API maps this stored kind to `association` in
-[graph.go](../apps/integration-console/atheros-search/internal/search/graph.go).
+[graph.go](../apps/integration-console/atheros-search/internal/reporting/graph_assembly.go).
 This is evidence of observed context, not verified session association.
 
 [useGraphAggregate.ts](../apps/integration-console/atheros-search-ui/src/hooks/useGraphAggregate.ts)

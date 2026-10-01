@@ -257,8 +257,35 @@ dependency-boundaries:
 	@cargo tree -p atheros-sensor --depth 1 --prefix none | awk '$$1 == "ssl-proxy" { found=1; print; } END { exit found ? 1 : 0 }'
 	@cargo tree -p ssl-proxy --depth 1 --prefix none | awk '$$1 == "atheros-sensor" { found=1; print; } END { exit found ? 1 : 0 }'
 
+ATHSEARCH_DIR := apps/integration-console/atheros-search
+ATHSEARCH_STACK_ROOT ?= $(CURDIR)
+.PHONY: atheros-search-test atheros-search-quality atheros-search-fmt-check atheros-search-vet atheros-search-test-race atheros-search-lint atheros-search-proto atheros-search-proto-check atheros-search-stack-contract atheros-search-db-contract atheros-search-fixtures atheros-search-ui-check atheros-search-build
 atheros-search-test:
-	cd apps/integration-console/atheros-search && go test ./...
+	$(MAKE) -C $(ATHSEARCH_DIR) test
+atheros-search-quality:
+	$(MAKE) -C $(ATHSEARCH_DIR) quality
+atheros-search-fmt-check:
+	$(MAKE) -C $(ATHSEARCH_DIR) fmt-check
+atheros-search-vet:
+	$(MAKE) -C $(ATHSEARCH_DIR) vet
+atheros-search-test-race:
+	$(MAKE) -C $(ATHSEARCH_DIR) test-race
+atheros-search-lint:
+	$(MAKE) -C $(ATHSEARCH_DIR) lint boundaries
+atheros-search-proto:
+	$(MAKE) -C $(ATHSEARCH_DIR) proto
+atheros-search-proto-check:
+	$(MAKE) -C $(ATHSEARCH_DIR) proto-check
+atheros-search-stack-contract:
+	$(MAKE) -C $(ATHSEARCH_DIR) stack-contract ATHSEARCH_STACK_ROOT="$(ATHSEARCH_STACK_ROOT)"
+atheros-search-db-contract:
+	$(MAKE) -C $(ATHSEARCH_DIR) db-contract ATHSEARCH_STACK_ROOT="$(ATHSEARCH_STACK_ROOT)"
+atheros-search-fixtures:
+	$(MAKE) -C $(ATHSEARCH_DIR) fixtures
+atheros-search-ui-check:
+	$(MAKE) -C $(ATHSEARCH_DIR) ui-check
+atheros-search-build:
+	$(MAKE) -C $(ATHSEARCH_DIR) build
 
 platform-sync-lint:
 	cd services/platform-sync && go vet ./...

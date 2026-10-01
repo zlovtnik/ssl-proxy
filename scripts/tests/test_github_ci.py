@@ -7,6 +7,21 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class GitHubCiTest(unittest.TestCase):
+    def test_search_contract_job_requires_database_and_pinned_revision(self) -> None:
+        workflow = (REPOSITORY_ROOT / ".github/workflows/ci.yml").read_text()
+        search = workflow[workflow.index("  atheros-search-contracts:") : workflow.index("  documentation:")]
+        self.assertIn("go-version: '1.26.x'", search)
+        self.assertIn("submodules: recursive", search)
+        self.assertIn("git rev-parse HEAD:apps/integration-console", search)
+        self.assertIn("make atheros-search-stack-contract", search)
+        self.assertIn("make atheros-search-db-contract", search)
+        self.assertNotIn("continue-on-error", search)
+        jenkins = (REPOSITORY_ROOT / "Jenkinsfile").read_text()
+        stage = jenkins[jenkins.index("stage('Atheros search contracts')"):jenkins.index("stage('Schema migrator')")]
+        self.assertNotIn("SUBMODULE_CI_READY", stage)
+        self.assertIn("SHOULD_RUN_ATHEROS_SEARCH_CONTRACTS", stage)
+        self.assertIn("make atheros-search-db-contract", stage)
+
     def test_octopus_job_enforces_and_archives_test_reports(self) -> None:
         workflow = (REPOSITORY_ROOT / ".github/workflows/ci.yml").read_text(
             encoding="utf-8"

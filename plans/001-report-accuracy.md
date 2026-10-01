@@ -20,7 +20,7 @@ than an unrelated global candidate limit or a missing anchor fallback.
   limits nearest candidates before `resultMatchesFilters` (lines 83, 120-138).
   [sparse.go](../apps/integration-console/atheros-search/internal/search/sparse.go)
   does the same for ranked and wildcard retrieval (lines 80-88, 117-136).
-- [graph.go](../apps/integration-console/atheros-search/internal/search/graph.go)
+- [graph.go](../apps/integration-console/atheros-search/internal/reporting/graph_assembly.go)
   uses `if len(focusIDs) > 0` to add focus, while an absent anchor returns
   `nil, nil`. Both paginated and legacy paths need explicit absent-focus behavior.
 - [InventoryPage.tsx](../apps/integration-console/atheros-search-ui/src/pages/InventoryPage.tsx)

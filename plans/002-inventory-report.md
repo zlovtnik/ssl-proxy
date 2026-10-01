@@ -15,7 +15,7 @@ entire inventory. Keep the graph and existing identity queue as secondary views.
 
 ## Current state
 
-[inventory.go](../apps/integration-console/atheros-search/internal/search/inventory.go)
+[inventory.go](../apps/integration-console/atheros-search/internal/reporting/inventory_assembly.go)
 defines `InventoryFilters` with owner/location/active/tags and cursor controls
 (lines 46-56), and `InventoryNode` with MAC and optional registry fields (lines
 59-74). `first_seen` and `registered` exist in storage but are not returned as

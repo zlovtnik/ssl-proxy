@@ -83,6 +83,9 @@ pipeline {
                 case 'SHOULD_RUN_ATHEROS_SEARCH':
                   env.SHOULD_RUN_ATHEROS_SEARCH = fields[1]
                   break
+                case 'SHOULD_RUN_ATHEROS_SEARCH_CONTRACTS':
+                  env.SHOULD_RUN_ATHEROS_SEARCH_CONTRACTS = fields[1]
+                  break
                 case 'SHOULD_RUN_SCHEMA_MIGRATOR':
                   env.SHOULD_RUN_SCHEMA_MIGRATOR = fields[1]
                   break
@@ -217,7 +220,7 @@ pipeline {
           steps {
             sh '''
               set -eu
-              if [ "$SUBMODULE_CI_READY" = true ] || [ "$SHOULD_RUN_ATHEROS_SEARCH" != true ]; then echo 'skipped: delegated or no integration-console bump'; exit 0; fi
+              if [ "$SUBMODULE_CI_READY" = true ] || [ "$SHOULD_RUN_ATHEROS_SEARCH" != true ]; then echo 'skipped: delegated or no Search inputs'; exit 0; fi
               docker_cmd() {
                 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
                   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
@@ -225,6 +228,25 @@ pipeline {
               tar -cf - . | docker_cmd run --rm -i -w /workspace \
                 golang:1.26-bookworm \
                 sh -c 'tar --no-same-owner -xf - && make atheros-search-test'
+            '''
+          }
+        }
+        stage('Atheros search contracts') {
+          options { timeout(time: 30, unit: 'MINUTES') }
+          steps {
+            sh '''
+              set -eu
+              if [ "$SHOULD_RUN_ATHEROS_SEARCH_CONTRACTS" != true ]; then echo 'skipped: no Search contract inputs'; exit 0; fi
+              test "$(git -C apps/integration-console rev-parse HEAD)" = "$(git rev-parse HEAD:apps/integration-console)"
+              docker_cmd() {
+                env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+                  DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
+              }
+              tar --exclude=node_modules --exclude=.git -cf - . | docker_cmd run --rm -i -w /workspace \
+                --network host -v /var/run/docker.sock:/var/run/docker.sock \
+                -e TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1 -e GOTOOLCHAIN=local \
+                golang:1.26-bookworm \
+                sh -c 'tar --no-same-owner -xf - && apt-get update && apt-get install -y --no-install-recommends python3-venv && python3 -m venv /tmp/contracts && /tmp/contracts/bin/pip install -r scripts/requirements-test.txt && make atheros-search-stack-contract && make atheros-search-db-contract PYTHON=/tmp/contracts/bin/python'
             '''
           }
         }

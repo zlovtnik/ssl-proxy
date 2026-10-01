@@ -41,6 +41,30 @@ class ClassifyChangesTest(unittest.TestCase):
         self.assertTrue(result["tests"]["sensor"])
         self.assertIn("SHOULD_RUN_OCTOPUS=false", env_lines(result))
 
+    def test_search_contract_inputs_select_consumers_without_submodule_bump(self) -> None:
+        for path in (
+            "sql/postgres/atheros_search/01_tables/change.sql",
+            "sql/postgres/atheros_search/grants/least_privilege.sql.tmpl",
+            "sql/postgres/octopus_core/manifest.yaml",
+            "sql/postgres/contracts/processors.json",
+            "scripts/tests/test_atheros_reporting.py",
+            "scripts/classify_changes.py",
+        ):
+            with self.subTest(path=path):
+                result = classify_paths({path}, self.bumped(), full=False)
+                self.assertTrue(result["tests"]["atheros_search"])
+                self.assertTrue(result["tests"]["atheros_search_contracts"])
+                self.assertIn("SHOULD_RUN_ATHEROS_SEARCH_CONTRACTS=true", env_lines(result))
+                self.assertNotIn("atheros-search", result["changedServices"])
+
+    def test_octopus_bump_also_verifies_search_processor_contracts(self) -> None:
+        result = classify_paths({"services/octopus"}, self.bumped("services/octopus"), full=False)
+        self.assertTrue(result["tests"]["atheros_search_contracts"])
+
+    def test_unrelated_changes_do_not_select_search_contracts(self) -> None:
+        result = classify_paths({"src/main.rs"}, self.bumped(), full=False)
+        self.assertFalse(result["tests"]["atheros_search_contracts"])
+
     def test_first_commit_selects_everything(self) -> None:
         result = classify_paths(set(), self.bumped(*SUBMODULE_IMAGES), full=True)
         self.assertEqual(8, len(result["changedServices"]))

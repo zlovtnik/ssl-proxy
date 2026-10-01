@@ -63,9 +63,17 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         if bumped[path]:
             services.update(images)
 
+    search_contracts = bumped["apps/integration-console"] or bumped["services/octopus"] or changed(
+        "sql/postgres/atheros_search/", "sql/postgres/octopus_core/",
+        "sql/postgres/contracts/", "cyber-stack/base/atheros-search/",
+        "cyber-stack/matrix/prod/", "scripts/tests/test_atheros_reporting.py",
+        "scripts/classify_changes.py", "scripts/tests/test_classify_changes.py",
+        "scripts/requirements-test.txt", "scripts/requirements.txt", "Jenkinsfile",
+    )
     tests = {
         "platform_sync": changed("services/platform-sync/"),
-        "atheros_search": bumped["apps/integration-console"],
+        "atheros_search": search_contracts,
+        "atheros_search_contracts": search_contracts,
         "schema_migrator": bumped["apps/schema-migrator"],
         "octopus": bumped["services/octopus"],
         "sensor": changed("services/atheros-sensor/", *RUST_INPUTS),
