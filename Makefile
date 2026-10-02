@@ -20,6 +20,7 @@ PRODUCTION_GATE_TIMEOUT ?= 30m
 PRODUCTION_GATE_POLL_INTERVAL ?= 10s
 BUILDER ?= ssl-proxy-publisher
 BUILDER_NETWORK ?=
+BUILDX_STATE_DIR ?= $(if $(DOCKER_CONFIG),$(DOCKER_CONFIG),$(HOME)/.docker)/buildx/ssl-proxy
 BUILDX_READY ?= 0
 PLATFORM ?= linux/amd64
 MINIO_MIRROR_SOURCE ?= elestio/minio:latest
@@ -365,8 +366,9 @@ buildx-ready: require-registry
 	@docker info >/dev/null
 	@registry_host="$(REGISTRY)"; \
 	registry_host="$${registry_host%%/*}"; \
-	config="$${TMPDIR:-/tmp}/ssl-proxy-buildkitd-$(BUILDER).toml"; \
-	stamp="$${TMPDIR:-/tmp}/ssl-proxy-buildkitd-$(BUILDER).mode"; \
+	mkdir -p "$(BUILDX_STATE_DIR)"; \
+	config="$(BUILDX_STATE_DIR)/ssl-proxy-buildkitd-$(BUILDER).toml"; \
+	stamp="$(BUILDX_STATE_DIR)/ssl-proxy-buildkitd-$(BUILDER).mode"; \
 	recreate=0; \
 	if docker buildx inspect "$(BUILDER)" >/dev/null 2>&1; then \
 		if [ -f "$$stamp" ]; then \

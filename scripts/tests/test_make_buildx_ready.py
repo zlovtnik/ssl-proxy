@@ -45,11 +45,11 @@ class MakeBuildxReadyTest(unittest.TestCase):
         self.directory.cleanup()
 
     def run_make(
-        self, plain_http: str, builder_network: str = ""
+        self, plain_http: str, builder_network: str = "", *, temporary_root: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
         environment = os.environ | {
             "PATH": f"{self.bin}:{os.environ['PATH']}",
-            "TMPDIR": str(self.root),
+            "TMPDIR": str(temporary_root or self.root),
             "FAKE_BUILDER_STATE": str(self.state),
             "FAKE_DOCKER_LOG": str(self.log),
         }
@@ -62,6 +62,7 @@ class MakeBuildxReadyTest(unittest.TestCase):
                 "REGISTRY=registry.test:5000/team",
                 f"REGISTRY_PLAIN_HTTP={plain_http}",
                 "BUILDER=test-publisher",
+                f"BUILDX_STATE_DIR={self.root}",
                 f"BUILDER_NETWORK={builder_network}",
             ],
             cwd=self.root,
@@ -101,6 +102,18 @@ class MakeBuildxReadyTest(unittest.TestCase):
         self.assertNotEqual(0, mismatch.returncode)
         self.assertIn("BUILDER_NETWORK=host", mismatch.stderr)
         self.assertEqual(1, self.log.read_text(encoding="utf-8").count("buildx create"))
+
+    def test_reuses_verified_builder_after_temporary_directory_changes(self) -> None:
+        first = self.run_make("1", "host")
+        replacement = self.root / "replacement-tmp"
+        replacement.mkdir()
+        second = self.run_make("1", "host", temporary_root=replacement)
+
+        self.assertEqual(0, first.returncode, first.stderr)
+        self.assertEqual(0, second.returncode, second.stderr)
+        log = self.log.read_text(encoding="utf-8")
+        self.assertEqual(1, log.count("buildx create"))
+        self.assertNotIn("buildx rm", log)
 
     def test_uses_default_builder_network_when_unset(self) -> None:
         result = self.run_make("0")
