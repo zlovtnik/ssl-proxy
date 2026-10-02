@@ -1,0 +1,29 @@
+# Scan cleanup uses Kafka consumer commits; it does not query PostgreSQL.
+# Restore the base credentials and TLS mount before enabling wireless.audit.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redpanda-daily-clean
+  namespace: ssl-proxy
+spec:
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            ssl-proxy.io/postgres-client: null
+        spec:
+          containers:
+            - name: clean
+              env:
+                - name: PGUSER
+                  $patch: delete
+                - name: PGPASSWORD
+                  $patch: delete
+              volumeMounts:
+                - name: pgbouncer-tls
+                  mountPath: /var/run/pgbouncer-tls
+                  $patch: delete
+          volumes:
+            - name: pgbouncer-tls
+              $patch: delete

@@ -4,6 +4,7 @@ namespace: prod-ssl-proxy
 resources:
 - ../../../base/redpanda/statefulset.yaml
 - ../../../base/redpanda/networkpolicy.yaml
+- ../../../base/redpanda-maintenance
 - ../../../base/minio/statefulset.yaml
 - ../../../base/redis-runtime/deployment.yaml
 - ../../../base/pgbouncer
@@ -12,6 +13,12 @@ resources:
 - ../../../base/telemetry
 - ../patches/grafana-lan-service.yaml
 configMapGenerator:
+- behavior: merge
+  literals:
+  - ACTIVE_TOPICS=sync.scan.request
+  - DRY_RUN=false
+  name: redpanda-maint-env
+  namespace: ssl-proxy
 - behavior: merge
   files:
   - external-service-catalog.yml=../config/prometheus/external-service-catalog.yml
@@ -22,6 +29,9 @@ configMapGenerator:
   name: ssl-proxy-telemetry-grafana-lan-proxy
   namespace: ssl-proxy
 images:
+- digest: sha256:0521270448f67a8d48602bc1c08ffa22c92091ebd77b8cb127599f5b4bebf304
+  name: redpanda-maint
+  newName: 192.168.1.242:5000/redpanda-maint
 - digest: sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
   name: grafana/alloy
 - digest: sha256:ab5cb380e3ff3172d6c8bd2e7cfd31cce977d2881b260e1f5bc089bf0b759b43
@@ -39,6 +49,7 @@ images:
 - digest: sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
   name: prom/prometheus
 patches:
+- path: ../patches/redpanda-maint-scan-only.yaml
 - path: ../patches/external-schema-executor.yaml
 - path: ../patches/pgbouncer-external-postgres.yaml
 - path: ../patches/alloy-positions.yaml

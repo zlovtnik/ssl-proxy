@@ -17,10 +17,15 @@ and writes complete offset-linked rows to
 `octopus_core.ingestion_evidence`. Aggregate row coverage is not proof that a
 specific Kafka prefix was persisted.
 
-The base ships with `DRY_RUN=true`. The workload is not added to a production
-slice until the first `redpanda-maint` image has been built by Jenkins and its
-reviewed digest is pinned. The required platform Secret is
-`redpanda-maint-pg` with `username` and `password` keys. Provision its role
+The base ships with `DRY_RUN=true`. The production
+[data-plane slice](../../cyber-stack/matrix/prod/data-plane/kustomization.yaml)
+pins the maintenance image and selects only `sync.scan.request` with
+`DRY_RUN=false`. Its [scan-only patch](../../cyber-stack/matrix/prod/patches/redpanda-maint-scan-only.yaml)
+removes unused PostgreSQL credentials and TLS mounts. The daily schedule is
+06:30 America/New_York.
+
+Before enabling `wireless.audit`, remove the scan-only patch and provision the
+platform Secret `redpanda-maint-pg` with `username` and `password` keys. Provision its role
 outside Git with only `CONNECT`, schema `USAGE`, and `SELECT` on
 `octopus_core.wireless_frames` and `octopus_core.ingestion_evidence`.
 
