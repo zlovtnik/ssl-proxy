@@ -330,10 +330,9 @@ plan_topic() {
         mark_failed "$topic" "$STATUS_GROUP_BLOCKED" "group $group has no commit for partition $partition"
         return
       fi
-      if (( commit > hwm )); then
-        mark_failed "$topic" "$STATUS_PARSE_ERROR" "group $group commit exceeds partition $partition HWM"
-        return
-      fi
+      # Commits are sampled after partition bounds, so an active consumer may
+      # advance past this earlier HWM. The target stays bounded by the cutoff
+      # (validated <= HWM) and every group's actual committed offset.
       if (( min_commit < 0 || commit < min_commit )); then
         min_commit="$commit"
         holder="$group"

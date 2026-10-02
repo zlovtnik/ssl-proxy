@@ -54,11 +54,9 @@ wireless.audit 0 900 100 1000 100
 wireless.audit 1 900 100 1000 100
 EOF
               else
-                cat <<'EOF'
-TOPIC PARTITION CURRENT-OFFSET LOG-START-OFFSET LOG-END-OFFSET LAG
-sync.scan.request 0 900 100 1000 100
-sync.scan.request 1 850 100 1000 150
-EOF
+                printf '%s\\n' 'TOPIC PARTITION CURRENT-OFFSET LOG-START-OFFSET LOG-END-OFFSET LAG'
+                printf 'sync.scan.request 0 %s 100 1000 0\\n' "${{MOCK_SCAN_COMMIT_0:-900}}"
+                printf 'sync.scan.request 1 %s 100 1000 0\\n' "${{MOCK_SCAN_COMMIT_1:-850}}"
               fi
             elif [ "$1 $2" = "topic consume" ]; then
               case "$*" in
@@ -153,6 +151,21 @@ EOF
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("trim complete", result.stdout)
         self.assertIn("topic trim-prefix --from-file", self.calls.read_text(encoding="utf-8"))
+
+    def test_consumer_advancing_after_snapshot_keeps_trim_bounded(self) -> None:
+        result = self._run(
+            "sync.scan.request\t3\tnone\toctopus-scan-v1\t-\n",
+            dry_run="false",
+            extra_env={"MOCK_SCAN_COMMIT_0": "1001", "MOCK_SCAN_COMMIT_1": "1002"},
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        rows = [line.split() for line in result.stdout.splitlines() if line.startswith("sync.scan.request")]
+        self.assertEqual(2, len(rows))
+        for row in rows:
+            self.assertEqual(800, int(row[-1]))
+            self.assertLessEqual(int(row[-1]), int(row[3]))
+            self.assertLessEqual(int(row[-1]), int(row[-2]))
+        self.assertIn("trim complete", result.stdout)
 
     def test_incomplete_offset_evidence_blocks_postgres_topic(self) -> None:
         result = self._run(
