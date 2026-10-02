@@ -86,7 +86,12 @@ class JenkinsProductionGateTest(unittest.TestCase):
     def test_container_workspaces_preserve_git_ownership_checks(self) -> None:
         pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
 
-        self.assertEqual(9, pipeline.count("tar --no-same-owner -xf -"))
+        extractions = re.findall(r"\btar\b[^;&|\n]*\s-xf\s+-", pipeline)
+
+        self.assertTrue(extractions, "pipeline must extract container workspaces")
+        for extraction in extractions:
+            with self.subTest(extraction=extraction):
+                self.assertIn("--no-same-owner", extraction.split())
         self.assertNotIn("sh -c 'tar -xf -", pipeline)
         self.assertNotIn("safe.directory", pipeline)
 
