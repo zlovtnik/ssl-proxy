@@ -208,7 +208,7 @@ SQL
 
 verify_trim() {
   local topic="$1" plan raw partition target lso seen=0
-  plan="$work_dir/$topic.plan.tsv"
+  plan="$work_dir/$topic.plan.txt"
   raw="$work_dir/$topic.verify"
   declare -A desired=()
   while IFS=$'\t' read -r _ partition target; do
@@ -262,7 +262,7 @@ plan_topic() {
 
   raw="$work_dir/$topic.partitions"
   commits="$work_dir/$topic.commits"
-  plan="$work_dir/$topic.plan.tsv"
+  plan="$work_dir/$topic.plan.txt"
 
   topic_status[$topic]="$STATUS_OK"
   topic_trim_records[$topic]=0
@@ -420,7 +420,7 @@ main() {
   fi
   for topic in "${selected_topics[@]}"; do
     [[ "${topic_status[$topic]}" == "$STATUS_NOTHING" ]] && continue
-    if ! rpk_run topic trim-prefix --from-file "$work_dir/$topic.plan.tsv" --no-confirm; then
+    if ! rpk_run topic trim-prefix --from-file "$work_dir/$topic.plan.txt" --no-confirm; then
       mark_failed "$topic" "$STATUS_TRIM_ERROR" "rpk trim-prefix failed"
       return 1
     fi

@@ -64,6 +64,9 @@ EOF
                 *) printf '800\n' ;;
               esac
             elif [ "$1 $2" = "topic trim-prefix" ]; then
+              # rpk selects the parser by extension; tab-separated text is .txt.
+              case "$4" in *.txt) ;; *) exit 2 ;; esac
+              awk 'NF != 3 || $2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/ {{exit 1}}' "$4" || exit 2
               touch {self.trimmed}
               exit 0
             else
