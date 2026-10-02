@@ -20,11 +20,38 @@ REQUIRED = os.environ.get("ATHSEARCH_DB_REQUIRED") == "true"
 
 
 class AtherosReportingTest(unittest.TestCase):
+    def run_go_tests(self, packages, *, pattern, timeout, test_timeout, env=None):
+        command = ["go", "test", "-json", "-p=1", "-tags=dbcontract", "-count=1",
+                   f"-timeout={test_timeout}", "-run", pattern, *packages]
+        try:
+            result = subprocess.run(command,
+                                    cwd=ROOT / "apps/integration-console/atheros-search",
+                                    env=env, text=True, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            # TimeoutExpired carries bytes even when subprocess.run uses text=True.
+            for output in (error.stdout, error.stderr):
+                if output:
+                    print(output.decode(errors="replace") if isinstance(output, bytes) else output,
+                          flush=True)
+            self.fail(f"Go database contract run ({pattern}) timed out after {timeout}s")
+        print(result.stdout, flush=True)
+        if result.stderr:
+            print(result.stderr, flush=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
     def test_queries_against_canonical_schema(self):
         if DockerContainer is None:
             if REQUIRED:
                 self.fail("required database contracts need scripts/requirements-test.txt")
             self.skipTest("install scripts/requirements-test.txt")
+        packages = [f"./internal/{name}" for name in
+                    ("search", "reporting", "worker", "db", "etlhealth", "assets", "savedviews", "app/repair")]
+        # Fresh CI containers download dependencies and compile alongside Scala
+        # and Rust builds. Warm the test cache before starting the database so
+        # that this work does not consume the database execution budget.
+        print("Building Go database contracts (timeout: 900s)", flush=True)
+        self.run_go_tests(packages, pattern="^$", timeout=900, test_timeout="1m")
         with (DockerContainer("pgvector/pgvector:0.8.6-pg16-bookworm")
               .with_env("POSTGRES_PASSWORD", "contract-test")
               .with_env("POSTGRES_DB", "sync")
@@ -73,14 +100,9 @@ class AtherosReportingTest(unittest.TestCase):
                        ATHSEARCH_PROVISION_TEST_DSN=f"postgres://postgres:contract-test@{endpoint}",
                        ATHSEARCH_REPORT_TEST_DSN=f"postgres://athsearch_contract:contract-test@{endpoint}",
                        ATHSEARCH_TEST_MANIFEST_SHA256=manifests["atheros_search"]["manifest_sha256"])
-            packages = [f"./internal/{name}" for name in
-                        ("search", "reporting", "worker", "db", "etlhealth", "assets", "savedviews", "app/repair")]
-            result = subprocess.run(["go", "test", "-json", "-p=1", "-tags=dbcontract", "-count=1",
-                                     "-run", "TestReporting|TestDatabase", *packages],
-                                    cwd=ROOT / "apps/integration-console/atheros-search", env=env,
-                                    text=True, capture_output=True, timeout=300)
-            print(result.stdout)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            print("Running Go database contracts (timeout: 300s)", flush=True)
+            result = self.run_go_tests(packages, pattern="TestReporting|TestDatabase",
+                                       timeout=300, test_timeout="2m", env=env)
             events = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
             self.assertFalse([event for event in events if event["Action"] == "skip"], "required database tests skipped")
             tested = {event["Package"].split("/internal/")[-1] for event in events
