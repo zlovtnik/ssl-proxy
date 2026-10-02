@@ -62,11 +62,9 @@ fi
 
 printf '\npruning build cache older than %sh with a %s ceiling\n' "$keep_hours" "$keep_storage"
 dind buildx prune --builder "$builder" --filter "until=${keep_hours}h" \
-  --keep-storage "$keep_storage" -f || printf 'dind-prune: buildx prune failed\n'
-dind builder prune --keep-storage "$keep_storage" -f ||
-  printf 'dind-prune: dockerd buildkit prune failed\n'
-dind image prune -a --filter "until=${keep_hours}h" -f ||
-  printf 'dind-prune: image prune failed\n'
+  --reserved-space "$keep_storage" -f
+dind builder prune --keep-storage "$keep_storage" -f
+dind image prune -a --filter "until=${keep_hours}h" -f
 
 printf '\n'
 report

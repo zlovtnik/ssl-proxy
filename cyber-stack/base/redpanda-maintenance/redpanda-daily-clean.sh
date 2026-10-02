@@ -201,7 +201,9 @@ pg_evidence_count() {
   pg_scalar \
     --set=topic="$topic" --set=partition="$partition" --set=first="$first" \
     --set=target="$target" --set=group_id="$group" \
-    --command="SELECT COUNT(DISTINCT record_offset) FROM octopus_core.ingestion_evidence WHERE group_id = :'group_id' AND topic = :'topic' AND partition_id = :'partition'::integer AND record_offset >= :'first'::bigint AND record_offset < :'target'::bigint AND disposition IN ('accepted', 'processed', 'duplicate');"
+    --file=- <<'SQL'
+SELECT COUNT(DISTINCT record_offset) FROM octopus_core.ingestion_evidence WHERE group_id = :'group_id' AND topic = :'topic' AND partition_id = :'partition'::integer AND record_offset >= :'first'::bigint AND record_offset < :'target'::bigint AND disposition IN ('accepted', 'processed', 'duplicate');
+SQL
 }
 
 verify_trim() {

@@ -406,7 +406,7 @@ pipeline {
         fi
         env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
           DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker buildx prune \
-          --builder "$BUILDER" --filter until=168h --keep-storage 20GB --force \
+          --builder "$BUILDER" --filter until=168h --reserved-space 20GB --force \
           || echo "buildx cache prune failed; continuing"
       '''
     }

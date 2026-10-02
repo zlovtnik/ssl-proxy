@@ -67,6 +67,11 @@ async function render(page, invalidField, error = 'Invalid username or password.
       </main><p class="auth-footnote">rafael@rclabs.uk</p>
     </div>
   </div></div></body></html>`);
+  // setContent can return while entry animations are still running. Measure
+  // the completed layout, including when motion is enabled in the browser.
+  await page.locator('.auth-card').evaluate(async (card) => {
+    await Promise.all(card.getAnimations({ subtree: true }).map((animation) => animation.finished));
+  });
 }
 
 async function box(locator) {
@@ -90,9 +95,13 @@ for (const width of [360, 375, 768, 1024, 1440]) {
 
       const control = input.locator('..');
       const icon = control.locator('.pf-v5-c-form-control__icon');
-      const [controlBox, inputBox, iconBox, errorBox] = await Promise.all([
-        box(control), box(input), box(icon), box(page.locator(`#input-error-${invalidField}`)),
-      ]);
+      // Read related bounds in one browser frame, not separate protocol calls.
+      const [controlBox, inputBox, iconBox, errorBox] = await control.evaluate((element, name) => {
+        return [element, element.querySelector('input'),
+          element.querySelector('.pf-v5-c-form-control__icon'),
+          document.querySelector(`#input-error-${name}`)]
+          .map((node) => node.getBoundingClientRect().toJSON());
+      }, invalidField);
       // Catch both the extra error row and an icon painted over typed text.
       expect(Math.abs(controlBox.height - normal.height)).toBeLessThanOrEqual(1);
       expect(inputBox.x + inputBox.width).toBeLessThanOrEqual(iconBox.x);
