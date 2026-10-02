@@ -6,14 +6,13 @@ Install scripts/requirements-test.txt to run this integration check.
 from __future__ import annotations
 
 import unittest
-import time
 from pathlib import Path
 
 import yaml
 
 try:
     from testcontainers.core.container import DockerContainer
-    from testcontainers.core.wait_strategies import LogMessageWaitStrategy
+    from testcontainers.core.wait_strategies import ExecWaitStrategy
 except ImportError:
     DockerContainer = None
 
@@ -30,20 +29,16 @@ class PostgresSearchUpgradeTest(unittest.TestCase):
             DockerContainer("pgvector/pgvector:0.8.6-pg16-bookworm")
             .with_env("POSTGRES_PASSWORD", "integration-test")
             .with_env("POSTGRES_DB", "sync")
-            .waiting_for(LogMessageWaitStrategy("database system is ready to accept connections", times=2))
+            # TCP stays unavailable until initialization has finished and the
+            # final server can execute queries against the requested database.
+            .waiting_for(ExecWaitStrategy([
+                "env", "PGPASSWORD=integration-test", "PGCONNECT_TIMEOUT=2",
+                "psql", "-X", "-h", "127.0.0.1", "-U", "postgres", "-d", "sync",
+                "-v", "ON_ERROR_STOP=1", "-Atc", "SELECT 1",
+            ]).with_startup_timeout(60))
         )
         cls.postgres.start()
         cls.addClassCleanup(cls.postgres.stop)
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            ready = cls.postgres.exec([
-                "psql", "-X", "-U", "postgres", "-d", "sync", "-Atc", "SELECT 1",
-            ])
-            if ready.exit_code == 0 and ready.output.decode().strip() == "1":
-                break
-            time.sleep(0.25)
-        else:
-            raise RuntimeError("ephemeral PostgreSQL did not become query-ready")
 
     def sql(self, query):
         result = self.postgres.exec([

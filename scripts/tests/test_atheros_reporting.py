@@ -11,7 +11,7 @@ import yaml
 
 try:
     from testcontainers.core.container import DockerContainer
-    from testcontainers.core.wait_strategies import LogMessageWaitStrategy
+    from testcontainers.core.wait_strategies import ExecWaitStrategy
 except ImportError:
     DockerContainer = None
 
@@ -29,7 +29,13 @@ class AtherosReportingTest(unittest.TestCase):
               .with_env("POSTGRES_PASSWORD", "contract-test")
               .with_env("POSTGRES_DB", "sync")
               .with_exposed_ports(5432)
-              .waiting_for(LogMessageWaitStrategy("database system is ready to accept connections", times=2))) as postgres:
+              # The initialization server only listens on a Unix socket. A TCP
+              # query waits for the final server and the requested database.
+              .waiting_for(ExecWaitStrategy([
+                  "env", "PGPASSWORD=contract-test", "PGCONNECT_TIMEOUT=2",
+                  "psql", "-X", "-h", "127.0.0.1", "-U", "postgres", "-d", "sync",
+                  "-v", "ON_ERROR_STOP=1", "-Atc", "SELECT 1",
+              ]).with_startup_timeout(60))) as postgres:
             def sql(statement):
                 result = postgres.exec(["psql", "-X", "-U", "postgres", "-d", "sync",
                                         "-v", "ON_ERROR_STOP=1", "-c", statement])
