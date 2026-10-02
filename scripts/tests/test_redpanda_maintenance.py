@@ -78,7 +78,14 @@ EOF
             r"""#!/bin/sh
             case "$*" in
               *MIN\(observed_at\)*) printf '1000|9999999999\n' ;;
-              *) printf '%s\n' "${EVIDENCE_COUNT:-699}" ;;
+              *--file=-*)
+                IFS= read -r query
+                case "$query" in
+                  *ingestion_evidence*) printf '%s\n' "${EVIDENCE_COUNT:-699}" ;;
+                  *) exit 2 ;;
+                esac
+                ;;
+              *) exit 2 ;;
             esac
             """,
         )
@@ -156,6 +163,16 @@ EOF
         self.assertNotEqual(0, result.returncode)
         self.assertIn("has 699/700 persisted offsets", result.stderr)
         self.assertNotIn("trim-prefix", self.calls.read_text(encoding="utf-8"))
+
+    def test_complete_offset_evidence_allows_postgres_trim(self) -> None:
+        result = self._run(
+            "wireless.audit\t3\tpg\twireless-audit-postgres-v1\twireless-audit-postgres-v1\n",
+            dry_run="false",
+            extra_env={"MOCK_AUDIT_GROUP": "1", "EVIDENCE_COUNT": "700"},
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("trim complete", result.stdout)
+        self.assertIn("trim-prefix", self.calls.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
