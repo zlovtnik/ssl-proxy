@@ -225,11 +225,9 @@ async fn run_sensor() -> Result<(), SensorError> {
                     &handles.backlog,
                     &*handles.publish_client,
                     &handles.publish_state,
-                    &handles.current_filter,
                     &mut pipeline_state,
                     &handles.stats,
                     &handles.authorized_config_generation,
-                    &handles.capture_control,
                     handles.inline_request_reply_enabled,
                 )
                 .instrument(span)
@@ -255,10 +253,9 @@ async fn run_sensor() -> Result<(), SensorError> {
             }
             _ = bandwidth_flush.tick() => {
                 let ttl = Duration::from_secs(handles.config.handshake_ttl_secs);
-                let restore_filter = filter_snapshot(&handles.current_filter, &handles.config.bpf);
                 pipeline_state
                     .handshake_monitor
-                    .cleanup_expired(ttl, Some(&handles.capture_control), &restore_filter);
+                    .cleanup_expired(ttl);
                 let bandwidth_events = pipeline_state.traffic_bucket.flush_current();
                 // Compute median (publish_time - window_end) across bandwidth events.
                 let now = Utc::now();
@@ -349,7 +346,6 @@ struct SensorHandles {
     context: SharedContext,
     current_filter: SharedFilter,
     packets: ReceiverStream<Result<RawPacket, CaptureError>>,
-    capture_control: CaptureControl,
     backlog: Arc<RedpandaBacklog>,
     publish_client: Arc<SyncPublisherClient>,
     publish_state: SharedPublishState,

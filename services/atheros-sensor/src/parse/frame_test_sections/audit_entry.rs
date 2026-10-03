@@ -245,8 +245,6 @@
                 &mut frame,
                 &context,
                 None,
-                None,
-                "type mgt or type data",
                 Duration::from_secs(60),
             ) {
                 assert!(frame.handshake_captured);
@@ -269,8 +267,6 @@
                 &mut duplicate,
                 &context,
                 None,
-                None,
-                "type mgt or type data",
                 Duration::from_secs(60)
             )
             .is_none());

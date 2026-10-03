@@ -9,11 +9,9 @@ async fn process_packet(
     backlog: &RedpandaBacklog,
     publish_client: &dyn PublishClient,
     publish_state: &SharedPublishState,
-    current_filter: &SharedFilter,
     pipeline: &mut PipelineState,
     stats: &metrics::SharedStats,
     authorized_config_generation: &AtomicU64,
-    capture_control: &CaptureControl,
     inline_request_reply_enabled: bool,
 ) -> Result<PipelineOutcome, SensorError> {
     let packet_len = packet.data.len() as u64;
@@ -61,13 +59,10 @@ async fn process_packet(
         .export_handshakes
         .then_some(config.sync.outbox_dir.as_str());
     let handshake_ttl = Duration::from_secs(config.handshake_ttl_secs);
-    let restore_filter = filter_snapshot(current_filter, &config.bpf);
     let handshake_alert = pipeline.handshake_monitor.observe(
         &mut wifi_frame,
         context,
         handshake_export_dir,
-        Some(capture_control),
-        &restore_filter,
         handshake_ttl,
     );
     let latest_generation = authorized_config_generation.load(Ordering::Relaxed);

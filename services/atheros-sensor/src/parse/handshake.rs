@@ -24,10 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    capture::CaptureControl,
-    model::{AuditContext, HandshakeAlert, WifiFrame},
-};
+use crate::model::{AuditContext, HandshakeAlert, WifiFrame};
 use chrono::Utc;
 
 use super::{eapol::eapol_key_observation, tags::push_tag};
@@ -38,7 +35,6 @@ const PARTIAL_HANDSHAKE_GRACE: Duration = Duration::from_secs(120);
 pub struct HandshakeMonitor {
     pub(crate) states: HashMap<String, HandshakeState>,
     last_alerts: HashMap<String, Instant>,
-    pinned_pairs: HashMap<String, u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -76,12 +72,7 @@ impl HandshakeState {
 }
 
 impl HandshakeMonitor {
-    pub fn cleanup_expired(
-        &mut self,
-        ttl: Duration,
-        capture_control: Option<&CaptureControl>,
-        restore_filter: &str,
-    ) {
+    pub fn cleanup_expired(&mut self, ttl: Duration) {
         let now = Instant::now();
         let mut stalled_pairs = Vec::new();
         self.states.retain(|key, state| {
@@ -114,30 +105,18 @@ impl HandshakeMonitor {
         }
         self.last_alerts
             .retain(|_, last| now.saturating_duration_since(*last) <= ttl);
-        if self.pinned_pairs.is_empty() {
-            return;
-        }
-        self.pinned_pairs
-            .retain(|key, _| self.states.contains_key(key));
-        if self.pinned_pairs.is_empty() {
-            if let Some(control) = capture_control {
-                control.apply_filter(restore_filter.to_string());
-                tracing::debug!("restored normal scan filter after last pinned pair expired");
-            }
-        }
     }
 
     /// Accumulates EAPOL key messages into a per-pair bitmask (bit N = message N+1);
     /// fires alert when all four bits are set (0x0f). Dedup window suppresses repeat alerts
     /// without clearing state. When export_dir is Some, spawns blocking tasks to write
-    /// handshake bundles. Pins to channel on Message 1, exports partial on Message 2.
+    /// handshake bundles. Exports partial on Message 2. Unauthenticated observations
+    /// never change the capture filter or channel; baseline detection stays active.
     pub fn observe(
         &mut self,
         frame: &mut WifiFrame,
         context: &AuditContext,
         export_dir: Option<&str>,
-        capture_control: Option<&CaptureControl>,
-        restore_filter: &str,
         ttl: Duration,
     ) -> Option<HandshakeAlert> {
         let observation = eapol_key_observation(frame)?;
@@ -193,22 +172,6 @@ impl HandshakeMonitor {
                 state.pmkid = observation.pmkid.clone();
             }
 
-            if msg_idx == 0 && was_messages == 0 {
-                if let Some(channel) = frame.channel_number {
-                    if let Some(control) = capture_control {
-                        let filter = pinned_handshake_filter(channel);
-                        control.apply_filter(filter);
-                        self.pinned_pairs.insert(key.clone(), channel as u8);
-                        tracing::debug!(
-                            bssid = %observation.bssid,
-                            client_mac = %observation.client_mac,
-                            channel,
-                            "pinned capture to channel for handshake"
-                        );
-                    }
-                }
-            }
-
             let should_export_partial = msg_idx == 1
                 && (was_messages & 0x01) != 0
                 && (was_messages & 0x02) == 0
@@ -248,14 +211,6 @@ impl HandshakeMonitor {
             }
         }
 
-        self.pinned_pairs.remove(&key);
-        if self.pinned_pairs.is_empty() {
-            if let Some(control) = capture_control {
-                control.apply_filter(restore_filter.to_string());
-                tracing::debug!("restored normal scan filter after handshake completion");
-            }
-        }
-
         self.last_alerts.insert(key.clone(), now);
         let (frames, pmkid) = self
             .states
@@ -287,10 +242,6 @@ impl HandshakeMonitor {
             pmkid,
         })
     }
-}
-
-fn pinned_handshake_filter(_channel: u16) -> String {
-    "(wlan[0] & 0x0c) == 0x08 and (wlan[0] & 0xf0) == 0x80 and (wlan[1] & 0x40) == 0".to_string()
 }
 
 fn spawn_handshake_export(
@@ -388,24 +339,5 @@ fn export_handshake_bundle(
     });
     if let Err(error) = fs::write(path.join(filename), payload.to_string()) {
         tracing::warn!(%error, "failed to write handshake export bundle");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::pinned_handshake_filter;
-    use pcap::{Capture, Linktype};
-
-    #[test]
-    fn pinned_handshake_filter_compiles_with_libbpf() {
-        let filter = pinned_handshake_filter(6);
-        let capture = Capture::dead(Linktype::IEEE802_11_RADIOTAP).unwrap();
-
-        assert_eq!(
-            filter,
-            "(wlan[0] & 0x0c) == 0x08 and (wlan[0] & 0xf0) == 0x80 and (wlan[1] & 0x40) == 0"
-        );
-        assert!(!filter.contains("subtype 0x08"));
-        capture.compile(&filter, true).unwrap();
     }
 }

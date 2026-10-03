@@ -213,7 +213,6 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         context,
         current_filter,
         packets: packet_stream.packets,
-        capture_control: packet_stream.control,
         backlog,
         publish_client,
         publish_state,

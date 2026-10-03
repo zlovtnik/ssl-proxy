@@ -12,6 +12,151 @@ use super::{
 };
 
 #[tokio::test]
+async fn proxy_credentials_never_reach_origins() {
+    use axum::{extract::State, http::StatusCode, routing::any, Router};
+    use http_body_util::BodyExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::task::JoinSet;
+    use tokio_util::sync::CancellationToken;
+    use tower_http::cors::CorsLayer;
+
+    async fn send_request(address: std::net::SocketAddr, request: &str) -> Vec<u8> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+            stream.write_all(request.as_bytes()).await.unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).await.unwrap();
+            response
+        })
+        .await
+        .expect("proxy request completes")
+    }
+
+    let (origin_tx, mut origin_rx) = tokio::sync::mpsc::channel(4);
+    let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin_address = origin.local_addr().unwrap();
+    let origin_router = Router::new().fallback(any(move |request: Request<Body>| {
+        let tx = origin_tx.clone();
+        async move {
+            let (parts, body) = request.into_parts();
+            let collected = body.collect().await.unwrap();
+            let trailers = collected.trailers().cloned().unwrap_or_default();
+            let body = collected.to_bytes();
+            tx.send((parts.headers, parts.uri, body, trailers))
+                .await
+                .unwrap();
+            "origin response"
+        }
+    }));
+    let origin_server = tokio::spawn(async move {
+        axum::serve(origin, origin_router).await.unwrap();
+    });
+    let state = build_state(&ssl_proxy::config::Config::default()).unwrap();
+    let target = format!("http://{origin_address}/upload?target=1");
+
+    for credentials in [
+        Some(std::sync::Arc::new(("user".into(), "pass".into()))),
+        None,
+    ] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let shutdown = CancellationToken::new();
+        let token = shutdown.clone();
+        let proxy_state = state.clone();
+        let require_auth = credentials.is_some();
+        let server = tokio::spawn(async move {
+            let mut tasks = JoinSet::new();
+            let router = build_explicit_proxy_router(proxy_state.clone(), CorsLayer::new());
+            accept_explicit_proxy_connections(
+                listener,
+                proxy_state,
+                &token,
+                std::sync::Arc::new(tokio::sync::Semaphore::new(4)),
+                &mut tasks,
+                router,
+                None,
+                credentials,
+            )
+            .await;
+            while tasks.join_next().await.is_some() {}
+        });
+
+        if require_auth {
+            for header in ["", "Proxy-Authorization: Basic dXNlcjpiYWQ=\r\n"] {
+                let request = format!(
+                    "GET {target} HTTP/1.1\r\nHost: {origin_address}\r\nAuthorization: Bearer origin-secret\r\n{header}Connection: close\r\n\r\n"
+                );
+                let response = send_request(address, &request).await;
+                assert!(response.starts_with(b"HTTP/1.1 407 "));
+                assert!(String::from_utf8_lossy(&response)
+                    .to_ascii_lowercase()
+                    .contains("proxy-authenticate:"));
+                assert!(
+                    origin_rx.try_recv().is_err(),
+                    "authentication failure never reaches origin"
+                );
+            }
+        }
+
+        // Mixed casing and multiple values must all be consumed at this hop.
+        let request = format!(
+            "POST {target} HTTP/1.1\r\nHost: {origin_address}\r\npRoXy-AuThOrIzAtIoN: Basic dXNlcjpwYXNz\r\nProxy-Authorization: Bearer another-secret\r\nAuthorization: Bearer origin-secret\r\nCookie: session=origin-cookie\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello"
+        );
+        let response = send_request(address, &request).await;
+        assert!(response.starts_with(b"HTTP/1.1 200 "));
+        assert!(response.ends_with(b"origin response"));
+        let (headers, uri, body, _) = origin_rx.recv().await.unwrap();
+        assert!(!headers.contains_key("proxy-authorization"));
+        assert_eq!(headers["authorization"], "Bearer origin-secret");
+        assert_eq!(headers["cookie"], "session=origin-cookie");
+        assert_eq!(uri.to_string(), "/upload?target=1");
+        assert_eq!(body.as_ref(), b"hello");
+
+        let request = format!(
+            "POST {target} HTTP/1.1\r\nHost: {origin_address}\r\nProxy-Authorization: Basic dXNlcjpwYXNz\r\nAuthorization: Bearer origin-secret\r\nTrailer: pRoXy-AuThOrIzAtIoN, X-Origin-Checksum\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\nProxy-Authorization: Basic dXNlcjpwYXNz\r\nX-Origin-Checksum: test-checksum\r\n\r\n"
+        );
+        let response = send_request(address, &request).await;
+        assert!(response.starts_with(b"HTTP/1.1 200 "));
+        let (headers, _, body, trailers) = origin_rx.recv().await.unwrap();
+        assert!(!headers.contains_key("proxy-authorization"));
+        assert!(!trailers.contains_key("proxy-authorization"));
+        assert_eq!(headers["authorization"], "Bearer origin-secret");
+        assert_eq!(trailers["x-origin-checksum"], "test-checksum");
+        assert_eq!(body.as_ref(), b"hello");
+        assert!(headers.get_all("trailer").iter().all(|value| !value
+            .to_str()
+            .unwrap()
+            .to_ascii_lowercase()
+            .contains("proxy-authorization")));
+        shutdown.cancel();
+        server.await.unwrap();
+    }
+
+    // The shared forwarding boundary also protects callers bypassing the listener.
+    let request = Request::builder()
+        .method("POST")
+        .uri(&target)
+        .header("PrOxY-AuThOrIzAtIoN", "Basic dXNlcjpwYXNz")
+        .header("proxy-authorization", "Bearer another-secret")
+        .header("authorization", "Bearer origin-secret")
+        .header("cookie", "session=origin-cookie")
+        .body(Body::from("hello"))
+        .unwrap();
+    let response = ssl_proxy::proxy::handler(State(state), request)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (headers, uri, body, _) = origin_rx.recv().await.unwrap();
+    assert!(!headers.contains_key("proxy-authorization"));
+    assert_eq!(headers["authorization"], "Bearer origin-secret");
+    assert_eq!(headers["cookie"], "session=origin-cookie");
+    assert_eq!(uri.to_string(), "/upload?target=1");
+    assert_eq!(body.as_ref(), b"hello");
+    assert_eq!(headers["content-length"], "5");
+    origin_server.abort();
+}
+
+#[tokio::test]
 async fn explicit_listener_reaps_completed_connections_while_idle() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::task::JoinSet;

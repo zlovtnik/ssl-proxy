@@ -167,6 +167,128 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn repeated_handshake_observations_preserve_baseline_capture() {
+        use crate::{
+            model::{AuditContext, RawPacket},
+            parse::{decode_frame, HandshakeMonitor},
+            testutil::{
+                beacon_radiotap_frame, data_from_distribution_radiotap_frame,
+                data_to_distribution_radiotap_frame, eapol_key_payload,
+                qos_data_to_distribution_radiotap_frame,
+            },
+        };
+
+        let baseline = "type mgt or type data";
+        let dead_capture = Capture::dead(Linktype::IEEE802_11_RADIOTAP).unwrap();
+        let mut active_filter = dead_capture.compile(baseline, true).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let control = super::CaptureControl { tx };
+        let context = AuditContext {
+            sensor_id: "sensor-1".into(),
+            location_id: "lab".into(),
+            interface: "wlan0".into(),
+            channel: 6,
+            reg_domain: "US".into(),
+        };
+        let mut monitor = HandshakeMonitor::default();
+        let mut protected = data_to_distribution_radiotap_frame(vec![0; 32]);
+        protected[11] |= 0x40;
+        let required_frames = [
+            beacon_radiotap_frame(),
+            protected,
+            data_from_distribution_radiotap_frame(eapol_key_payload(1)),
+            qos_data_to_distribution_radiotap_frame(0, eapol_key_payload(2)),
+        ];
+
+        for attempt in 0..256 {
+            // Alternate ordinary/QoS M1 and changing replay counters; each is
+            // attacker-controlled and must remain a passive observation.
+            let mut payload = eapol_key_payload(1);
+            payload[10..12].copy_from_slice(&95u16.to_be_bytes());
+            payload.resize(8 + 4 + 95, 0);
+            payload[15..23].copy_from_slice(&(attempt as u64).to_be_bytes());
+            let data = if attempt % 2 == 0 {
+                data_from_distribution_radiotap_frame(payload)
+            } else {
+                let mut data = qos_data_to_distribution_radiotap_frame(0, payload);
+                // QoS AP -> client, matching the ordinary M1's pair.
+                data[11] = 0x02;
+                data[14..20].copy_from_slice(&crate::testutil::CLIENT);
+                data[20..26].copy_from_slice(&crate::testutil::AP);
+                data
+            };
+            let mut frame = decode_frame(&RawPacket {
+                observed_at: chrono::Utc::now(),
+                data,
+            })
+            .unwrap();
+            frame.channel_number = Some(6);
+            assert_eq!(frame.eapol_key_message, Some(1));
+            assert!(monitor
+                .observe(
+                    &mut frame,
+                    &context,
+                    None,
+                    std::time::Duration::from_secs(60)
+                )
+                .is_none());
+            monitor.cleanup_expired(std::time::Duration::from_secs(60));
+            assert!(matches!(
+                rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            ));
+            for required in &required_frames {
+                assert!(
+                    active_filter.filter(required),
+                    "baseline frame remains visible after M1"
+                );
+            }
+        }
+
+        // Explicit configuration still owns and can reload the filter.
+        control.apply_filter("type mgt".into());
+        let super::CaptureCommand::ApplyFilter(filter) = rx.try_recv().unwrap();
+        active_filter = dead_capture.compile(&filter, true).unwrap();
+        assert!(active_filter.filter(&required_frames[0]));
+        assert!(!active_filter.filter(&required_frames[1]));
+
+        // Already queued handshake frames can complete without restoring a stale
+        // baseline over a newer operator-selected filter.
+        let mut alerts = 0;
+        for message in [2, 3, 4, 4] {
+            let data = if message == 3 {
+                data_from_distribution_radiotap_frame(eapol_key_payload(message))
+            } else {
+                data_to_distribution_radiotap_frame(eapol_key_payload(message))
+            };
+            let mut frame = decode_frame(&RawPacket {
+                observed_at: chrono::Utc::now(),
+                data,
+            })
+            .unwrap();
+            if monitor
+                .observe(
+                    &mut frame,
+                    &context,
+                    None,
+                    std::time::Duration::from_secs(60),
+                )
+                .is_some()
+            {
+                assert!(frame.handshake_captured);
+                alerts += 1;
+            }
+            assert!(matches!(
+                rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            ));
+        }
+        assert_eq!(alerts, 1, "completion and retransmission dedup still work");
+        assert!(active_filter.filter(&required_frames[0]));
+        assert!(!active_filter.filter(&required_frames[1]));
+    }
+
+    #[test]
     fn offline_pcap_fixture_contains_expected_packets() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("mgmt-fixtures.pcap");

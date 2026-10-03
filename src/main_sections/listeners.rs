@@ -275,7 +275,7 @@ async fn serve_explicit_proxy_connection(
                 let router = router.clone();
                 let creds = proxy_creds.clone();
                 async move {
-                    let req: Request<Body> = req.map(Body::new);
+                    let mut req: Request<Body> = req.map(Body::new);
 
                     let is_proxy_request =
                         req.method() == Method::CONNECT || req.uri().scheme().is_some();
@@ -291,6 +291,9 @@ async fn serve_explicit_proxy_connection(
                             }
                         }
                     }
+
+                    // Consume proxy credentials only after the authentication check.
+                    req.headers_mut().remove("proxy-authorization");
 
                     if req.method() == Method::CONNECT {
                         tunnel::handle(req, state, Some(peer.ip().to_string())).await

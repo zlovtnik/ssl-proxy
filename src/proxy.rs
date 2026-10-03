@@ -7,8 +7,9 @@
 use axum::{
     body::Body,
     extract::State,
-    http::{Request, Response, StatusCode},
+    http::{HeaderMap, HeaderValue, Request, Response, StatusCode},
 };
+use hyper::body::{Body as HttpBody, Frame, SizeHint};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use serde::Serialize;
 use std::{sync::atomic::Ordering, time::Instant};
@@ -23,6 +24,66 @@ use crate::{
 
 /// Shared HTTP client type used for proxied non-CONNECT requests.
 pub type ProxyClient = Client<HttpConnector, Body>;
+
+/// Filter trailing credentials while preserving streaming and body size hints.
+struct OriginBody(Body);
+
+impl HttpBody for OriginBody {
+    type Data = bytes::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let frame = std::task::ready!(std::pin::Pin::new(&mut self.0).poll_frame(cx));
+        std::task::Poll::Ready(frame.map(|result| {
+            result.map(|frame| match frame.into_trailers() {
+                Ok(mut trailers) => {
+                    strip_proxy_credentials(&mut trailers);
+                    Frame::trailers(trailers)
+                }
+                Err(frame) => frame,
+            })
+        }))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.0.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.0.size_hint()
+    }
+}
+
+/// Consume proxy-only credentials, including their HTTP trailer declarations.
+fn strip_proxy_credentials(headers: &mut HeaderMap) {
+    headers.remove("proxy-authorization");
+    let declarations: Vec<HeaderValue> = headers
+        .get_all("trailer")
+        .iter()
+        .filter_map(|value| {
+            // A non-ASCII declaration cannot name valid HTTP fields; discard it.
+            let value = value.to_str().ok()?;
+            let fields: Vec<&str> = value
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.eq_ignore_ascii_case("proxy-authorization"))
+                .collect();
+            let declaration = fields.join(", ");
+            if declaration.is_empty() {
+                None
+            } else {
+                HeaderValue::from_str(&declaration).ok()
+            }
+        })
+        .collect();
+    headers.remove("trailer");
+    for declaration in declarations {
+        headers.append("trailer", declaration);
+    }
+}
 
 /// Return a URI string with the query component replaced by `[REDACTED]`.
 fn scrub_uri(uri: &axum::http::Uri) -> String {
@@ -254,6 +315,8 @@ pub async fn handler(
     let method = req.method().clone();
     let scrubbed_uri = scrub_uri(req.uri());
 
+    // Proxy credentials belong to this hop, never to the destination origin.
+    strip_proxy_credentials(req.headers_mut());
     req.headers_mut().remove("connection");
     req.headers_mut().remove("keep-alive");
     req.headers_mut().remove("te");
@@ -320,6 +383,9 @@ pub async fn handler(
         state.obfuscated_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    // Trailers arrive after the initial headers. Scrub them as they stream past,
+    // preserving data frames and origin trailers without buffering the body.
+    let req = req.map(|body| Body::new(OriginBody(body)));
     match state.client.request(req).await {
         Ok(mut res) => {
             let status = res.status().as_u16();
