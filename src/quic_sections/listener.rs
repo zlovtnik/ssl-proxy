@@ -142,6 +142,11 @@ pub async fn run_quic_listener(
 
     loop {
         tokio::select! {
+            result = tasks.join_next(), if !tasks.is_empty() => {
+                if let Some(Err(error)) = result {
+                    warn!(%error, "QUIC connection task failed");
+                }
+            }
             _ = shutdown.cancelled() => {
                 info!("QUIC listener shutting down");
                 endpoint.close(0u32.into(), b"shutdown");

@@ -22,6 +22,11 @@ async fn spawn_transparent_listener(
         loop {
             tokio::select! {
                 _ = tproxy_shutdown.cancelled() => break,
+                result = tproxy_tasks.join_next(), if !tproxy_tasks.is_empty() => {
+                    if let Some(Err(error)) = result {
+                        warn!(%error, "transparent connection task failed");
+                    }
+                }
                 result = tproxy_listener.accept() => {
                     match result {
                         Ok((stream, _peer)) => {
@@ -168,8 +173,36 @@ async fn run_explicit_proxy_listener(
         tasks,
     );
 
+    accept_explicit_proxy_connections(
+        listener,
+        state,
+        shutdown,
+        connection_semaphore,
+        tasks,
+        router,
+        tls_acceptor,
+        proxy_creds,
+    )
+    .await;
+}
+
+async fn accept_explicit_proxy_connections(
+    listener: tokio::net::TcpListener,
+    state: state::SharedState,
+    shutdown: &CancellationToken,
+    connection_semaphore: std::sync::Arc<tokio::sync::Semaphore>,
+    tasks: &mut JoinSet<()>,
+    router: Router,
+    tls_acceptor: Option<TlsAcceptor>,
+    proxy_creds: Option<std::sync::Arc<(String, String)>>,
+) {
     loop {
         tokio::select! {
+            result = tasks.join_next(), if !tasks.is_empty() => {
+                if let Some(Err(error)) = result {
+                    warn!(%error, "explicit proxy listener task failed");
+                }
+            }
             _ = shutdown.cancelled() => {
                 info!("shutdown signal received, stopping explicit proxy accept loop");
                 shutdown.cancel();

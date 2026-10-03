@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, VecDeque},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -31,6 +32,18 @@ use crate::{
 };
 
 pub const ENQUEUE_TIMEOUT_ERROR: &str = "sync publisher enqueue timed out";
+
+const PUBLISHED_HISTORY_MAX_MESSAGES: usize = 256;
+const PUBLISHED_HISTORY_MAX_BYTES: usize = 1024 * 1024;
+const PUBLISHED_COUNTS_MAX_TOPICS: usize = 64;
+const PUBLISHED_COUNTS_MAX_TOPIC_BYTES: usize = 249;
+
+#[derive(Debug, Default)]
+struct PublishedRecords {
+    messages: VecDeque<PublishedMessage>,
+    bytes: usize,
+    topic_counts: BTreeMap<String, usize>,
+}
 
 #[derive(Clone, Debug)]
 struct SyncPublisherConfig {
@@ -86,7 +99,7 @@ struct SyncPublisherCounters {
 #[derive(Clone, Debug)]
 pub struct SyncPublisher {
     config: SyncPublisherConfig,
-    published: Arc<Mutex<Vec<PublishedMessage>>>,
+    published: Arc<Mutex<PublishedRecords>>,
     health: Arc<Mutex<SyncPublisherHealth>>,
     counters: Arc<SyncPublisherCounters>,
     publish_tx: Arc<Mutex<Option<PublishQueueSender>>>,

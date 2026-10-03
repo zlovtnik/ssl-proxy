@@ -246,10 +246,7 @@ fn render_metrics_body(state: &crate::state::AppState) -> String {
 /// GET /sync/status — local sync-plane publisher and topic accounting.
 pub async fn sync_status(State(state): State<SharedState>) -> Json<SyncStatusReport> {
     let publisher = state.publisher.health_snapshot();
-    let mut counts = std::collections::BTreeMap::<String, usize>::new();
-    for message in state.publisher.published_messages() {
-        *counts.entry(message.topic).or_default() += 1;
-    }
+    let counts = state.publisher.published_topic_counts();
     let status = if publisher.configured && publisher.last_error.is_some() {
         "degraded"
     } else {

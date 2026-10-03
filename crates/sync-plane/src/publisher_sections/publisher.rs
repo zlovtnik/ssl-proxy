@@ -37,7 +37,7 @@ impl SyncPublisher {
 
         Self {
             config: publisher_config,
-            published: Arc::new(Mutex::new(Vec::new())),
+            published: Arc::new(Mutex::new(PublishedRecords::default())),
             health,
             counters,
             publish_tx: Arc::new(Mutex::new(publish_tx)),
@@ -331,21 +331,60 @@ impl SyncPublisher {
         }
     }
 
+    /// Recent publish attempts, oldest first, capped at 256 messages and 1 MiB
+    /// of topic/payload bytes. Oversized samples are omitted from diagnostics;
+    /// the original payload is still published normally.
     pub fn published_messages(&self) -> Vec<PublishedMessage> {
         self.published
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .messages
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Cumulative attempt counts for the first 64 distinct topics of at most
+    /// 249 bytes each. Diagnostic limits never affect message delivery.
+    pub fn published_topic_counts(&self) -> BTreeMap<String, usize> {
+        self.published
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .topic_counts
             .clone()
     }
 
     fn record(&self, topic: &str, payload: &str) {
-        self.published
+        let mut records = self
+            .published
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(PublishedMessage {
-                topic: topic.to_string(),
-                payload: payload.to_string(),
-            });
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(count) = records.topic_counts.get_mut(topic) {
+            *count = count.saturating_add(1);
+        } else if topic.len() <= PUBLISHED_COUNTS_MAX_TOPIC_BYTES
+            && records.topic_counts.len() < PUBLISHED_COUNTS_MAX_TOPICS
+        {
+            records.topic_counts.insert(topic.to_string(), 1);
+        }
+
+        let Some(bytes) = topic.len().checked_add(payload.len()) else {
+            return;
+        };
+        if bytes > PUBLISHED_HISTORY_MAX_BYTES {
+            return;
+        }
+        while records.messages.len() >= PUBLISHED_HISTORY_MAX_MESSAGES
+            || records.bytes + bytes > PUBLISHED_HISTORY_MAX_BYTES
+        {
+            if let Some(oldest) = records.messages.pop_front() {
+                records.bytes -= oldest.topic.len() + oldest.payload.len();
+            }
+        }
+        records.messages.push_back(PublishedMessage {
+            topic: topic.to_string(),
+            payload: payload.to_string(),
+        });
+        records.bytes += bytes;
     }
 
     fn record_attempt(&self) {
