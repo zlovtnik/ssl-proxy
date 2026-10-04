@@ -11,3 +11,4 @@ mod tests;
 include!("transparent_sections/listener.rs");
 include!("transparent_sections/decisions.rs");
 include!("transparent_sections/proxying.rs");
+include!("transparent_sections/http.rs");

@@ -203,6 +203,10 @@ async fn handle_transparent_inner(
             state.record_peer_hostname(ip, ptr_hostname);
         }
     }
+    if orig_dst.port() == 80 {
+        serve_transparent_http(stream, state, orig_dst, peer_ip).await;
+        return;
+    }
     let hints = if orig_dst.port() == 80 {
         peek_plaintext_identity_hints(&mut stream).await
     } else {
@@ -222,7 +226,7 @@ async fn handle_transparent_inner(
         });
         crate::payload_audit::audit_http_preview(&hints.preview, &audit_host, &identity, &state);
     }
-    match evaluate_transparent_policy(&state, orig_dst, &tls).await {
+    match evaluate_transparent_policy(&state, orig_dst, &tls, None).await {
         TransparentPolicyDecision::Block(decision) => {
             block_transparent_flow(
                 &mut stream,
@@ -282,8 +286,9 @@ async fn evaluate_transparent_policy(
     state: &SharedState,
     orig_dst: SocketAddr,
     tls: &TlsInfo,
+    plaintext_hostname: Option<String>,
 ) -> TransparentPolicyDecision {
-    let hostname = tls.sni.clone();
+    let hostname = tls.sni.clone().or(plaintext_hostname);
     let authority = match &hostname {
         Some(name) => format!("{name}:{}", orig_dst.port()),
         None => format!("{}:{}", orig_dst.ip(), orig_dst.port()),

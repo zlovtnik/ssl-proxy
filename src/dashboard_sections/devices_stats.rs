@@ -83,7 +83,7 @@ pub async fn claim_device(
 ) -> Result<Json<ClaimResponse>, StatusCode> {
     let token = crate::identity::extract_device_token(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
     let hash = crate::identity::hash_device_token(&token);
-    let device = state
+    state
         .find_device_by_claim_hash(&hash)
         .ok_or(StatusCode::UNAUTHORIZED)?;
     let peer_ip = addr.ip().to_string();
@@ -95,17 +95,9 @@ pub async fn claim_device(
         .get(&peer_ip)
         .and_then(|entry| entry.ptr_hostname.clone());
     let user_agent = crate::identity::extract_user_agent(&headers);
-    let device = crate::identity::update_device_metadata(
-        device,
-        Some(&wg_pubkey),
-        user_agent.as_deref(),
-        peer_hostname.as_deref(),
-    );
-    state.upsert_device(device.clone());
-
     let claim = state
-        .refresh_claim(&device.device_id, &wg_pubkey, &peer_ip)
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        .claim_device_token(&hash, &wg_pubkey, &peer_ip, user_agent.as_deref(), peer_hostname.as_deref())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
     Ok(Json(ClaimResponse {
         device_id: claim.device_id,
         wg_pubkey: claim.wg_pubkey,

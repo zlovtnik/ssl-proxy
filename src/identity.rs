@@ -72,12 +72,11 @@ pub fn resolve_identity(
 
     if let Some(token) = device_token {
         let hash = hash_device_token(&token);
-        if let Some(device) = state.find_device_by_claim_hash(&hash) {
+        if let Some(device) =
+            state.resolve_device_claim_token(&hash, wg_pubkey.as_deref(), peer_ip.as_deref())
+        {
             resolved.device_id = Some(device.device_id.clone());
             resolved.identity_source = Some("registered".to_string());
-            if let (Some(pubkey), Some(ip)) = (wg_pubkey.as_deref(), peer_ip.as_deref()) {
-                state.refresh_claim(&device.device_id, pubkey, ip);
-            }
             return resolved;
         }
     }

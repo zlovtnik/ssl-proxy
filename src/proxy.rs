@@ -28,6 +28,11 @@ pub type ProxyClient = Client<HttpConnector, Body>;
 /// Filter trailing credentials while preserving streaming and body size hints.
 struct OriginBody(Body);
 
+pub(crate) fn prepare_origin_request(mut req: Request<Body>) -> Request<Body> {
+    strip_proxy_credentials(req.headers_mut());
+    req.map(|body| Body::new(OriginBody(body)))
+}
+
 impl HttpBody for OriginBody {
     type Data = bytes::Bytes;
     type Error = axum::Error;
@@ -385,7 +390,7 @@ pub async fn handler(
 
     // Trailers arrive after the initial headers. Scrub them as they stream past,
     // preserving data frames and origin trailers without buffering the body.
-    let req = req.map(|body| Body::new(OriginBody(body)));
+    let req = prepare_origin_request(req);
     match state.client.request(req).await {
         Ok(mut res) => {
             let status = res.status().as_u16();

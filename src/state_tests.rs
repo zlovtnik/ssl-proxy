@@ -92,6 +92,36 @@ async fn claim_lookup_expires() {
         notes: None,
     };
     state.upsert_device(device);
+    let mut rotated = state.get_device("device-1").unwrap();
+    rotated.claim_token_hash = Some("new-hash".to_string());
+    state.refresh_claim("device-1", "pubkey-1", "10.0.0.2");
+    state.upsert_device(rotated.clone());
+    assert!(state.find_device_by_claim_hash("hash").is_none());
+    assert!(state
+        .claim_device_token("hash", "pubkey-1", "10.0.0.2", None, None)
+        .is_none());
+    assert!(state
+        .resolve_device_claim_token("hash", Some("pubkey-1"), Some("10.0.0.2"))
+        .is_none());
+    assert!(!state.claim_tokens.contains_key("hash"));
+    assert!(state
+        .find_claim(Some("pubkey-1"), Some("10.0.0.2"))
+        .is_none());
+    assert_eq!(
+        state
+            .find_device_by_claim_hash("new-hash")
+            .unwrap()
+            .device_id,
+        "device-1"
+    );
+    // Even a stale index entry must not restore authority.
+    state
+        .claim_tokens
+        .insert("hash".to_string(), "device-1".to_string());
+    assert!(state.find_device_by_claim_hash("hash").is_none());
+    rotated.claim_token_hash = None;
+    state.upsert_device(rotated);
+    assert!(state.find_device_by_claim_hash("new-hash").is_none());
     let claim = state
         .refresh_claim("device-1", "pubkey-1", "10.0.0.2")
         .unwrap();
