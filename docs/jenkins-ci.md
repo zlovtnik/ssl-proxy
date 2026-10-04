@@ -24,7 +24,7 @@ self-signup, anonymous read access and the setup wizard. Persistent named
 volumes hold Jenkins state, registry content, Docker layer data and the
 Docker-in-Docker client certificates.
 
-The controller uses Jenkins 2.580.1 on Java 21. The pinned Dark Theme plugin
+The controller uses Jenkins 2.580.1 on Java 25. The pinned Dark Theme plugin
 provides a dark default through Configuration as Code, independent of the
 browser's system color preference. Users can select another theme from their
 account menu or profile; global defaults live in
