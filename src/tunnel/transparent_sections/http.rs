@@ -286,22 +286,43 @@ async fn transparent_http_request(
         return Ok(response(StatusCode::BAD_REQUEST));
     }
     let tls = TlsInfo::default();
-    let decision =
-        evaluate_transparent_policy(&state, orig_dst, &tls, Some(hostname.clone())).await;
-    match decision {
-        TransparentPolicyDecision::Block(_) | TransparentPolicyDecision::Tarpit(_) => {
-            return Ok(response(StatusCode::FORBIDDEN))
-        }
-        _ => {}
-    }
-    state.record_host_allow(&hostname);
-    state.record_host_reason(&hostname, POLICY_REASON_ALLOWED_PLAINTEXT);
     let identity = crate::identity::resolve_identity(
         &state,
         peer_ip,
         crate::identity::extract_device_token(req.headers()),
         crate::identity::extract_user_agent(req.headers()),
     );
+    let decision =
+        evaluate_transparent_policy(&state, orig_dst, &tls, Some(hostname.clone())).await;
+    match decision {
+        TransparentPolicyDecision::Block(decision)
+        | TransparentPolicyDecision::Tarpit(decision) => {
+            state.record_peer_block(identity.wg_pubkey.as_deref(), decision.blocked_bytes);
+            events::emit(
+                &state,
+                "http_blocked",
+                &hostname,
+                EmitPayload {
+                    peer_ip: identity.peer_ip,
+                    wg_pubkey: identity.wg_pubkey,
+                    device_id: identity.device_id,
+                    identity_source: identity.identity_source,
+                    peer_hostname: identity.peer_hostname,
+                    client_ua: identity.client_ua,
+                    bytes_up: 0,
+                    bytes_down: 0,
+                    status_code: Some(403),
+                    blocked: true,
+                    obfuscation_profile: None,
+                    extra: serde_json::json!({"category": decision.flow.category, "reason": decision.flow.reason}),
+                },
+            );
+            return Ok(response(StatusCode::FORBIDDEN));
+        }
+        _ => {}
+    }
+    state.record_host_allow(&hostname);
+    state.record_host_reason(&hostname, POLICY_REASON_ALLOWED_PLAINTEXT);
     let target = req
         .uri()
         .path_and_query()

@@ -120,6 +120,12 @@ async fn claim_lookup_expires() {
         .insert("hash".to_string(), "device-1".to_string());
     assert!(state.find_device_by_claim_hash("hash").is_none());
     rotated.claim_token_hash = None;
+    assert!(state
+        .claim_device_token("hash", "pubkey-1", "10.0.0.2", None, None)
+        .is_none());
+    assert!(state
+        .resolve_device_claim_token("hash", Some("pubkey-1"), Some("10.0.0.2"))
+        .is_none());
     state.upsert_device(rotated);
     assert!(state.find_device_by_claim_hash("new-hash").is_none());
     let claim = state

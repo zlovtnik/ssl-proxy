@@ -401,9 +401,11 @@ impl AppState {
         if let dashmap::mapref::entry::Entry::Occupied(ref mut previous) = entry {
             if previous.get().claim_token_hash != device.claim_token_hash {
                 if let Some(hash) = previous.get().claim_token_hash.as_ref() {
-                    self.claim_tokens.remove_if(hash, |_, id| id == &device.device_id);
+                    self.claim_tokens
+                        .remove_if(hash, |_, id| id == &device.device_id);
                 }
-                self.device_claims.retain(|_, claim| claim.device_id != device.device_id);
+                self.device_claims
+                    .retain(|_, claim| claim.device_id != device.device_id);
             }
         }
         if let Some(hash) = device.claim_token_hash.as_ref() {
@@ -418,11 +420,16 @@ impl AppState {
     }
 
     pub fn resolve_device_claim_token(
-        &self, claim_token_hash: &str, wg_pubkey: Option<&str>, peer_ip: Option<&str>,
+        &self,
+        claim_token_hash: &str,
+        wg_pubkey: Option<&str>,
+        peer_ip: Option<&str>,
     ) -> Option<DeviceInfo> {
         let device_id = self.claim_tokens.get(claim_token_hash)?.clone();
         let device = self.devices.get(&device_id)?;
-        if device.claim_token_hash.as_deref() != Some(claim_token_hash) { return None; }
+        if device.claim_token_hash.as_deref() != Some(claim_token_hash) {
+            return None;
+        }
         // Hold the device guard through claim refresh so rotation revokes the claim afterwards.
         if let (Some(pubkey), Some(ip)) = (wg_pubkey, peer_ip) {
             self.refresh_claim(&device.device_id, pubkey, ip);
@@ -431,14 +438,23 @@ impl AppState {
     }
 
     pub fn claim_device_token(
-        &self, hash: &str, wg_pubkey: &str, peer_ip: &str,
-        user_agent: Option<&str>, peer_hostname: Option<&str>,
+        &self,
+        hash: &str,
+        wg_pubkey: &str,
+        peer_ip: &str,
+        user_agent: Option<&str>,
+        peer_hostname: Option<&str>,
     ) -> Option<DeviceClaim> {
         let device_id = self.claim_tokens.get(hash)?.clone();
         let mut device = self.devices.get_mut(&device_id)?;
-        if device.claim_token_hash.as_deref() != Some(hash) { return None; }
+        if device.claim_token_hash.as_deref() != Some(hash) {
+            return None;
+        }
         *device = crate::identity::update_device_metadata(
-            device.clone(), Some(wg_pubkey), user_agent, peer_hostname,
+            device.clone(),
+            Some(wg_pubkey),
+            user_agent,
+            peer_hostname,
         );
         self.refresh_claim(&device_id, wg_pubkey, peer_ip)
     }
