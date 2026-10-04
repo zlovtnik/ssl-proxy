@@ -15,25 +15,25 @@ resources:
 - ../../../base/cloudflared
 - ../../../base/public-gateway
 images:
-- digest: sha256:4f91b95d141aa1db19d66071f0f451017a5676c54e7f2b7c269e348d0a082948
+- digest: sha256:9c6e078a70e63f0548df3c77ad071a6ba971597ddd5e17ff0189e521d6952ab4
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
-- digest: sha256:16b1b3c6a03b7f0ae06c237a6bf0d1e46a5bbfa9aae0b618c88923aec13dcdb5
+- digest: sha256:07f1b24dcffee94eb06388443f80750de3c92eed216f8df472839e02902ae4ac
   name: atheros-search-ui
   newName: 192.168.1.242:5000/atheros-search-ui
-- digest: sha256:ec847bce31689d43eae613777ec5ed31f8df17f5987955580fab114d591b823d
+- digest: sha256:e093b87a9840daf5a72ca42b43813eb94abf2fbcbe75b2ca76af611ae71e8375
   name: atheros-sensor
   newName: 192.168.1.242:5000/atheros-sensor
 - digest: sha256:66e6d64ce328caad83874dad320b9f2a1667d85e3b4909a83e960456550f0f4f
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
-- digest: sha256:4a9f4b969d446b21397c5d90c26e76c276f70b4002bbb724553c9195e3f53379
+- digest: sha256:5ae6216a2bb49bf9cf77e58550b0dbf69dea61ba39b7a552771bae6da1a82ada
   name: schema-migrator-backend
   newName: 192.168.1.242:5000/schema-migrator-backend
-- digest: sha256:38476fdcc4ff1cfbe8be7f2ab9f5cf8109b58176db0ee13d8ff62af0a2019b3f
+- digest: sha256:a5c9152b2cc02e2cf48a82e5b36125a04ad1dbc2b3012c780e6be6a8479b3a6b
   name: schema-migrator-ui
   newName: 192.168.1.242:5000/schema-migrator-ui
-- digest: sha256:376a944780415cd9d58938da7df210025841280340b4dfa54efacc2a78c604ed
+- digest: sha256:51d6bf45cb2fc39a85c929568119b59807802e0166e46cb12b3070be86ee4203
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
 patches:
