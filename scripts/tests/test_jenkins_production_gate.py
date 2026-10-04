@@ -285,14 +285,18 @@ class JenkinsProductionGateTest(unittest.TestCase):
         compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
             encoding="utf-8"
         )
-        base = re.search(r"^FROM jenkins/jenkins:([^-]+)-lts", dockerfile, re.MULTILINE)
+        base = re.search(
+            r"^FROM jenkins/jenkins:([^-]+)-lts-(jdk\d+)@",
+            dockerfile,
+            re.MULTILINE,
+        )
         image = re.search(
             r"^    image: ssl-proxy-ci-jenkins:([^\s]+)$", compose, re.MULTILINE
         )
 
         self.assertIsNotNone(base)
         self.assertIsNotNone(image)
-        self.assertEqual(base.group(1), image.group(1))
+        self.assertEqual(f"{base.group(1)}-{base.group(2)}", image.group(1))
 
     def test_observability_plugins_and_readonly_identity_are_pinned(self) -> None:
         plugins = (REPOSITORY_ROOT / "docker/jenkins/plugins.txt").read_text(
