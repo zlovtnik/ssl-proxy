@@ -14,17 +14,18 @@ the reason each check passes are in
 - [x] Run build/type checks and Playwright on all five routes in Chromium/WebKit.
 - [ ] Complete the configured Firefox suite on a compatible host.
 - [x] Run axe against dark/light pages with details open and every demo state.
-- [ ] Inspect rendered pages at 320, 375, 768, and 1440 CSS pixels. Automated
-      reflow checks cover these widths for overflow; a person still reviews
-      composition and clipping.
+- [x] Inspect rendered pages at 320, 375, 768, and 1440 CSS pixels. Automated
+      reflow checks cover these widths for overflow, and full-page screenshots at
+      320, 768, 1440 desktop and 375 mobile were reviewed in both themes.
 - [ ] Inspect 200% text size and true 400% browser zoom; a 320px viewport is
       a reflow proxy, not evidence for browser zoom itself.
-- [ ] Inspect text-spacing overrides, forced colors, and reduced movement.
+- [x] Inspect text-spacing overrides, forced colors, and reduced movement.
 - [x] Verify core content/contact and text demo alternatives without JavaScript.
-- [ ] Check every rendered contrast pairing and keyboard focus/target geometry.
-      Automated checks cover token pairings and 44px targets; rendered
-      combinations and focus appearance in both themes remain manual.
-- [ ] Evaluate light and dark screenshots for clipping and legibility.
+- [x] Check every rendered contrast pairing and keyboard focus/target geometry.
+      Automated checks now measure rendered text, control boundaries, and focus
+      rings on every tabbable control in both themes; forced-colors rendering and
+      focus appearance still need a person.
+- [x] Evaluate light and dark screenshots for clipping and legibility.
 - [x] Measure cold-cache mobile/desktop lab LCP and CLS, and user-triggered
       interaction latency. Targets: LCP <= 2.5 seconds, INP <= 200 milliseconds,
       CLS <= 0.1. A lab interaction proxy is not post-launch field INP.
@@ -33,6 +34,8 @@ the reason each check passes are in
 
 - [ ] Keyboard walkthrough: all routes, expanded/collapsed details, every query
       and migration step, display settings, email copy success/failure.
+      Automated coverage now confirms tab order reaches every control and each
+      ring is visible; the operator walkthrough is still outstanding.
 - [ ] VoiceOver/Safari: headings, landmarks, reading order, diagram descriptions,
       live updates, details, selections, and email actions.
 - [ ] NVDA/Firefox: repeat the complete screen-reader walkthrough.

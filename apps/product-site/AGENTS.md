@@ -12,6 +12,9 @@
   Route stylesheets compose those patterns and must not redefine them.
 - Copy lives in `src/data/products.ts`. Follow `docs/messaging.md` and
   `docs/design-system.md` when adding copy or patterns; publish mechanisms, not
-  savings, latency, or market claims.
+  savings, latency, or market claims. The two caveats, the contact labels, and
+  the audience statements belong to that model, not to a route or a component.
+- `npm test` measures rendered text, control boundaries, and focus rings on every
+  route in both themes. Keep new colours and controls inside those targets.
 - A public build needs `PUBLIC_SITE_URL`. Publication follows the reviewed Git
   deployment path; the local site does not provision hosting.

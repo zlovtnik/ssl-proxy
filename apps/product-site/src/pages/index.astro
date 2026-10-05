@@ -1,32 +1,15 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import LandingPlayground from '../components/LandingPlayground';
-import { home, products, demoLink } from '../data/products';
+import {
+  bothProducts,
+  contact,
+  email,
+  home,
+  products,
+  demoLink,
+} from '../data/products';
 import '../styles/landing.css';
-const capabilities = [
-  [
-    ['Find the signal', 'Search by meaning, exact terms, or both.'],
-    [
-      'Understand the match',
-      'Inspect ranking explanations and related observations.',
-    ],
-    [
-      'Investigate the context',
-      'Review relationships and possible identity matches.',
-    ],
-  ],
-  [
-    [
-      'Read the source',
-      'Inspect SQL files and their explicit execution order.',
-    ],
-    ['Review the plan', 'Check inputs offline and examine the dry-run plan.'],
-    [
-      'Keep the evidence',
-      'Inspect audit records and compare SQL-file snapshots.',
-    ],
-  ],
-];
 ---
 
 <Layout
@@ -88,17 +71,10 @@ const capabilities = [
           </div>
           <div class="landing-product-copy">
             <h3>{product.name}</h3>
-            <p class="landing-promise">
-              {index === 0
-                ? 'A match is a starting point.'
-                : 'Read the plan before the run.'}
-            </p>
+            <p class="landing-promise">{product.promise}</p>
             <p>{product.summary}</p>
           </div>
-          <div
-            class="product-visual"
-            aria-label={`${product.name} sample overview`}
-          >
+          <div class="product-visual">
             {index === 0 ? (
               <div class="product-network">
                 <span>Guest device 07</span>
@@ -111,7 +87,7 @@ const capabilities = [
             )}
           </div>
           <ol class="landing-capabilities">
-            {capabilities[index].map(([title, text], number) => (
+            {product.highlights.map(([title, text], number) => (
               <li>
                 <span>0{number + 1}</span>
                 <div>
@@ -197,11 +173,11 @@ const capabilities = [
           Who are these tools for?<span aria-hidden="true">+</span>
         </summary>
         <p>
-          Atheros Search is for network and security engineers investigating
-          records whose relevance, relationships, and identity implications need
-          verification. Schema Migrator is for platform and database engineers
-          reviewing SQL execution order, target drift, and evidence of previous
-          changes.
+          {products.map((product) => (
+            <>
+              <strong>{product.name}</strong> {product.problem}{' '}
+            </>
+          ))}
         </p>
       </details>
       <details>
@@ -229,8 +205,7 @@ const capabilities = [
         </summary>
         <p>
           This public site uses synthetic data only.{' '}
-          <a href="/demo/">Discuss your use case</a> to agree on the next step
-          by email.
+          <a href="/demo/">{contact.cta}</a> to agree on the next step by email.
         </p>
       </details>
     </div>
@@ -238,23 +213,13 @@ const capabilities = [
   <section id="contact" class="landing-contact" aria-labelledby="contact-title">
     <div>
       <p class="eyebrow">HAVE A USE CASE IN MIND?</p>
-      <h2 id="contact-title">
-        Discuss
-        <br />
-        your use case.
-      </h2>
-      <p>
-        Tell us what you need to investigate or change, your environment, and
-        the constraints that matter.
-      </p>
+      <h2 id="contact-title">{contact.headline.join(' ')}</h2>
+      <p>{contact.supporting}</p>
     </div>
-    <a
-      class="landing-contact-link"
-      href={demoLink('Atheros Search and Schema Migrator')}
-    >
-      <span>Write to us</span>
+    <a class="landing-contact-link" href={demoLink(bothProducts)}>
+      <span>{contact.link}</span>
       <span aria-hidden="true">&#8599;</span>
-      <small>rafael@rclabs.uk</small>
+      <small>{email}</small>
     </a>
   </section>
 </Layout>

@@ -1,5 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { products } from '../src/data/products';
 
 const routes = [
   '/',
@@ -490,6 +491,331 @@ test('enhanced text contrast and control boundaries meet thresholds in both them
         pair.ratio,
         `${theme} ${pair.foreground}/${pair.background}`,
       ).toBeGreaterThanOrEqual(pair.foreground === '--rule' ? 3 : 7);
+  }
+});
+
+type RenderedPair = {
+  kind: string;
+  label: string;
+  ratio: number;
+  target: number;
+  width?: number;
+  outline?: string;
+  order?: number;
+  count?: number;
+  visible?: boolean;
+};
+
+// Token pairs cannot see alpha, colour mixes, inherited surfaces, or a focus
+// outline painted outside a control, so this resolves rendered combinations.
+// Decorative gradient glows sit behind the hero proof panel and are not part of
+// the composited chain.
+async function renderedPairs(
+  page: Page,
+  mode: 'text' | 'control' | 'focus' | 'focusable' | 'rings',
+) {
+  return page.evaluate((audit): RenderedPair[] => {
+    const parse = (value: string) => {
+      const [red, green, blue, alpha = '1'] = value.match(/[\d.]+/g)!;
+      // Colour mixes serialise as color(srgb 0-1); rgb() uses 0-255.
+      const scale = value.startsWith('color(') ? 255 : 1;
+      return {
+        r: Number(red) * scale,
+        g: Number(green) * scale,
+        b: Number(blue) * scale,
+        a: Number(alpha),
+      };
+    };
+    const over = (top: string, bottom: string) => {
+      const a = parse(top);
+      const b = parse(bottom);
+      const alpha = a.a + b.a * (1 - a.a);
+      const mix = (x: number, y: number) =>
+        alpha === 0 ? 0 : (x * a.a + y * b.a * (1 - a.a)) / alpha;
+      return `rgb(${mix(a.r, b.r)} ${mix(a.g, b.g)} ${mix(a.b, b.b)})`;
+    };
+    const luminance = (value: string) => {
+      const channels = parse(value);
+      const [r, g, b] = [channels.r, channels.g, channels.b].map((channel) => {
+        const part = channel / 255;
+        return part <= 0.04045 ? part / 12.92 : ((part + 0.055) / 1.055) ** 2.4;
+      });
+      return r * 0.2126 + g * 0.7152 + b * 0.0722;
+    };
+    const ratio = (foreground: string, background: string) => {
+      const values = [luminance(foreground), luminance(background)].sort(
+        (a, b) => b - a,
+      );
+      return (values[0] + 0.05) / (values[1] + 0.05);
+    };
+    const shown = (element: Element) => {
+      if (!element.getClientRects().length || element.closest('[inert]'))
+        return false;
+      for (let node: Element | null = element; node; node = node.parentElement)
+        if (getComputedStyle(node).visibility !== 'visible') return false;
+      return true;
+    };
+    const background = (element: Element) => {
+      const layers: string[] = [];
+      for (
+        let node: Element | null = element;
+        node;
+        node = node.parentElement
+      ) {
+        const colour = getComputedStyle(node).backgroundColor;
+        if (parse(colour).a === 0) continue;
+        layers.push(colour);
+        if (parse(colour).a === 1) break;
+      }
+      // The nearest layer is painted on top of everything behind it.
+      let result = getComputedStyle(document.documentElement).backgroundColor;
+      for (const layer of layers.reverse()) result = over(layer, result);
+      return result;
+    };
+    const label = (element: Element, text: string) =>
+      `${element.tagName.toLowerCase()}.${element.className} "${text.slice(0, 24)}"`;
+    const focusable = [
+      ...document.querySelectorAll<HTMLElement>(
+        'a[href], button, select, input, summary, [tabindex]',
+      ),
+    ].filter(
+      (element) =>
+        element.tabIndex >= 0 &&
+        shown(element) &&
+        // Controls inside a collapsed disclosure are not tabbable.
+        !(
+          element.closest('details:not([open])') &&
+          element.tagName !== 'SUMMARY'
+        ),
+    );
+    if (audit === 'rings') {
+      // Focus each tabbable control in turn. Every control in this site accepts
+      // programmatic focus as :focus-visible once the document has keyboard
+      // focus, which keeps the check identical across engines.
+      return focusable.map((element) => {
+        element.focus();
+        const style = getComputedStyle(element);
+        return {
+          kind: 'ring',
+          label: label(element, element.textContent?.trim() ?? ''),
+          // The outline is painted outside the border box, so it is compared
+          // with the surface immediately behind the control.
+          ratio: ratio(
+            style.outlineColor,
+            background(element.parentElement ?? document.body),
+          ),
+          target: 3,
+          width: parseFloat(style.outlineWidth),
+          outline: style.outlineStyle,
+          visible: element.matches(':focus-visible'),
+        };
+      });
+    }
+    if (audit === 'focusable')
+      return [
+        {
+          kind: 'focusable',
+          label: 'tabbable controls',
+          ratio: 0,
+          target: 0,
+          count: focusable.length,
+        },
+      ];
+    if (audit === 'focus') {
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || active === document.body) return [];
+      const style = getComputedStyle(active);
+      // Position in tab order, so traversal can be checked without labels.
+      const order = focusable.indexOf(active);
+      // The outline is painted outside the border box, so it is compared with
+      // the surface immediately behind the control.
+      return [
+        {
+          kind: 'focus',
+          label: label(active, active.textContent?.trim() ?? ''),
+          ratio: ratio(
+            style.outlineColor,
+            background(active.parentElement ?? document.body),
+          ),
+          target: 3,
+          width: parseFloat(style.outlineWidth),
+          outline: style.outlineStyle,
+          order,
+        },
+      ];
+    }
+    const results: RenderedPair[] = [];
+    if (audit === 'text') {
+      for (const element of document.body.querySelectorAll<HTMLElement>('*')) {
+        const text = [...element.childNodes]
+          .filter((node) => node.nodeType === 3)
+          .map((node) => node.textContent ?? '')
+          .join('')
+          .trim();
+        if (!text || !shown(element)) continue;
+        const style = getComputedStyle(element);
+        const size = parseFloat(style.fontSize);
+        const large =
+          size >= 24 || (size >= 18.66 && Number(style.fontWeight) >= 700);
+        results.push({
+          kind: 'text',
+          label: label(element, text),
+          ratio: ratio(style.color, background(element)),
+          target: large ? 4.5 : 7,
+        });
+      }
+      return results;
+    }
+    for (const element of document.body.querySelectorAll<HTMLElement>(
+      'button, select, input, a.button, summary, .button',
+    )) {
+      if (!shown(element)) continue;
+      const style = getComputedStyle(element);
+      const around = background(element.parentElement!);
+      const name = label(element, element.textContent?.trim() ?? '');
+      // A filled control is identified by its own surface against the page.
+      const fill = ratio(background(element), around);
+      if (fill >= 3) {
+        results.push({ kind: 'fill', label: name, ratio: fill, target: 3 });
+        continue;
+      }
+      const widths = [
+        style.borderTopWidth,
+        style.borderRightWidth,
+        style.borderBottomWidth,
+        style.borderLeftWidth,
+      ].map(parseFloat);
+      // Decorative rules and hairline separators are not control boundaries.
+      if (widths.some((width) => width === 0)) continue;
+      if (style.borderTopStyle === 'none') continue;
+      results.push({
+        kind: 'boundary',
+        label: name,
+        ratio: ratio(style.borderTopColor, around),
+        target: 3,
+      });
+    }
+    return results;
+  }, mode);
+}
+
+test('rendered text and control boundaries meet the documented targets', async ({
+  page,
+}) => {
+  for (const route of routes) {
+    await page.goto(route);
+    // Read settled states; the 150ms border transition would otherwise be
+    // sampled mid-interpolation.
+    await page.addStyleTag({
+      content: '* { transition: none !important; animation: none !important; }',
+    });
+    await page
+      .locator('details')
+      .evaluateAll((elements) =>
+        elements.forEach(
+          (element) => ((element as HTMLDetailsElement).open = true),
+        ),
+      );
+    if (route === '/atheros-search/')
+      await page
+        .getByRole('button', { name: 'Try the next sample query' })
+        .click();
+    if (route === '/schema-migrator/')
+      await page.getByRole('button', { name: '4. Inspect run record' }).click();
+    for (const theme of ['dark', 'light']) {
+      await page.evaluate(
+        (value) => (document.documentElement.dataset.theme = value),
+        theme,
+      );
+      const audited = [
+        ...(await renderedPairs(page, 'text')),
+        ...(await renderedPairs(page, 'control')),
+      ];
+      // Guard against an audit that silently inspects nothing.
+      expect(audited.length, `${route} ${theme} audited pairs`).toBeGreaterThan(
+        40,
+      );
+      for (const result of audited)
+        expect(
+          result.ratio,
+          `${route} ${theme} ${result.kind} ${result.label}`,
+        ).toBeGreaterThanOrEqual(result.target);
+    }
+  }
+});
+
+test('both caveats ship from the content model beside the content they qualify', async ({
+  page,
+}) => {
+  for (const product of products) {
+    await page.goto(product.path);
+    const html = await page.content();
+    // The page copy and the demonstration both carry the same statement.
+    expect(html.split(product.caveat).length - 1, product.name).toBeGreaterThan(
+      1,
+    );
+    await page.locator('#demo').scrollIntoViewIfNeeded();
+  }
+  await page.goto('/');
+  const home = await page.content();
+  for (const product of products)
+    expect(
+      home.includes(product.caveat),
+      `${product.name} caveat in the playground`,
+    ).toBe(true);
+  await page
+    .getByRole('button', { name: 'Atheros Search', exact: true })
+    .click();
+  await expect(
+    page.getByRole('link', { name: 'Open the full investigation' }),
+  ).toHaveAttribute('href', `${products[0].path}#demo`);
+  await page
+    .getByRole('button', { name: 'Schema Migrator', exact: true })
+    .click();
+  await expect(
+    page.getByRole('link', { name: 'Open the migration walkthrough' }),
+  ).toHaveAttribute('href', `${products[1].path}#demo`);
+});
+
+test('every tabbable control shows a compliant focus ring and keeps tab order', async ({
+  page,
+  browserName,
+}) => {
+  for (const route of routes) {
+    for (const theme of ['dark', 'light']) {
+      await page.goto(route);
+      await page.evaluate(
+        (value) => (document.documentElement.dataset.theme = value),
+        theme,
+      );
+      const rings = await renderedPairs(page, 'rings');
+      const [counted] = await renderedPairs(page, 'focusable');
+      expect(rings.length, `${route} ${theme} focusable controls`).toBe(
+        counted!.count,
+      );
+      for (const ring of rings) {
+        const where = `${route} ${theme} ${ring.label}`;
+        expect(ring.visible, `${where} focus-visible`).toBe(true);
+        expect(ring.outline, where).not.toBe('none');
+        expect(ring.width!, where).toBeGreaterThanOrEqual(2);
+        expect(ring.ratio, where).toBeGreaterThanOrEqual(ring.target);
+      }
+      if (browserName !== 'chromium') continue;
+      // Real key presses confirm the document order traversal. Chromium is the
+      // engine used here because WebKit can move focus into browser chrome
+      // part-way through a traversal.
+      let previous = -1;
+      let stops = 0;
+      for (let step = 0; step < 60; step++) {
+        await page.keyboard.press('Tab');
+        const [focused] = await renderedPairs(page, 'focus');
+        if (!focused) continue;
+        if (focused.order! <= previous) break;
+        previous = focused.order!;
+        stops++;
+      }
+      expect(stops, `${route} ${theme} skipped controls`).toBe(counted!.count);
+    }
   }
 });
 

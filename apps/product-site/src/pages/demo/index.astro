@@ -1,23 +1,6 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { contact, demoLink, email } from '../../data/products';
-const options = [
-  [
-    'search',
-    'Atheros Search',
-    'Explore network evidence and investigation context.',
-  ],
-  [
-    'migrator',
-    'Schema Migrator',
-    'Review SQL files, dry-run plans, and run records.',
-  ],
-  [
-    'both',
-    'Both products',
-    'Discuss the two separate tools in one conversation.',
-  ],
-];
+import { contact, contactOptions, demoLink, email } from '../../data/products';
 ---
 
 <Layout
@@ -44,19 +27,12 @@ const options = [
       </p>
     </div>
     <div class="feature-grid">
-      {options.map(([id, name, text]) => (
-        <article id={id}>
-          <h3>{name}</h3>
-          <p>{text}</p>
-          <a
-            class="button primary"
-            href={demoLink(
-              name === 'Both products'
-                ? 'Atheros Search and Schema Migrator'
-                : name,
-            )}
-          >
-            Discuss {name}
+      {contactOptions.map((option) => (
+        <article id={option.id}>
+          <h3>{option.label}</h3>
+          <p>{option.text}</p>
+          <a class="button primary" href={demoLink(option.subject)}>
+            Discuss {option.label}
           </a>
         </article>
       ))}
@@ -70,7 +46,7 @@ const options = [
     </div>
     <div class="email-row">
       <a href={`mailto:${email}`}>{email}</a>
-      <button type="button" id="copy-email">
+      <button type="button" id="copy-email" data-email={email}>
         Copy email address
       </button>
     </div>
@@ -81,19 +57,20 @@ const options = [
     </p>
   </section>
   <script>
-    document
-      .getElementById('copy-email')
-      ?.addEventListener('click', async () => {
-        const status = document.getElementById('copy-status')!;
-        try {
-          await navigator.clipboard.writeText('rafael@rclabs.uk');
-          status.textContent = 'Email address copied.';
-          status.dataset.state = 'ok';
-        } catch {
-          status.textContent =
-            'Copy is unavailable. Select the visible address and copy it manually.';
-          status.dataset.state = 'error';
-        }
-      });
+    const copy = document.getElementById('copy-email');
+    copy?.addEventListener('click', async () => {
+      const status = document.getElementById('copy-status')!;
+      try {
+        await navigator.clipboard.writeText(
+          (copy as HTMLButtonElement).dataset.email!,
+        );
+        status.textContent = 'Email address copied.';
+        status.dataset.state = 'ok';
+      } catch {
+        status.textContent =
+          'Copy is unavailable. Select the visible address and copy it manually.';
+        status.dataset.state = 'error';
+      }
+    });
   </script>
 </Layout>

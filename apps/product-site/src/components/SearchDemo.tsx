@@ -1,5 +1,6 @@
 import { createSignal, For, onMount } from 'solid-js';
 import { investigations } from '../data/fixtures';
+import { products } from '../data/products';
 
 export default function SearchDemo() {
   const [selected, setSelected] = createSignal(0);
@@ -44,10 +45,7 @@ export default function SearchDemo() {
         <details>
           <summary>4. Inspect observed relationships</summary>
           <p>{sample().relation}</p>
-          <p class="caveat">
-            An observation does not confirm a current connection or device
-            identity.
-          </p>
+          <p class="caveat">{products[0].caveat}</p>
         </details>
       </div>
     </div>

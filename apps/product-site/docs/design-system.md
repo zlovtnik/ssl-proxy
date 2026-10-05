@@ -23,6 +23,8 @@ all five routes in both themes. A route that drifts fails the suite.
 | Control boundary       | `#687999`  | `#667085`   |
 | Decorative divider     | `#26324A`  | `#D7DEEB`   |
 | Primary-button text    | `#160E2B`  | `#FFFFFF`   |
+| Labelled success text  | `#6EE7B7`  | `#064E3B`   |
+| Focus outline          | `#F4F6FF`  | `#10182B`   |
 
 Colour carries meaning, and only that meaning:
 
@@ -32,16 +34,24 @@ Colour carries meaning, and only that meaning:
 - Accent colour never replaces text. Pressed, current, and success states are
   also carried by text, weight, or an `aria-*` attribute.
 
-Core text and accent pairs are calculated above 7:1 against both page and panel
-backgrounds; control boundaries meet 3:1. Verify rendered states, not just
-token values. The automated check covers token pairs; rendered combinations
-remain part of the manual evaluation in
-[the accessibility matrix](accessibility-matrix.md).
+Token pairs are calculated above 7:1 against both page and panel backgrounds;
+control boundaries meet 3:1. Rendered combinations are measured separately,
+because alpha, colour mixes, and inherited surfaces are invisible to a token
+check: the browser walk in `tests/site.spec.ts` composites each layer and
+asserts 7:1 for normal text, 4.5:1 for large text, and 3:1 for control
+boundaries and focus rings, on every route in both themes. Two results from
+that walk shaped the system: secondary text on a selected playground row needed
+the accent tint reduced from 10% to 6%, and a filled control is identified by its
+own surface rather than its border. Decorative dividers are excluded by design.
+Forced-colors rendering still needs a human check; automation cannot select that
+rendering mode for a reader.
 
 ## Typography
 
 Both families are self-hosted Fontsource variable fonts. There are no external
-font requests.
+font requests. `Layout.astro` preloads the two Latin variable faces through
+build-time asset URLs, because a late swap reflowed the hero and header on a
+cold cache; measured cold-load layout shift is now zero on all five routes.
 
 - Inter Variable: headings, body copy, controls.
 - JetBrains Mono Variable: SQL, identifiers, metadata, diagram labels, indices.
@@ -67,6 +77,8 @@ the prose measure.
 - Hero: five columns of copy, seven of proof at desktop. Stacks below 1024px.
 - Depth comes from differentiated surfaces, restrained shadows, and a faint
   violet glow behind the hero proof panel.
+- The header stays on one row at every width: the wordmark descriptor is dropped
+  below 1024px before the navigation would wrap.
 
 Verified at 320, 375, 768, 1024, and 1440px in both themes with no
 page-level horizontal scrolling, including enlarged text.
@@ -88,6 +100,11 @@ structure where a shared one exists.
 | Contact         | `.contact-banner`, `.email-row`                     |
 | Actions         | `.actions`, `.button`, `.text-link`                 |
 | Location        | `.breadcrumb`                                       |
+
+A pattern never repeats its own words next to itself: the contact banner pairs
+the "Discuss your use case." heading with the shorter `contact.link` label, and
+the product breadcrumb carries the product name so the hero eyebrow carries only
+the story label.
 
 ## Visuals and interaction
 

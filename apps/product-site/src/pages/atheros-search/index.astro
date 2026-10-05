@@ -5,11 +5,10 @@ import Diagram from '../../components/Diagram.astro';
 import Contact from '../../components/Contact.astro';
 import { products } from '../../data/products';
 const product = products[0];
-const eyebrow = `${product.name.toUpperCase()} / ${product.label}`;
 ---
 
 <Layout
-  title="Atheros Search - Search network records, inspect why they match"
+  title={`${product.name} - ${product.headline.join(' ')}`}
   description={product.summary}
   product="search"
 >
@@ -20,7 +19,7 @@ const eyebrow = `${product.name.toUpperCase()} / ${product.label}`;
         <span aria-hidden="true">/</span>
         <span aria-current="page">{product.name}</span>
       </nav>
-      <p class="eyebrow">{eyebrow}</p>
+      <p class="eyebrow">{product.label}</p>
       <h1 id="hero-title">
         {product.headline[0]}
         <span class="accent">{product.headline[1]}</span>
@@ -76,7 +75,8 @@ const eyebrow = `${product.name.toUpperCase()} / ${product.label}`;
   <section class="section" aria-labelledby="value-title">
     <div class="section-heading">
       <p class="eyebrow">AUDIENCE VALUE</p>
-      <h2 id="value-title">Two ways to assess Atheros Search.</h2>
+      <h2 id="value-title">Two ways to assess {product.name}.</h2>
+      <p class="lead">{product.problem}</p>
       <p>
         Both readings are published openly. Choose the one that matches your
         question.

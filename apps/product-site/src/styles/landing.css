@@ -233,11 +233,13 @@
   text-decoration: none;
   min-width: 270px;
 }
-.landing-contact-link > span {
-  font-size: 2.4rem;
+.landing-contact-link > span:first-child {
+  font-size: clamp(1.5rem, 2.4vw, 2.25rem);
   letter-spacing: -0.05em;
+  max-width: 16ch;
 }
 .landing-contact-link > span:nth-child(2) {
+  font-size: 1.75rem;
   color: var(--action);
 }
 .landing-contact-link small {
@@ -393,8 +395,10 @@
   background: transparent;
 }
 .preview-record[aria-pressed='true'] {
+  /* The 3px accent rule and aria-pressed carry the state; the tint stays light
+     enough for secondary text to keep its 7:1 target on the selected row. */
   border-left-color: var(--preview-accent);
-  background: color-mix(in srgb, var(--preview-accent) 10%, var(--surface));
+  background: color-mix(in srgb, var(--preview-accent) 6%, var(--surface));
 }
 .preview-record > svg {
   color: var(--preview-accent);

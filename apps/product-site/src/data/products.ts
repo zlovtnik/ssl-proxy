@@ -19,6 +19,9 @@ export const products = [
     headline: ['Search network records.', 'Inspect why they match.'],
     summary:
       'Combine term and vector search across wireless, device, and proxy observations. Inspect ranking explanations and related records to assess a result with its context.',
+    problem:
+      'Network and security engineers investigating records whose relevance, relationships, and identity implications need verification.',
+    promise: 'A match is a starting point.',
     primaryCta: { label: 'Explore a sample investigation', href: '#demo' },
     secondaryCta: { label: 'Discuss your use case', href: '/demo/#search' },
     audiences: [
@@ -64,6 +67,17 @@ export const products = [
     ],
     caveat:
       'An observation does not confirm a current connection or device identity.',
+    highlights: [
+      ['Find the signal', 'Search by meaning, exact terms, or both.'],
+      [
+        'Understand the match',
+        'Inspect ranking explanations and related observations.',
+      ],
+      [
+        'Investigate the context',
+        'Review relationships and possible identity matches.',
+      ],
+    ],
     features: [
       [
         'Search beyond exact words',
@@ -107,6 +121,9 @@ export const products = [
     headline: ['Review SQL changes', 'before you run them.'],
     summary:
       'Discover SQL files in a fixed order, validate them offline, and inspect a dry-run plan. Keep execution records and file checksums for subsequent review.',
+    problem:
+      'Platform and database engineers reviewing SQL execution order, target drift, and evidence of previous changes.',
+    promise: 'Read the plan before the run.',
     primaryCta: { label: 'Explore a sample migration review', href: '#demo' },
     secondaryCta: { label: 'Discuss your use case', href: '/demo/#migrator' },
     audiences: [
@@ -151,6 +168,17 @@ export const products = [
     ],
     caveat:
       'SQL-file snapshots preserve source files and checksums. They do not back up database data.',
+    highlights: [
+      [
+        'Read the source',
+        'Inspect SQL files and their explicit execution order.',
+      ],
+      ['Review the plan', 'Check inputs offline and examine the dry-run plan.'],
+      [
+        'Keep the evidence',
+        'Inspect audit records and compare SQL-file snapshots.',
+      ],
+    ],
     features: [
       [
         'Spot schema drift',
@@ -199,7 +227,34 @@ export const contact = {
   headline: ['Discuss your', 'use case.'],
   supporting:
     "Tell us what you need to investigate or change, your environment, and the constraints that matter. We'll agree on the next step by email.",
+  cta: 'Discuss your use case',
+  // Short form for a mailto link that already sits under the headline, so the
+  // same words never appear twice in one block.
+  link: 'Write to us',
 } as const;
+
+export const bothProducts = 'Atheros Search and Schema Migrator';
+
+export const contactOptions = [
+  {
+    id: 'search',
+    label: 'Atheros Search',
+    subject: 'Atheros Search',
+    text: 'Explore network evidence and investigation context.',
+  },
+  {
+    id: 'migrator',
+    label: 'Schema Migrator',
+    subject: 'Schema Migrator',
+    text: 'Review SQL files, dry-run plans, and run records.',
+  },
+  {
+    id: 'both',
+    label: 'Both products',
+    subject: bothProducts,
+    text: 'Discuss the two separate tools in one conversation.',
+  },
+] as const;
 
 export function demoLink(product: string) {
   const subject = `Use-case discussion: ${product}`;

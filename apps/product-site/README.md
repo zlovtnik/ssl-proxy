@@ -33,8 +33,10 @@ npm run test:all-browsers
 
 Generated dependency, build, and test outputs are ignored. The npm lockfile is
 committed. Fonts are bundled locally from Fontsource packages; no font CDN or
-third-party analytics is used. Display preferences are stored only in browser
-local storage, with a fallback when storage is unavailable.
+third-party analytics is used. The two Latin variable faces are preloaded from
+build-time asset URLs so the first paint already uses them. Display preferences
+are stored only in browser local storage, with a fallback when storage is
+unavailable.
 Original font licenses are shipped in `public/font-licenses/`.
 
 Use `npm run format:check` to check source formatting and `npm run format`

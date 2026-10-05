@@ -1,5 +1,6 @@
 import { createSignal, For, onMount } from 'solid-js';
 import { migrationSteps } from '../data/fixtures';
+import { products } from '../data/products';
 
 export default function MigratorDemo() {
   const [step, setStep] = createSignal(0);
@@ -38,10 +39,7 @@ export default function MigratorDemo() {
             <code>{current().code}</code>
           </pre>
         </section>
-        <p class="caveat">
-          SQL-file snapshots preserve source files and checksums. They do not
-          back up database data.
-        </p>
+        <p class="caveat">{products[1].caveat}</p>
         <p class="fine-print">
           SQL means Structured Query Language. This demo never connects to or
           changes a database.

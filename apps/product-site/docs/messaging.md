@@ -44,6 +44,9 @@ behind tabs or filters, so a reader can disagree with one and keep reading.
 - Buyers and investors receive operating shape: storage location, worker pools,
   guarded execution, credential handling, audit records.
 
+Each product also carries one `problem` statement naming its audience, used above
+the audience pair and in the homepage question about who the tools are for.
+
 ## Evidence rules
 
 Publish mechanisms and demonstrable capabilities. Do not publish savings,
@@ -84,6 +87,11 @@ Every call to action opens `mailto:` at `rafael@rclabs.uk` through
 `demoLink()`. Subjects are `Use-case discussion: [product]`. The email address
 stays visible on `/demo/` with a copy button and a manual-copy fallback. The
 copy states that a meeting is scheduled only after a time is agreed.
+
+`contact.headline` is the section heading on the contact route, the product
+contact banners, and the homepage. `contact.cta` labels the navigation and hero
+actions. `contact.link` is the shorter label for a mailto link that already sits
+under that heading, so one block never repeats the same words.
 
 ## Adding copy
 

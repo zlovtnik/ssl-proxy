@@ -7,6 +7,9 @@ import {
   onCleanup,
 } from 'solid-js';
 import { investigations, migrationSteps } from '../data/fixtures';
+import { products } from '../data/products';
+
+const [search, migrator] = products;
 
 export default function LandingPlayground() {
   const [product, setProduct] = createSignal('search');
@@ -119,11 +122,8 @@ export default function LandingPlayground() {
           </div>
           <pre class="preview-code">{migrationSteps[step()].code}</pre>
           <p class="preview-explanation">{migrationSteps[step()].text}</p>
-          <p class="preview-caveat">
-            SQL-file snapshots preserve source files and checksums. They do not
-            back up database data.
-          </p>
-          <a class="text-link preview-full" href="/schema-migrator/#demo">
+          <p class="preview-caveat">{migrator.caveat}</p>
+          <a class="text-link preview-full" href={`${migrator.path}#demo`}>
             Open the migration walkthrough{' '}
             <span aria-hidden="true">&#8594;</span>
           </a>
@@ -227,13 +227,10 @@ export default function LandingPlayground() {
                 </span>
               </div>
               <p>{record().relation}</p>
-              <p class="preview-caveat">
-                An observation does not confirm a current connection or device
-                identity.
-              </p>
+              <p class="preview-caveat">{search.caveat}</p>
             </div>
           </Show>
-          <a class="text-link preview-full" href="/atheros-search/#demo">
+          <a class="text-link preview-full" href={`${search.path}#demo`}>
             Open the full investigation <span aria-hidden="true">&#8594;</span>
           </a>
         </div>

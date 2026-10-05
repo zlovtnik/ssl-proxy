@@ -1,7 +1,12 @@
 ---
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
+// Preloaded so the first paint already uses the intended faces; a late swap
+// reflows the hero and header on a cold cache.
+import interLatin from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
+import monoLatin from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 import '../styles/site.css';
+import { contact } from '../data/products';
 interface Props {
   title: string;
   description: string;
@@ -26,6 +31,20 @@ const navigation = [
     <title>{title} | RCLabs</title>
     <meta name="description" content={description} />
     <meta name="theme-color" content="#090D1A" />
+    <link
+      rel="preload"
+      href={interLatin}
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href={monoLatin}
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     {!publicBuild && <meta name="robots" content="noindex, nofollow" />}
     <link rel="canonical" href={canonical} />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -101,7 +120,7 @@ const navigation = [
             class="button small"
             aria-current={Astro.url.pathname === '/demo/' ? 'page' : undefined}
           >
-            Discuss your use case <span aria-hidden="true">&#8599;</span>
+            {contact.cta} <span aria-hidden="true">&#8599;</span>
           </a>
         </nav>
         <details class="mobile-menu">
@@ -113,7 +132,7 @@ const navigation = [
               <a href={path}>{label}</a>
             ))}
             <a href="/demo/">
-              Discuss your use case <span aria-hidden="true">&#8599;</span>
+              {contact.cta} <span aria-hidden="true">&#8599;</span>
             </a>
           </nav>
         </details>

@@ -644,12 +644,12 @@ details > section {
   margin-bottom: 0;
 }
 .step-controls {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.6rem;
 }
 .step-controls button {
-  flex: 1 1 180px;
+  min-width: 0;
 }
 .step-controls button[aria-pressed='true'] {
   border: 2px solid var(--migrator);
@@ -794,6 +794,10 @@ select:disabled {
     --shell-inset: 64px;
     --section-space: 4.5rem;
   }
+  /* The wordmark descriptor is dropped before the header needs to wrap. */
+  .wordmark-label {
+    display: none;
+  }
   .hero-split {
     grid-template-columns: minmax(0, 1fr);
     gap: 2.5rem;
@@ -842,9 +846,6 @@ select:disabled {
 @media (max-width: 480px) {
   .site-header nav {
     gap: 0.4rem 1rem;
-  }
-  .wordmark-label {
-    display: none;
   }
   h1 {
     font-size: 2.45rem;

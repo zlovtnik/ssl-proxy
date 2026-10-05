@@ -1,4 +1,5 @@
 ---
+import { products } from '../data/products';
 interface Props {
   kind: 'search' | 'migrator';
 }
@@ -73,7 +74,7 @@ const centers = [100, 320, 540];
   </svg>
   <figcaption>
     {search
-      ? 'Input, processing, and output for an investigation. An observation does not confirm a current connection or device identity.'
+      ? `Input, processing, and output for an investigation. ${products[0].caveat}`
       : 'Input, processing, and output for a change review. The public demonstration executes no SQL.'}
   </figcaption>
 </figure>
