@@ -46,12 +46,9 @@ const product = products[0];
   </section>
   <section class="section" aria-labelledby="workflow-title">
     <div class="section-heading">
-      <p class="eyebrow">HOW IT WORKS</p>
-      <h2 id="workflow-title">From a question to leads you can review.</h2>
-      <p>
-        Each step takes a defined input and produces something you can read.
-        Every record in the sample is synthetic.
-      </p>
+      <p class="eyebrow">{product.sections.workflow.label}</p>
+      <h2 id="workflow-title">{product.sections.workflow.title}</h2>
+      <p>{product.sections.workflow.note}</p>
     </div>
     <ol class="workflow-steps">
       {product.workflow.map((item, index) => (
@@ -74,13 +71,10 @@ const product = products[0];
   </section>
   <section class="section" aria-labelledby="value-title">
     <div class="section-heading">
-      <p class="eyebrow">AUDIENCE VALUE</p>
-      <h2 id="value-title">Two ways to assess {product.name}.</h2>
+      <p class="eyebrow">{product.sections.value.label}</p>
+      <h2 id="value-title">{product.sections.value.title}</h2>
       <p class="lead">{product.problem}</p>
-      <p>
-        Both readings are published openly. Choose the one that matches your
-        question.
-      </p>
+      <p>{product.sections.value.note}</p>
     </div>
     <div class="audience-grid">
       {product.audiences.map((audience) => (
@@ -101,12 +95,9 @@ const product = products[0];
   </section>
   <section class="section" aria-labelledby="evidence-title">
     <div class="section-heading">
-      <p class="eyebrow">SUPPORTING CAPABILITY EVIDENCE</p>
-      <h2 id="evidence-title">Mechanisms you can inspect.</h2>
-      <p>
-        These are working behaviours of the product, not projected savings,
-        latency, or market claims.
-      </p>
+      <p class="eyebrow">{product.sections.evidence.label}</p>
+      <h2 id="evidence-title">{product.sections.evidence.title}</h2>
+      <p>{product.sections.evidence.note}</p>
     </div>
     <div class="feature-grid">
       {product.features.map(([title, text], index) => (
@@ -120,18 +111,15 @@ const product = products[0];
     <div class="two-column">
       <Diagram kind="search" />
       <div class="evidence-panel">
-        <p class="eyebrow">RELATIONSHIP VIEWS / READ WITH CARE</p>
+        <p class="eyebrow">{product.sections.evidence.caveatLabel}</p>
         <p class="caveat">{product.caveat}</p>
-        <p class="fine-print">
-          The sample shows recorded observations only. It connects to no
-          production system and makes no identity determination.
-        </p>
+        <p class="fine-print">{product.sections.evidence.footnote}</p>
       </div>
     </div>
   </section>
   <section class="section glossary" aria-labelledby="terms-title">
-    <p class="eyebrow">GLOSSARY</p>
-    <h2 id="terms-title">A few terms, made clear.</h2>
+    <p class="eyebrow">{product.sections.glossary.label}</p>
+    <h2 id="terms-title">{product.sections.glossary.title}</h2>
     <dl>
       {product.glossary.map(([term, definition]) => (
         <div>

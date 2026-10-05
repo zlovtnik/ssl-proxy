@@ -1,14 +1,8 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import Contact from '../components/Contact.astro';
 import LandingPlayground from '../components/LandingPlayground';
-import {
-  bothProducts,
-  contact,
-  email,
-  home,
-  products,
-  demoLink,
-} from '../data/products';
+import { bothProducts, contact, home, products } from '../data/products';
 import '../styles/landing.css';
 ---
 
@@ -47,7 +41,7 @@ import '../styles/landing.css';
     class="section landing-products"
     aria-labelledby="products-title"
   >
-    <div class="landing-section-heading">
+    <div class="section-heading split">
       <div>
         <p class="eyebrow">THE PRODUCTS / TWO INDEPENDENT TOOLS</p>
         <h2 id="products-title">
@@ -119,7 +113,7 @@ import '../styles/landing.css';
     class="section landing-approach"
     aria-labelledby="approach-title"
   >
-    <div class="landing-section-heading">
+    <div class="section-heading split">
       <div>
         <p class="eyebrow">HOW THEY WORK</p>
         <h2 id="approach-title">The details stay visible.</h2>
@@ -162,7 +156,7 @@ import '../styles/landing.css';
     class="section landing-faq"
     aria-labelledby="questions-title"
   >
-    <div>
+    <div class="section-heading">
       <p class="eyebrow">A FEW PRACTICAL QUESTIONS</p>
       <h2 id="questions-title">Before you start.</h2>
       <p>Know what you're exploring.</p>
@@ -210,18 +204,9 @@ import '../styles/landing.css';
       </details>
     </div>
   </section>
-  <section id="contact" class="landing-contact" aria-labelledby="contact-title">
-    <div>
-      <p class="eyebrow">HAVE A USE CASE IN MIND?</p>
-      <h2 id="contact-title">{contact.headline.join(' ')}</h2>
-      <p>{contact.supporting}</p>
-    </div>
-    <a class="landing-contact-link" href={demoLink(bothProducts)}>
-      <span>{contact.link}</span>
-      <span aria-hidden="true">&#8599;</span>
-      <small>{email}</small>
-    </a>
-  </section>
+  <div id="contact" class="section">
+    <Contact product={bothProducts} />
+  </div>
 </Layout>
 <script>
   const navigation = document.querySelectorAll(

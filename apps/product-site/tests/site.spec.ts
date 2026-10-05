@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { products } from '../src/data/products';
+import { bothProducts, contact, email, products } from '../src/data/products';
 
 const routes = [
   '/',
@@ -902,6 +902,69 @@ test('hero calls to action keep their documented destinations', async ({
   await expect(
     migrator.getByRole('link', { name: 'Discuss your use case' }),
   ).toHaveAttribute('href', '/demo/#migrator');
+});
+
+test('every route that offers a commercial action uses the shared contact pattern', async ({
+  page,
+}) => {
+  for (const product of [null, ...products]) {
+    const route = product ? product.path : '/';
+    await page.goto(route);
+    const banner = page.locator('.contact-banner');
+    await expect(banner, route).toHaveCount(1);
+    // One pattern, one set of words: the heading, the shorter link label, and the
+    // visible address all ship from the content model.
+    await expect(banner.getByRole('heading', { level: 2 })).toHaveText(
+      contact.headline.join(' '),
+    );
+    const href = await banner
+      .getByRole('link', { name: contact.link })
+      .getAttribute('href');
+    const request = new URL(href!, 'https://example.invalid');
+    expect(request.pathname, route).toBe(email);
+    expect(request.searchParams.get('subject'), route).toBe(
+      `Use-case discussion: ${product ? product.name : bothProducts}`,
+    );
+    expect(request.searchParams.get('body'), route).toContain(
+      'Preferred times and time zone:',
+    );
+    await expect(banner.getByRole('link', { name: email })).toHaveAttribute(
+      'href',
+      `mailto:${email}`,
+    );
+    await expect(banner).toContainText('after we agree on a time');
+  }
+});
+
+test('the two product routes share the same section structure from the model', async ({
+  page,
+}) => {
+  const labels: string[][] = [];
+  for (const product of products) {
+    await page.goto(product.path);
+    labels.push(
+      await page.locator('.section-heading .eyebrow').allTextContents(),
+    );
+    for (const section of [
+      'workflow',
+      'value',
+      'evidence',
+      'glossary',
+    ] as const)
+      await expect(
+        page.getByRole('heading', {
+          level: 2,
+          name: product.sections[section].title,
+        }),
+        `${product.name} ${section}`,
+      ).toHaveCount(1);
+    await expect(page.locator('.workflow-step')).toHaveCount(3);
+    await expect(page.locator('.audience-card')).toHaveCount(2);
+    await expect(page.locator('.evidence-panel')).toHaveCount(1);
+    await expect(page.locator('.contact-banner')).toHaveCount(1);
+  }
+  // Same section order on both routes, so neither page can grow its own structure.
+  expect(labels[1]).toEqual(labels[0]);
 });
 
 test('both product demos sit in the hero proof column exactly once', async ({

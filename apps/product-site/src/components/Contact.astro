@@ -1,5 +1,5 @@
 ---
-import { bothProducts, contact, demoLink } from '../data/products';
+import { bothProducts, contact, demoLink, email } from '../data/products';
 interface Props {
   product?: string;
 }
@@ -14,6 +14,7 @@ const { product = bothProducts } = Astro.props;
     {contact.link} <span aria-hidden="true">&#8599;</span>
   </a>
   <p class="fine-print">
-    Opens your email app. A meeting is scheduled only after we agree on a time.
+    Opens your email app, or write to <a href={`mailto:${email}`}>{email}</a>. A
+    meeting is scheduled only after we agree on a time.
   </p>
 </section>

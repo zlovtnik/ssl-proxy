@@ -10,6 +10,23 @@ export const home = {
     'Two independent tools. Browser-based samples. No account required.',
 } as const;
 
+// Section headings shared by both product pages. The product-specific parts of
+// each section sit on the product itself, so the two routes cannot drift apart.
+const workflowSection = { label: 'HOW IT WORKS' } as const;
+const audienceSection = {
+  label: 'AUDIENCE VALUE',
+  note: 'Both readings are published openly. Choose the one that matches your question.',
+} as const;
+const evidenceSection = {
+  label: 'SUPPORTING CAPABILITY EVIDENCE',
+  title: 'Mechanisms you can inspect.',
+  note: 'These are working behaviours of the product, not projected savings, latency, or market claims.',
+} as const;
+const glossarySection = {
+  label: 'GLOSSARY',
+  title: 'A few terms, made clear.',
+} as const;
+
 export const products = [
   {
     id: 'search',
@@ -24,6 +41,24 @@ export const products = [
     promise: 'A match is a starting point.',
     primaryCta: { label: 'Explore a sample investigation', href: '#demo' },
     secondaryCta: { label: 'Discuss your use case', href: '/demo/#search' },
+    sections: {
+      workflow: {
+        ...workflowSection,
+        title: 'From a question to leads you can review.',
+        note: 'Each step takes a defined input and produces something you can read. Every record in the sample is synthetic.',
+      },
+      value: {
+        ...audienceSection,
+        title: 'Two ways to assess Atheros Search.',
+      },
+      evidence: {
+        ...evidenceSection,
+        caveatLabel: 'RELATIONSHIP VIEWS / READ WITH CARE',
+        footnote:
+          'The sample shows recorded observations only. It connects to no production system and makes no identity determination.',
+      },
+      glossary: glossarySection,
+    },
     audiences: [
       {
         id: 'technical',
@@ -126,6 +161,24 @@ export const products = [
     promise: 'Read the plan before the run.',
     primaryCta: { label: 'Explore a sample migration review', href: '#demo' },
     secondaryCta: { label: 'Discuss your use case', href: '/demo/#migrator' },
+    sections: {
+      workflow: {
+        ...workflowSection,
+        title: 'From source files to a reviewable record.',
+        note: 'Each step takes a defined input and produces something you can read. The public demonstration executes no SQL.',
+      },
+      value: {
+        ...audienceSection,
+        title: 'Two ways to assess Schema Migrator.',
+      },
+      evidence: {
+        ...evidenceSection,
+        caveatLabel: 'SQL-FILE SNAPSHOTS / READ WITH CARE',
+        footnote:
+          'The sample review records are synthetic. It connects to no target and executes no SQL.',
+      },
+      glossary: glossarySection,
+    },
     audiences: [
       {
         id: 'technical',

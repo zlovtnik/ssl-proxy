@@ -380,6 +380,26 @@ h4 {
 .section-heading p:not(.eyebrow) {
   color: var(--muted);
 }
+/* A heading may carry one short note in a second column; the copy column keeps
+   the reading measure. */
+.section-heading.split {
+  max-width: none;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 2rem;
+  margin-bottom: 3rem;
+}
+.section-heading.split > :first-child {
+  max-width: var(--reading-width);
+}
+.section-heading.split h2 {
+  margin-bottom: 0;
+}
+.section-heading.split > p {
+  font-size: 0.875rem;
+  margin-bottom: 0.2rem;
+}
 .two-column {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -504,7 +524,6 @@ h4 {
   font-size: 0.875rem;
   color: var(--accent, var(--muted));
 }
-.faq,
 .glossary,
 .prose {
   max-width: var(--reading-width);
@@ -817,6 +836,13 @@ select:disabled {
   :root {
     --shell-inset: 48px;
     --section-space: 3.5rem;
+  }
+  .section-heading.split {
+    display: block;
+    margin-bottom: 2rem;
+  }
+  .section-heading.split > p {
+    margin-top: 1.5rem;
   }
   .site-header {
     gap: 0.75rem;
