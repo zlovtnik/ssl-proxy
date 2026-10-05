@@ -167,6 +167,9 @@ h4 {
 .mobile-menu summary::-webkit-details-marker {
   display: none;
 }
+.mobile-menu:not([open]) nav {
+  display: none;
+}
 .mobile-menu nav {
   position: absolute;
   top: 100%;
@@ -831,6 +834,9 @@ select:disabled {
   }
   .hero {
     padding-block: 2rem 3.5rem;
+  }
+  .hero-proof::before {
+    inset: -1.5rem -12px;
   }
 }
 @media (max-width: 480px) {
