@@ -1,0 +1,59 @@
+---
+interface Props {
+  kind: 'search' | 'migrator';
+}
+const { kind } = Astro.props;
+const search = kind === 'search';
+---
+
+<figure class:list={['diagram', kind]}>
+  <svg
+    viewBox="0 0 560 160"
+    role="img"
+    aria-labelledby={`${kind}-diagram-title ${kind}-diagram-desc`}
+  >
+    <title
+      id={`${kind}-diagram-title`}
+    >{search ? 'Observed network relationships' : 'Ordered change review'}</title>
+    <desc id={`${kind}-diagram-desc`}>
+      {search
+        ? 'A sample device observation relates to an access point and a recorded event. Lines represent observations, not confirmed connections.'
+        : 'Inspect SQL, validate files, review a dry-run plan, then inspect a run record. This diagram is a review sequence, not an automatic execution.'}
+    </desc>
+    <path
+      d="M150 80H220 M340 80H410"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-dasharray={search ? '5 5' : undefined}
+    />
+    <rect x="10" y="45" width="140" height="70" rx="8" />
+    <rect x="220" y="45" width="120" height="70" rx="8" />
+    <rect x="410" y="45" width="140" height="70" rx="8" />
+    <g text-anchor="middle">
+      <text x="80" y="77">
+        {search ? 'Device 07' : 'Ordered SQL'}
+      </text>
+      <text x="80" y="97">
+        {search ? 'observed' : 'inspect'}
+      </text>
+      <text x="280" y="77">
+        {search ? 'Lobby AP' : 'Dry-run plan'}
+      </text>
+      <text x="280" y="97">
+        {search ? 'access point' : 'validate + review'}
+      </text>
+      <text x="480" y="77">
+        {search ? 'Event 21' : 'Run record'}
+      </text>
+      <text x="480" y="97">
+        {search ? 'recorded' : 'inspect outcome'}
+      </text>
+    </g>
+  </svg>
+  <figcaption>
+    {search
+      ? 'Sample observed relationships. An observation does not prove an active connection or a confirmed identity.'
+      : 'Inspect ordered SQL, validate the input, review a dry-run plan, and inspect the run evidence.'}
+  </figcaption>
+</figure>

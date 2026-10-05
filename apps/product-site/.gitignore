@@ -1,0 +1,4 @@
+.astro/
+test-results/
+playwright-report/
+review-artifacts/

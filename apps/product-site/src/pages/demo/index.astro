@@ -1,0 +1,86 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { demoLink, email } from '../../data/products';
+---
+
+<Layout
+  title="Request a guided demo"
+  description="Email Rafael to request a guided demo of Atheros Search, Schema Migrator, or both. Tell us your use case and agree on a time."
+>
+  <section class="hero">
+    <p class="eyebrow">LET'S TALK THROUGH THE DETAILS</p>
+    <h1>
+      Your use case.
+      <br />
+      <span class="muted">A guided walkthrough.</span>
+    </h1>
+    <p class="lead">
+      Choose a product to open an email request. Share your questions and
+      preferred times. We will agree on the details before a meeting is
+      scheduled.
+    </p>
+  </section>
+  <section class="feature-grid demo-choices" aria-label="Choose a demo">
+    {[
+      [
+        'search',
+        'Atheros Search',
+        'Explore network evidence and investigation context.',
+      ],
+      [
+        'migrator',
+        'Schema Migrator',
+        'Review SQL files, dry-run plans, and run records.',
+      ],
+      [
+        'both',
+        'Both products',
+        'Discuss the two separate tools in one conversation.',
+      ],
+    ].map(([id, name, text]) => (
+      <article id={id}>
+        <h2>{name}</h2>
+        <p>{text}</p>
+        <a
+          class="button"
+          href={demoLink(
+            name === 'Both products'
+              ? 'Atheros Search and Schema Migrator'
+              : name,
+          )}
+        >
+          Email request: {name}
+        </a>
+      </article>
+    ))}
+  </section>
+  <section class="section">
+    <h2>Prefer to write your own email?</h2>
+    <p>Use this address. No information is submitted through this site.</p>
+    <div class="email-row">
+      <a href={`mailto:${email}`}>{email}</a>
+      <button type="button" id="copy-email">
+        Copy email address
+      </button>
+    </div>
+    <p id="copy-status" role="status" aria-live="polite"></p>
+    <p>
+      If an email app is not set up, select and copy the address into your usual
+      email service.
+    </p>
+  </section>
+  <script>
+    document
+      .getElementById('copy-email')
+      ?.addEventListener('click', async () => {
+        const status = document.getElementById('copy-status')!;
+        try {
+          await navigator.clipboard.writeText('rafael@rclabs.uk');
+          status.textContent = 'Email address copied.';
+        } catch {
+          status.textContent =
+            'Copy is unavailable. Select the visible address and copy it manually.';
+        }
+      });
+  </script>
+</Layout>

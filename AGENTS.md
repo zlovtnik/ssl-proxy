@@ -33,6 +33,8 @@ overrides a rule for its subtree.
 - `services/` has local `AGENTS.md` files for shared service rules and
   service-specific conventions.
 - `apps/wg-key-rotator/` is an Elixir WireGuard key rotation tool.
+- `apps/product-site/` is the Astro/SolidJS public product hub with synthetic
+  Search and Migrator demonstrations, separate from authenticated consoles.
 - `apps/integration-console/atheros-search-ui/` is a standalone SolidJS/Bun UI.
   `apps/integration-console/atheros-search/` has a local `AGENTS.md` file.
 - `sql/postgres/` is the canonical runtime schema source for four schemas in

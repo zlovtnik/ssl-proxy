@@ -1,0 +1,239 @@
+---
+import '@fontsource-variable/inter';
+import '@fontsource-variable/jetbrains-mono';
+import '../styles/site.css';
+interface Props {
+  title: string;
+  description: string;
+  product?: string;
+}
+const { title, description, product } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+const publicBuild =
+  canonical.hostname !== 'localhost' && canonical.hostname !== '127.0.0.1';
+const navigation = [
+  ['/#products', 'Products'],
+  ['/#approach', 'How they work'],
+  ['/#faq', 'FAQ'],
+];
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} | RCLabs</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#0B0F14" />
+    {!publicBuild && <meta name="robots" content="noindex, nofollow" />}
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta
+      property="og:image"
+      content={new URL('/social-preview.png', Astro.site)}
+    />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="RCLabs: Understand your network. Control your schema changes."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script is:inline>
+      try {
+        const preferences = JSON.parse(
+          localStorage.getItem('rclabs-reading') || '{}',
+        );
+        for (const key of ['theme', 'size', 'width', 'spacing', 'motion']) {
+          if (
+            [
+              'dark',
+              'light',
+              'standard',
+              'large',
+              'extra',
+              'narrow',
+              'wide',
+              'comfortable',
+              'reduced',
+            ].includes(preferences[key])
+          )
+            document.documentElement.dataset[key] = preferences[key];
+        }
+      } catch {
+        /* Browser storage is optional. */
+      }
+    </script>
+  </head>
+  <body class={product}>
+    <a class="skip-link" href="#main">
+      Skip to content
+    </a>
+    <div class="site-top">
+      <header class="site-header shell">
+        <a href="/" class="wordmark" aria-label="RCLabs home">
+          <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
+            <path
+              d="M5 25V7h13l8 9-8 9H5zm7-5h5l4-4-4-4h-5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            />
+          </svg>
+          RCLabs<span class="wordmark-label">/ products</span>
+        </a>
+        <nav aria-label="Main navigation">
+          {navigation.map(([path, label]) => (
+            <a
+              href={path}
+              aria-current={Astro.url.pathname === path ? 'page' : undefined}
+            >
+              {label}
+            </a>
+          ))}
+          <a
+            href="/demo/"
+            class="button small"
+            aria-current={Astro.url.pathname === '/demo/' ? 'page' : undefined}
+          >
+            Request a demo <span aria-hidden="true">&#8599;</span>
+          </a>
+        </nav>
+        <details class="mobile-menu">
+          <summary aria-label="Toggle navigation">
+            <span aria-hidden="true">&#9776;</span>
+          </summary>
+          <nav aria-label="Mobile navigation">
+            {navigation.map(([path, label]) => (
+              <a href={path}>{label}</a>
+            ))}
+            <a href="/demo/">
+              Request a demo <span aria-hidden="true">&#8599;</span>
+            </a>
+          </nav>
+        </details>
+      </header>
+    </div>
+    <aside
+      class="shell reading-bar"
+      aria-label="Reading and display preferences"
+    >
+      <details id="reading-controls">
+        <summary>Reading &amp; display settings</summary>
+        <div class="reading-options">
+          <label>
+            Theme
+            <select id="setting-theme">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </label>
+          <label>
+            Text size
+            <select id="setting-size">
+              <option value="standard">Standard</option>
+              <option value="large">Large</option>
+              <option value="extra">Extra large</option>
+            </select>
+          </label>
+          <label>
+            Line width
+            <select id="setting-width">
+              <option value="standard">Standard</option>
+              <option value="narrow">Narrow</option>
+              <option value="wide">Wide</option>
+            </select>
+          </label>
+          <label>
+            Text spacing
+            <select id="setting-spacing">
+              <option value="standard">Standard</option>
+              <option value="comfortable">Comfortable</option>
+            </select>
+          </label>
+          <label>
+            Movement
+            <select id="setting-motion">
+              <option value="standard">Follow system</option>
+              <option value="reduced">Reduce movement</option>
+            </select>
+          </label>
+          <button id="reset-settings" type="button">
+            Reset settings
+          </button>
+        </div>
+        <p>
+          Settings stay in this browser when storage is available. Browser zoom
+          and your own styles also work.
+        </p>
+        <noscript>
+          <p>
+            Display controls need JavaScript. Your browser's zoom, text
+            settings, and custom styles remain available.
+          </p>
+        </noscript>
+      </details>
+    </aside>
+    <main id="main" class="shell" tabindex="-1">
+      <slot />
+    </main>
+    <footer class="shell site-footer">
+      <a class="wordmark" href="/">
+        RCLabs
+      </a>
+      <p>Tools for evidence and deliberate change.</p>
+      <nav aria-label="Footer">
+        <a href="/accessibility/">Accessibility</a>
+        <a href="/demo/">Contact &amp; demo</a>
+      </nav>
+    </footer>
+    <script>
+      const menu = document.querySelector<HTMLDetailsElement>('.mobile-menu');
+      menu?.querySelectorAll('a').forEach((link) =>
+        link.addEventListener('click', () => {
+          menu.open = false;
+        }),
+      );
+      const keys = ['theme', 'size', 'width', 'spacing', 'motion'] as const;
+      function save() {
+        const values = Object.fromEntries(
+          keys.map((key) => [key, document.documentElement.dataset[key]]),
+        );
+        try {
+          localStorage.setItem('rclabs-reading', JSON.stringify(values));
+        } catch {
+          /* Settings still apply in memory. */
+        }
+      }
+      for (const key of keys) {
+        const control = document.getElementById(
+          `setting-${key}`,
+        ) as HTMLSelectElement;
+        control.value =
+          document.documentElement.dataset[key] ||
+          (key === 'theme' ? 'dark' : 'standard');
+        control.addEventListener('change', () => {
+          document.documentElement.dataset[key] = control.value;
+          save();
+        });
+      }
+      document
+        .getElementById('reset-settings')
+        ?.addEventListener('click', () => {
+          for (const key of keys) {
+            const value = key === 'theme' ? 'dark' : 'standard';
+            document.documentElement.dataset[key] = value;
+            (
+              document.getElementById(`setting-${key}`) as HTMLSelectElement
+            ).value = value;
+          }
+          save();
+        });
+    </script>
+  </body>
+</html>

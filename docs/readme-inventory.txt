@@ -9,6 +9,7 @@ apps/integration-console/atheros-search/README.md
 apps/integration-console/atheros-search/migrations/README.md
 apps/integration-console/atheros-search/scripts/README.md
 apps/integration-console/atheros-search-ui/README.md
+apps/product-site/README.md
 services/atheros-sensor/README.md
 services/octopus/README.md
 services/platform-sync/README.md

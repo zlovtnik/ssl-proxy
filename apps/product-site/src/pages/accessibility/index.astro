@@ -1,0 +1,77 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { email } from '../../data/products';
+---
+
+<Layout
+  title="Accessibility statement"
+  description="Accessibility features, evaluation scope, and known evaluation limits for the RCLabs public product site."
+>
+  <section class="hero">
+    <p class="eyebrow">ACCESSIBILITY / PUBLIC PRODUCT SITE</p>
+    <h1>
+      Make the details
+      <br />
+      <span class="muted">accessible to everyone.</span>
+    </h1>
+    <p class="lead">
+      Our target is all applicable WCAG 2.2 A, AA, and AAA criteria. Evaluation
+      is in progress. We do not currently claim conformance.
+    </p>
+  </section>
+  <section class="section prose">
+    <h2>Scope and current status</h2>
+    <p>
+      This statement covers the public hub, Atheros Search page, Schema Migrator
+      page, demo request page, and this statement, including synthetic
+      demonstrations. It does not cover the authenticated product consoles or
+      your email application.
+    </p>
+    <p>
+      Automated tests are only part of the evidence. VoiceOver with Safari, NVDA
+      with Firefox, and usability sessions with disabled participants remain
+      required before any conformance claim.
+    </p>
+    <h2>Read in the way that works for you</h2>
+    <p>
+      Open Reading &amp; display settings above the main content to choose light
+      or dark appearance, larger text, a narrower line width, comfortable
+      spacing, and reduced movement. Browser zoom, custom styles, and
+      operating-system motion preferences are supported.
+    </p>
+    <h2>Use the site with a keyboard</h2>
+    <p>
+      Press Tab to reach links and controls. The first link skips to the main
+      content. Use Enter or Space to expand details and activate buttons. Use
+      arrow keys in selection controls. No demo has a time limit.
+    </p>
+    <h2>Understand the examples</h2>
+    <p>
+      All product examples use synthetic data. Diagrams have text descriptions.
+      The migration demo includes every step in an expandable text version.
+      Specialist terms are explained on each product page.
+    </p>
+    <h2>Report a barrier</h2>
+    <p>
+      Email{' '}
+      <a href={`mailto:${email}?subject=Accessibility%20feedback`}>{email}</a>{' '}
+      with the page, the task you were trying to complete, and any browser or
+      assistive technology details you want to share. Please avoid including
+      private network data or credentials.
+    </p>
+    <h2>Evaluation record</h2>
+    <p>
+      The repository maintains a criterion-by-criterion evidence matrix and a
+      release checklist. This statement will be updated after the complete
+      scoped evaluation. WCAG 3 is a draft and is not the acceptance standard
+      for this site.
+    </p>
+    <p>
+      Learn about{' '}
+      <a href="https://www.w3.org/TR/WCAG22/">
+        WCAG 2.2 from the World Wide Web Consortium
+      </a>
+      .
+    </p>
+  </section>
+</Layout>

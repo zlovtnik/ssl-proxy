@@ -1,0 +1,98 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import MigratorDemo from '../../components/MigratorDemo';
+import Diagram from '../../components/Diagram.astro';
+import Contact from '../../components/Contact.astro';
+import { products } from '../../data/products';
+const product = products[1];
+---
+
+<Layout
+  title="Schema Migrator - Know what changes before you apply them"
+  description={product.summary}
+  product="migrator"
+>
+  <section class="hero">
+    <a class="breadcrumb" href="/">
+      Products /
+    </a>
+    <p class="eyebrow">SCHEMA MIGRATOR / DATABASE CHANGE REVIEW</p>
+    <h1>
+      Know what changes
+      <br />
+      <span class="accent">before you apply them.</span>
+    </h1>
+    <p class="lead">
+      Inspect the SQL, check the plan, and keep a record of what ran. A
+      deliberate path from source files to reviewed PostgreSQL schema changes.
+    </p>
+    <div class="actions">
+      <a class="button" href="#demo">
+        Try a sample migration review <span aria-hidden="true">&#8595;</span>
+      </a>
+      <a class="text-link" href="/demo/#migrator">
+        Request a Migrator demo
+      </a>
+    </div>
+  </section>
+  <section id="demo" class="section demo-section">
+    <div class="section-heading">
+      <p class="eyebrow">REVIEW THE CHANGE BEFORE THE RUN</p>
+      <h2>From SQL to a clear plan.</h2>
+      <p>
+        Explore each review step at your own pace. These are synthetic files and
+        records; no SQL is executed.
+      </p>
+    </div>
+    <MigratorDemo client:load />
+    <noscript>
+      <p>
+        JavaScript is off. Expand "Read all steps as text" to explore the whole
+        review.
+      </p>
+    </noscript>
+    <Diagram kind="migrator" />
+  </section>
+  <section class="section">
+    <p class="eyebrow">MAKE THE REVIEW TRACEABLE</p>
+    <h2>Understand the source and the target.</h2>
+    <div class="feature-grid">
+      {product.features.map(([title, text], index) => (
+        <article>
+          <p class="feature-number">0{index + 1}</p>
+          <h3>{title}</h3>
+          <p>{text}</p>
+        </article>
+      ))}
+    </div>
+  </section>
+  <section class="section glossary">
+    <h2>A few terms, made clear.</h2>
+    <dl>
+      <dt>SQL</dt>
+      <dd>
+        Structured Query Language: the language used to define and query
+        database structures.
+      </dd>
+      <dt>Schema</dt>
+      <dd>
+        The structure of a database, including tables, columns, and related
+        objects.
+      </dd>
+      <dt>Dry-run</dt>
+      <dd>A plan of proposed work without applying the changes.</dd>
+      <dt>Drift</dt>
+      <dd>
+        A difference between expected definitions and the database structure.
+      </dd>
+      <dt>SQL-file snapshot</dt>
+      <dd>
+        A saved set of SQL source files and checksums. It does not back up
+        database data.
+      </dd>
+      <dt>Checksum</dt>
+      <dd>A value calculated from a file to detect changes to its contents.</dd>
+    </dl>
+  </section>
+  <Contact product="Schema Migrator" />
+</Layout>
