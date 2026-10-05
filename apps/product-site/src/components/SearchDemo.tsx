@@ -9,7 +9,7 @@ export default function SearchDemo() {
   return (
     <div class="demo-panel search-demo">
       <div class="demo-top">
-        <span>Atheros Search / investigation</span>
+        <h2>Atheros Search / investigation</h2>
         <span class="sample-label">Synthetic data</span>
       </div>
       <div class="demo-content">
@@ -44,6 +44,10 @@ export default function SearchDemo() {
         <details>
           <summary>4. Inspect observed relationships</summary>
           <p>{sample().relation}</p>
+          <p class="caveat">
+            An observation does not confirm a current connection or device
+            identity.
+          </p>
         </details>
       </div>
     </div>

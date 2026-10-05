@@ -85,7 +85,7 @@ export default function LandingPlayground() {
       </div>
       <div class="preview-panels">
         <div
-          class="preview-body preview-panel"
+          class="preview-body preview-panel panel-migrator"
           classList={{ 'is-inactive': product() !== 'migrator' }}
           inert={product() !== 'migrator'}
           aria-hidden={product() !== 'migrator'}
@@ -120,8 +120,8 @@ export default function LandingPlayground() {
           <pre class="preview-code">{migrationSteps[step()].code}</pre>
           <p class="preview-explanation">{migrationSteps[step()].text}</p>
           <p class="preview-caveat">
-            SQL-file snapshots preserve source files. They are not database
-            backups.
+            SQL-file snapshots preserve source files and checksums. They do not
+            back up database data.
           </p>
           <a class="text-link preview-full" href="/schema-migrator/#demo">
             Open the migration walkthrough{' '}
@@ -129,7 +129,7 @@ export default function LandingPlayground() {
           </a>
         </div>
         <div
-          class="preview-body preview-panel"
+          class="preview-body preview-panel panel-search"
           classList={{ 'is-inactive': product() !== 'search' }}
           inert={product() !== 'search'}
           aria-hidden={product() !== 'search'}
@@ -227,6 +227,10 @@ export default function LandingPlayground() {
                 </span>
               </div>
               <p>{record().relation}</p>
+              <p class="preview-caveat">
+                An observation does not confirm a current connection or device
+                identity.
+              </p>
             </div>
           </Show>
           <a class="text-link preview-full" href="/atheros-search/#demo">

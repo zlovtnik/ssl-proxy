@@ -5,57 +5,109 @@ import Diagram from '../../components/Diagram.astro';
 import Contact from '../../components/Contact.astro';
 import { products } from '../../data/products';
 const product = products[0];
+const eyebrow = `${product.name.toUpperCase()} / ${product.label}`;
 ---
 
 <Layout
-  title="Atheros Search - Find the evidence in your network data"
+  title="Atheros Search - Search network records, inspect why they match"
   description={product.summary}
   product="search"
 >
-  <section class="hero">
-    <a class="breadcrumb" href="/">
-      Products /
-    </a>
-    <p class="eyebrow">ATHEROS SEARCH / NETWORK EVIDENCE</p>
-    <h1>
-      Find the evidence
-      <br />
-      <span class="accent">in your network data.</span>
-    </h1>
-    <p class="lead">
-      Move from a question to matching records, clear ranking explanations, and
-      observed relationships. Keep the evidence and its limits in view.
-    </p>
-    <div class="actions">
-      <a class="button" href="#demo">
-        Try a sample investigation <span aria-hidden="true">&#8595;</span>
-      </a>
-      <a class="text-link" href="/demo/#search">
-        Request a Search demo
-      </a>
+  <section class="hero hero-split" aria-labelledby="hero-title">
+    <div class="hero-copy">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/">RCLabs</a>
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">{product.name}</span>
+      </nav>
+      <p class="eyebrow">{eyebrow}</p>
+      <h1 id="hero-title">
+        {product.headline[0]}
+        <span class="accent">{product.headline[1]}</span>
+      </h1>
+      <p class="lead">{product.summary}</p>
+      <div class="actions">
+        <a class="button primary" href={product.primaryCta.href}>
+          {product.primaryCta.label} <span aria-hidden="true">&#8595;</span>
+        </a>
+        <a class="text-link" href={product.secondaryCta.href}>
+          {product.secondaryCta.label} <span aria-hidden="true">&#8599;</span>
+        </a>
+      </div>
+    </div>
+    <div class="hero-proof" id="demo">
+      <SearchDemo client:load />
+      <noscript>
+        <p class="fine-print">
+          JavaScript is off. The initial query and expandable explanation work
+          as text; query switching needs JavaScript.
+        </p>
+      </noscript>
     </div>
   </section>
-  <section id="demo" class="section demo-section">
+  <section class="section" aria-labelledby="workflow-title">
     <div class="section-heading">
-      <p class="eyebrow">AN INVESTIGATION YOU CAN EXPLORE</p>
-      <h2>Ask. Inspect. Understand.</h2>
+      <p class="eyebrow">HOW IT WORKS</p>
+      <h2 id="workflow-title">From a question to leads you can review.</h2>
       <p>
-        Choose a sample query, inspect its record, then open the explanation and
-        relationship details. All data is synthetic.
+        Each step takes a defined input and produces something you can read.
+        Every record in the sample is synthetic.
       </p>
     </div>
-    <SearchDemo client:load />
-    <noscript>
-      <p>
-        JavaScript is off. The initial query and expandable explanation work as
-        text; query switching needs JavaScript.
-      </p>
-    </noscript>
-    <Diagram kind="search" />
+    <ol class="workflow-steps">
+      {product.workflow.map((item, index) => (
+        <li class="workflow-step">
+          <span class="workflow-index">
+            0{index + 1} / {item.step}
+          </span>
+          <h3>{item.step}</h3>
+          <dl>
+            <dt>Input</dt>
+            <dd>{item.input}</dd>
+            <dt>Processing</dt>
+            <dd>{item.processing}</dd>
+            <dt>Output</dt>
+            <dd>{item.output}</dd>
+          </dl>
+        </li>
+      ))}
+    </ol>
   </section>
-  <section class="section">
-    <p class="eyebrow">MORE THAN A RESULT LIST</p>
-    <h2>Give your investigation context.</h2>
+  <section class="section" aria-labelledby="value-title">
+    <div class="section-heading">
+      <p class="eyebrow">AUDIENCE VALUE</p>
+      <h2 id="value-title">Two ways to assess Atheros Search.</h2>
+      <p>
+        Both readings are published openly. Choose the one that matches your
+        question.
+      </p>
+    </div>
+    <div class="audience-grid">
+      {product.audiences.map((audience) => (
+        <article class="audience-card">
+          <p class="eyebrow">{audience.title.toUpperCase()}</p>
+          <h3>{audience.proposition}</h3>
+          <ul class="checklist">
+            {audience.points.map((point) => (
+              <li>
+                <span aria-hidden="true">&#10003;</span>
+                <span>{point}</span>
+              </li>
+            ))}
+          </ul>
+        </article>
+      ))}
+    </div>
+  </section>
+  <section class="section" aria-labelledby="evidence-title">
+    <div class="section-heading">
+      <p class="eyebrow">SUPPORTING CAPABILITY EVIDENCE</p>
+      <h2 id="evidence-title">Mechanisms you can inspect.</h2>
+      <p>
+        These are working behaviours of the product, not projected savings,
+        latency, or market claims.
+      </p>
+    </div>
     <div class="feature-grid">
       {product.features.map(([title, text], index) => (
         <article>
@@ -65,30 +117,29 @@ const product = products[0];
         </article>
       ))}
     </div>
+    <div class="two-column">
+      <Diagram kind="search" />
+      <div class="evidence-panel">
+        <p class="eyebrow">RELATIONSHIP VIEWS / READ WITH CARE</p>
+        <p class="caveat">{product.caveat}</p>
+        <p class="fine-print">
+          The sample shows recorded observations only. It connects to no
+          production system and makes no identity determination.
+        </p>
+      </div>
+    </div>
   </section>
-  <section class="section glossary">
-    <h2>A few terms, made clear.</h2>
+  <section class="section glossary" aria-labelledby="terms-title">
+    <p class="eyebrow">GLOSSARY</p>
+    <h2 id="terms-title">A few terms, made clear.</h2>
     <dl>
-      <dt>Dense search</dt>
-      <dd>
-        Finds records with similar meaning using numerical representations
-        called embeddings.
-      </dd>
-      <dt>Sparse search</dt>
-      <dd>Finds records by matching terms.</dd>
-      <dt>Hybrid search</dt>
-      <dd>Combines meaning and term matches to rank results.</dd>
-      <dt>Observed relationship</dt>
-      <dd>
-        A link supported by recorded observations. It does not prove a current
-        connection or confirmed identity.
-      </dd>
-      <dt>ETL</dt>
-      <dd>
-        Extract, transform, load: the processing steps that prepare data for
-        use.
-      </dd>
+      {product.glossary.map(([term, definition]) => (
+        <div>
+          <dt>{term}</dt>
+          <dd>{definition}</dd>
+        </div>
+      ))}
     </dl>
   </section>
-  <Contact product="Atheros Search" />
+  <Contact product={product.name} />
 </Layout>

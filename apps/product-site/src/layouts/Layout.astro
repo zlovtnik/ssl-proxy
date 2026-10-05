@@ -25,7 +25,7 @@ const navigation = [
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} | RCLabs</title>
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#0B0F14" />
+    <meta name="theme-color" content="#090D1A" />
     {!publicBuild && <meta name="robots" content="noindex, nofollow" />}
     <link rel="canonical" href={canonical} />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -41,7 +41,7 @@ const navigation = [
     <meta property="og:image:height" content="630" />
     <meta
       property="og:image:alt"
-      content="RCLabs: Understand your network. Control your schema changes."
+      content="RCLabs: Investigate network evidence. Review database changes."
     />
     <meta name="twitter:card" content="summary_large_image" />
     <script is:inline>
@@ -101,7 +101,7 @@ const navigation = [
             class="button small"
             aria-current={Astro.url.pathname === '/demo/' ? 'page' : undefined}
           >
-            Request a demo <span aria-hidden="true">&#8599;</span>
+            Discuss your use case <span aria-hidden="true">&#8599;</span>
           </a>
         </nav>
         <details class="mobile-menu">
@@ -113,7 +113,7 @@ const navigation = [
               <a href={path}>{label}</a>
             ))}
             <a href="/demo/">
-              Request a demo <span aria-hidden="true">&#8599;</span>
+              Discuss your use case <span aria-hidden="true">&#8599;</span>
             </a>
           </nav>
         </details>

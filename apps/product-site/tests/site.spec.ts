@@ -144,7 +144,7 @@ for (const route of routes) {
       await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
       const results = await new AxeBuilder({ page }).withTags(tags).analyze();
       expect(results.violations).toEqual([]);
-      for (const width of [1440, 768, 375, 320]) {
+      for (const width of [1440, 1024, 768, 375, 320]) {
         await page.setViewportSize({ width, height: 900 });
         expect(
           await page.evaluate(
@@ -304,7 +304,7 @@ test('email requests have the recipient, product subjects, and honest scheduling
     const url = new URL(href!);
     expect(url.pathname).toBe('rafael@rclabs.uk');
     expect(url.searchParams.get('subject')).toBe(
-      `Guided demo request: ${subject}`,
+      `Use-case discussion: ${subject}`,
     );
     expect(url.searchParams.get('body')).toContain(
       'Preferred times and time zone:',
@@ -322,7 +322,7 @@ test('email requests have the recipient, product subjects, and honest scheduling
     ),
   ).toBe('rafael@rclabs.uk');
   await expect(
-    page.getByText('We will agree on the details', { exact: false }),
+    page.getByText("We'll agree on the next step by email", { exact: false }),
   ).toBeVisible();
 });
 
@@ -464,18 +464,25 @@ test('enhanced text contrast and control boundaries meet thresholds in both them
           );
         return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
       }
-      return ['--text', '--muted', '--search', '--migrator', '--rule'].flatMap(
-        (foreground) =>
-          ['--bg', '--surface'].map((background) => {
-            const values = [luminance(foreground), luminance(background)].sort(
-              (a, b) => b - a,
-            );
-            return {
-              foreground,
-              background,
-              ratio: (values[0] + 0.05) / (values[1] + 0.05),
-            };
-          }),
+      return [
+        '--text',
+        '--muted',
+        '--search',
+        '--migrator',
+        '--action',
+        '--success',
+        '--rule',
+      ].flatMap((foreground) =>
+        ['--bg', '--surface'].map((background) => {
+          const values = [luminance(foreground), luminance(background)].sort(
+            (a, b) => b - a,
+          );
+          return {
+            foreground,
+            background,
+            ratio: (values[0] + 0.05) / (values[1] + 0.05),
+          };
+        }),
       );
     });
     for (const pair of ratios)
@@ -483,5 +490,115 @@ test('enhanced text contrast and control boundaries meet thresholds in both them
         pair.ratio,
         `${theme} ${pair.foreground}/${pair.background}`,
       ).toBeGreaterThanOrEqual(pair.foreground === '--rule' ? 3 : 7);
+  }
+});
+
+test('all five routes share one system of colours, header geometry, type and controls', async ({
+  page,
+}) => {
+  const snapshot = async (route: string, theme: string) => {
+    await page.goto(route);
+    await page.evaluate(
+      (value) => (document.documentElement.dataset.theme = value),
+      theme,
+    );
+    return page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const header = document
+        .querySelector('.site-header')!
+        .getBoundingClientRect();
+      const reading = document
+        .querySelector('.reading-bar')!
+        .getBoundingClientRect();
+      const h1 = getComputedStyle(document.querySelector('h1')!);
+      const control = getComputedStyle(
+        document.querySelector('.site-header .button')!,
+      );
+      return {
+        tokens: [
+          '--bg',
+          '--surface',
+          '--text',
+          '--muted',
+          '--action',
+          '--action-text',
+          '--rule',
+          '--divider',
+          '--search',
+          '--migrator',
+        ].map((name) => `${name}:${root.getPropertyValue(name).trim()}`),
+        header: `${Math.round(header.width)}x${Math.round(header.height)}`,
+        readingTop: Math.round(reading.top),
+        h1: `${h1.fontSize}/${h1.fontWeight}/${h1.fontFamily}`,
+        body: getComputedStyle(document.body).fontFamily,
+        controlRadius: control.borderRadius,
+        controlMinHeight: control.minHeight,
+        controlBackground: control.backgroundColor,
+        readingSummary: document
+          .querySelector('#reading-controls > summary')!
+          .textContent!.trim(),
+      };
+    });
+  };
+  for (const theme of ['dark', 'light']) {
+    const reference = await snapshot(routes[0], theme);
+    for (const route of routes.slice(1))
+      expect(await snapshot(route, theme), `${route} ${theme}`).toEqual(
+        reference,
+      );
+  }
+});
+
+test('hero calls to action keep their documented destinations', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const home = page.locator('#top');
+  await expect(
+    home.getByRole('link', { name: 'Explore the samples' }),
+  ).toHaveAttribute('href', '#playground');
+  await expect(
+    home.getByRole('link', { name: 'Discuss your use case' }),
+  ).toHaveAttribute('href', '/demo/');
+  await page.goto('/atheros-search/');
+  const search = page.locator('.hero-split');
+  await expect(
+    search.getByRole('link', { name: 'Explore a sample investigation' }),
+  ).toHaveAttribute('href', '#demo');
+  await expect(
+    search.getByRole('link', { name: 'Discuss your use case' }),
+  ).toHaveAttribute('href', '/demo/#search');
+  await page.goto('/schema-migrator/');
+  const migrator = page.locator('.hero-split');
+  await expect(
+    migrator.getByRole('link', { name: 'Explore a sample migration review' }),
+  ).toHaveAttribute('href', '#demo');
+  await expect(
+    migrator.getByRole('link', { name: 'Discuss your use case' }),
+  ).toHaveAttribute('href', '/demo/#migrator');
+});
+
+test('both product demos sit in the hero proof column exactly once', async ({
+  page,
+}) => {
+  for (const [route, panel] of [
+    ['/atheros-search/', '.search-demo'],
+    ['/schema-migrator/', '.migrator-demo'],
+  ] as const) {
+    await page.goto(route);
+    await expect(page.locator('#demo')).toHaveCount(1);
+    await expect(page.locator('.hero-proof ' + panel)).toHaveCount(1);
+    await expect(page.locator(panel)).toHaveCount(1);
+    expect(
+      await page.evaluate(() => {
+        const proof = document
+          .querySelector('.hero-split')!
+          .getBoundingClientRect();
+        const copy = document
+          .querySelector('.hero-copy')!
+          .getBoundingClientRect();
+        return copy.width < proof.width;
+      }),
+    ).toBe(true);
   }
 });

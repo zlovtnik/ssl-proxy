@@ -1,7 +1,7 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import LandingPlayground from '../components/LandingPlayground';
-import { products, demoLink } from '../data/products';
+import { home, products, demoLink } from '../data/products';
 import '../styles/landing.css';
 const capabilities = [
   [
@@ -30,58 +30,43 @@ const capabilities = [
 ---
 
 <Layout
-  title="Investigate networks. Review migrations."
-  description="Two focused tools from RCLabs. Investigate network evidence with Atheros Search and review database changes with Schema Migrator. Explore interactive, synthetic samples."
+  title="Investigate network evidence. Review database changes."
+  description="Two independent tools from RCLabs. Atheros Search combines search results, ranking explanations, and recorded relationships. Schema Migrator validates ordered SQL and produces plans before execution. Explore both workflows with interactive, synthetic samples."
   product="landing"
 >
-  <section id="top" class="landing-hero" aria-labelledby="hero-title">
-    <div class="landing-hero-copy">
+  <section id="top" class="hero hero-split" aria-labelledby="hero-title">
+    <div class="hero-copy">
       <p class="eyebrow">
         <span class="eyebrow-stroke" aria-hidden="true" />
-        INDEPENDENT TOOLS. SPECIFIC JOBS.
+        TWO INDEPENDENT PRODUCTS
       </p>
       <h1 id="hero-title">
-        Investigate networks.
-        <span>Review migrations.</span>
+        {home.headline[0]}
+        <span class="muted">{home.headline[1]}</span>
       </h1>
-      <p class="lead">
-        Atheros Search shows the evidence behind a network observation. Schema
-        Migrator shows what your SQL changes before you run it.
-      </p>
+      <p class="lead">{home.subheadline}</p>
       <div class="actions">
-        <a class="button landing-primary" href="#playground">
-          Try the live sample <span aria-hidden="true">&#8594;</span>
+        <a class="button primary" href={home.primaryCta.href}>
+          {home.primaryCta.label} <span aria-hidden="true">&#8595;</span>
         </a>
-        <a class="text-link" href="/demo/">
-          Request a demo <span aria-hidden="true">&#8599;</span>
+        <a class="text-link" href={home.secondaryCta.href}>
+          {home.secondaryCta.label} <span aria-hidden="true">&#8599;</span>
         </a>
       </div>
-      <ul class="hero-benefits">
-        {[
-          'Synthetic sample data',
-          'No database connection',
-          'Offline validation',
-          'Dry-run plans',
-        ].map((text) => (
-          <li>
-            <span aria-hidden="true">&#10003;</span>
-            {text}
-          </li>
-        ))}
-      </ul>
+      <p class="hero-note">{home.supporting}</p>
     </div>
-    <div class="hero-preview">
+    <div class="hero-proof">
       <LandingPlayground client:load />
     </div>
   </section>
   <section
     id="products"
-    class="landing-products"
+    class="section landing-products"
     aria-labelledby="products-title"
   >
     <div class="landing-section-heading">
       <div>
-        <p class="eyebrow">THE PRODUCTS / TWO FOCUSED TOOLS</p>
+        <p class="eyebrow">THE PRODUCTS / TWO INDEPENDENT TOOLS</p>
         <h2 id="products-title">
           Start with the job
           <br />
@@ -91,7 +76,7 @@ const capabilities = [
       <p>
         Different workflows.
         <br />
-        The same attention to detail.
+        The same attention to evidence.
       </p>
     </div>
     <div class="landing-product-grid">
@@ -155,7 +140,7 @@ const capabilities = [
   </section>
   <section
     id="approach"
-    class="landing-approach"
+    class="section landing-approach"
     aria-labelledby="approach-title"
   >
     <div class="landing-section-heading">
@@ -188,7 +173,7 @@ const capabilities = [
       </article>
       <article>
         <span class="principle-index">[ 03 / EXPLORE ]</span>
-        <h3>Start with a sample.</h3>
+        <h3>Start with an interactive sample.</h3>
         <p>
           Try both workflows with synthetic records in your browser. No account,
           credentials, or database connection required.
@@ -196,7 +181,11 @@ const capabilities = [
       </article>
     </div>
   </section>
-  <section id="faq" class="landing-faq" aria-labelledby="questions-title">
+  <section
+    id="faq"
+    class="section landing-faq"
+    aria-labelledby="questions-title"
+  >
     <div>
       <p class="eyebrow">A FEW PRACTICAL QUESTIONS</p>
       <h2 id="questions-title">Before you start.</h2>
@@ -208,8 +197,10 @@ const capabilities = [
           Who are these tools for?<span aria-hidden="true">+</span>
         </summary>
         <p>
-          Atheros Search is for people investigating network observations.
-          Schema Migrator is for people reviewing and tracking database schema
+          Atheros Search is for network and security engineers investigating
+          records whose relevance, relationships, and identity implications need
+          verification. Schema Migrator is for platform and database engineers
+          reviewing SQL execution order, target drift, and evidence of previous
           changes.
         </p>
       </details>
@@ -238,8 +229,8 @@ const capabilities = [
         </summary>
         <p>
           This public site uses synthetic data only.{' '}
-          <a href="/demo/">Request a guided demo</a> to discuss your environment
-          and use case.
+          <a href="/demo/">Discuss your use case</a> to agree on the next step
+          by email.
         </p>
       </details>
     </div>
@@ -248,45 +239,26 @@ const capabilities = [
     <div>
       <p class="eyebrow">HAVE A USE CASE IN MIND?</p>
       <h2 id="contact-title">
-        Show us what
+        Discuss
         <br />
-        you're working on.
+        your use case.
       </h2>
       <p>
-        Tell Rafael what you need to investigate or migrate.
-        <br />
-        We'll start there.
+        Tell us what you need to investigate or change, your environment, and
+        the constraints that matter.
       </p>
     </div>
     <a
       class="landing-contact-link"
       href={demoLink('Atheros Search and Schema Migrator')}
     >
-      <span>Let's talk</span>
+      <span>Write to us</span>
       <span aria-hidden="true">&#8599;</span>
       <small>rafael@rclabs.uk</small>
     </a>
   </section>
 </Layout>
 <script>
-  const sections = document.querySelectorAll(
-    '.landing-products, .landing-approach, .landing-faq, .landing-contact, .landing-product',
-  );
-  const observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('is-visible');
-          observer.unobserve(entry.target);
-        }
-      }
-    },
-    { threshold: 0.12 },
-  );
-  sections.forEach((section) => {
-    section.classList.add('landing-reveal');
-    observer.observe(section);
-  });
   const navigation = document.querySelectorAll(
     '.site-header nav a[href^="/#"]',
   );

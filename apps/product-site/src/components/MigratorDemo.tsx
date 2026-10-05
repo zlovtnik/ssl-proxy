@@ -9,7 +9,7 @@ export default function MigratorDemo() {
   return (
     <div class="demo-panel migrator-demo">
       <div class="demo-top">
-        <span>Schema Migrator / change review</span>
+        <h2>Schema Migrator / change review</h2>
         <span class="sample-label">Synthetic data</span>
       </div>
       <div class="demo-content">
@@ -38,6 +38,10 @@ export default function MigratorDemo() {
             <code>{current().code}</code>
           </pre>
         </section>
+        <p class="caveat">
+          SQL-file snapshots preserve source files and checksums. They do not
+          back up database data.
+        </p>
         <p class="fine-print">
           SQL means Structured Query Language. This demo never connects to or
           changes a database.
