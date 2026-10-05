@@ -4,17 +4,26 @@ The implemented site is a local review artifact. This checklist records work
 that needs human participants, assistive technology, a public hostname, or a
 reviewed infrastructure change. No conformance or field-performance claim is made.
 
+Automated coverage does not replace the manual items below. Current results and
+the reason each check passes are in
+[validation results](validation-results.md); tokens and pattern rules are in
+[the design system](design-system.md).
+
 ## Automated and local evaluation
 
 - [x] Run build/type checks and Playwright on all five routes in Chromium/WebKit.
 - [ ] Complete the configured Firefox suite on a compatible host.
 - [x] Run axe against dark/light pages with details open and every demo state.
-- [ ] Inspect rendered pages at 320, 375, 768, and 1440 CSS pixels.
+- [ ] Inspect rendered pages at 320, 375, 768, and 1440 CSS pixels. Automated
+      reflow checks cover these widths for overflow; a person still reviews
+      composition and clipping.
 - [ ] Inspect 200% text size and true 400% browser zoom; a 320px viewport is
       a reflow proxy, not evidence for browser zoom itself.
 - [ ] Inspect text-spacing overrides, forced colors, and reduced movement.
 - [x] Verify core content/contact and text demo alternatives without JavaScript.
 - [ ] Check every rendered contrast pairing and keyboard focus/target geometry.
+      Automated checks cover token pairings and 44px targets; rendered
+      combinations and focus appearance in both themes remain manual.
 - [ ] Evaluate light and dark screenshots for clipping and legibility.
 - [x] Measure cold-cache mobile/desktop lab LCP and CLS, and user-triggered
       interaction latency. Targets: LCP <= 2.5 seconds, INP <= 200 milliseconds,
@@ -33,6 +42,9 @@ reviewed infrastructure change. No conformance or field-performance claim is mad
       unusual words, and pronunciation where meaning would otherwise be ambiguous.
 - [ ] Complete and independently review every applicable criterion in the
       [accessibility matrix](accessibility-matrix.md), justifying non-applicability.
+- [ ] Review the two product stories and audience propositions against the
+      [messaging framework](messaging.md) and confirm no unsupported numeric
+      claim appears.
 - [ ] Update the public statement only to the level established by evidence.
 
 ## Reviewed delivery and field evaluation

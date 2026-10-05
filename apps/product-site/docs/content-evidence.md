@@ -15,6 +15,12 @@ Primary-action requests use `rafael@rclabs.uk`. Email links open a request,
 not an already scheduled meeting. No retired search modes or deprecated target
 support appear in the main story. No direct workflow between products is claimed.
 
+Copy follows [the messaging framework](messaging.md). That document records the
+two product stories, the audience propositions, the commercial thesis as an
+evaluation hypothesis, and the rule that no numeric improvement appears here
+without a documented baseline, workload, environment, and measurement method.
+Appearance follows [the design system](design-system.md).
+
 Visual research: [Linear](https://linear.app/), [Resend](https://resend.com/),
 and [Mintlify](https://www.mintlify.com/) inform hierarchy and progressive detail;
 their appearance is not accessibility evidence. The identity and SVG diagrams are

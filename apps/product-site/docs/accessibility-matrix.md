@@ -4,6 +4,10 @@ Scope: all five public routes and every synthetic demo/display setting state.
 Target: all applicable A, AA, and AAA criteria. No conformance claim is made.
 This includes all 86 current success criteria; 4.1.1 Parsing was removed in 2.2.
 
+Scope also includes the shared visual system recorded in
+[the design system](design-system.md). Contrast evidence below separates token
+calculation from rendered combinations.
+
 Evidence keys: **AUTO** refers to assertions in [browser tests](../tests/site.spec.ts);
 **CODE** refers to implemented semantics/content/styles; **MANUAL** means a human
 evaluation is still pending, even where automated evidence exists. **N/A** is a
@@ -100,6 +104,14 @@ evidence alone is never a passed conformance result.
 | 4.1.3 Status Messages                           | AA    | CODE: polite sample/run updates and copy status; AUTO: status content; MANUAL: announcement timing and usefulness                                             |
 
 ## Evidence record
+
+The shared-system revision consolidates colour, header, typography, spacing, and
+control rules into one stylesheet that all five routes use. Automated checks
+compare tokens, header geometry, reading-settings placement, heading type, and
+control styling across every route in both themes, and confirm each product demo
+appears once in its hero proof column. Both product pages use a split hero, an
+openly presented pair of audience propositions, a labelled input/process/output
+diagram, and a caveat panel beside the qualified content.
 
 The landing-page redesign adds a labeled observation filter, pressed-state product
 selectors, a result-count status, and four user-controlled migration steps in

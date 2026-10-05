@@ -6,6 +6,34 @@ Local evaluation on October 5, 2026. See the
 
 ## Completed checks
 
+### Shared visual system across five routes
+
+- `npm run build`: five static pages, zero errors, warnings, or hints.
+- `npm test`: 23 Chromium checks passed.
+- One stylesheet owns colours, header geometry, typography, spacing, controls,
+  and display-settings placement. Automated checks compare tokens, header
+  geometry, reading-bar position, heading type, and control styling across all
+  five routes in dark and light themes, so a route that drifts fails the suite.
+- Both product pages keep a split hero with the demonstration in the proof
+  column, exactly once per route, under the retained `#demo` anchor. The homepage
+  playground keeps product switching, filtering, stable panel sizing, and
+  no-JavaScript links to the product walkthroughs.
+- Verified both themes at 320, 375, 768, 1024, and 1440px with no page-level
+  horizontal scrolling, including enlarged text and WCAG text-spacing overrides.
+- Token pairs measured above 7:1 for core text and accents, and above 3:1 for
+  control boundaries, on both page and panel backgrounds in both themes.
+- Verified hero CTA destinations, product-specific email subjects, the visible
+  address with copy fallback, canonical and social metadata, sitemap, internal
+  links, and no external network requests.
+- `python3 scripts/check-docs.py`: documentation inventory, cross-references,
+  and repository delivery policy passed.
+- The messaging framework and design rules are recorded in
+  [messaging](messaging.md) and [design system](design-system.md).
+- This revision did not rerun WebKit or Firefox. Screen readers, disabled-participant
+  sessions, true browser zoom, and complete manual criterion evaluation remain
+  pending. Rendered contrast combinations still require manual inspection beyond
+  the token calculations above.
+
 ### Latest reference layout correction
 
 - The header remains visible while scrolling. Navigation links target landing
@@ -67,9 +95,9 @@ Desktop viewport: 1440 by 1000. Mobile viewport: 375 by 812 with 4x CPU slowdown
 
 | Metric                             | Worst observed sample | Target                      |
 | ---------------------------------- | --------------------- | --------------------------- |
-| Largest Contentful Paint           | 516ms                 | <= 2500ms                   |
-| Cumulative Layout Shift            | 0.00144 (rounded up)  | <= 0.1                      |
-| Observed event duration, lab proxy | 48ms                  | <= 200ms interaction target |
+| Largest Contentful Paint           | 472ms                 | <= 2500ms                   |
+| Cumulative Layout Shift            | 0.051 (rounded up)    | <= 0.1                      |
+| Observed event duration, lab proxy | 56ms                  | <= 200ms interaction target |
 
 No browser script errors were recorded. Event duration is not field Interaction
 to Next Paint (INP). These single local samples are not production field evidence

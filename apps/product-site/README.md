@@ -52,8 +52,11 @@ is a raster export of the original SVG in `public/`.
 - [Atheros Search documentation](../integration-console/atheros-search/README.md)
 - [Schema Migrator documentation](../schema-migrator/README.md)
 - [Content source map](docs/content-evidence.md)
+- [Messaging framework](docs/messaging.md)
+- [Design system](docs/design-system.md)
 - [Accessibility matrix](docs/accessibility-matrix.md)
 - [Evaluation and release checklist](docs/release-checklist.md)
+- [Local validation results](docs/validation-results.md)
 
 ## Publication
 
