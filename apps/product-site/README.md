@@ -83,9 +83,13 @@ Inspect the preview before publishing the same output with
 `wrangler pages deploy dist --project-name rclabs --branch main`.
 Direct production upload requires explicit approval. The October 5, 2026
 publication received that approval as an exception to the reviewed Git delivery
-path. The production deployment is `6f89caaf-89d3-47fc-bc39-37462beaa4e8`;
-the prior deployment `2078accc-c68a-434a-b124-381cc31fb66f` remains available
+path. The production deployment is `a016abbb-cdf6-4be6-89f2-1e6fc5307ad8`;
+the prior deployment `f5ca6be9-6681-4228-b296-8417402392b1` remains available
 for Cloudflare Pages rollback.
+
+Every page that shows or links the address wraps it in `<!--email_off-->`
+markers so Cloudflare Email Obfuscation cannot replace the visible address or
+the `mailto:` links, which must work without JavaScript.
 
 Root-site publication does not require Wiretrap or tunnel changes. Kubernetes
 changes still follow the Kustomize/Argo CD delivery path under

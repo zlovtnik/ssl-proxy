@@ -6,6 +6,7 @@ interface Props {
 const { product = bothProducts } = Astro.props;
 ---
 
+<!--email_off-->
 <section class="contact-banner" aria-labelledby="contact-title">
   <p class="eyebrow">HAVE A USE CASE IN MIND?</p>
   <h2 id="contact-title">{contact.headline.join(' ')}</h2>
@@ -18,3 +19,4 @@ const { product = bothProducts } = Astro.props;
     meeting is scheduled only after we agree on a time.
   </p>
 </section>
+<!--/email_off-->

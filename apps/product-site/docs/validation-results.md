@@ -9,9 +9,14 @@ Local evaluation on October 5, 2026. See the
 ### Content model, composition, and rendered evidence
 
 - `npm run build`: five static pages, zero errors, warnings, or hints.
-- `npm test`: 26 Chromium checks passed.
-- `npm run test:all-browsers -- --project=chromium --project=webkit`: 52 checks
-  passed across both engines.
+- `CFFIXED_USER_HOME=<fresh directory> npm run test:all-browsers`: 84 checks
+  passed on October 5, 2026, 28 each in Chromium, Firefox, and WebKit. Earlier
+  rounds recorded 26 Chromium checks and 52 Chromium/WebKit checks.
+- Firefox needs `CFFIXED_USER_HOME` on this host: macOS 27 denies terminal-launched
+  processes access to `~/Library/Application Support/Firefox`, so Playwright's
+  bundled Firefox 155.0 exits at launch with "Could not find profile folder"
+  before any profile is written. The variable redirects that app-data lookup and
+  leaves the suite unchanged. Tracked upstream as microsoft/playwright#42768.
 - One stylesheet owns colours, header geometry, typography, spacing, controls,
   and display-settings placement. Automated checks compare tokens, header
   geometry, reading-bar position, heading type, and control styling across all
@@ -55,9 +60,45 @@ Local evaluation on October 5, 2026. See the
   links, and no external network requests.
 - `python3 scripts/check-docs.py`: documentation inventory, cross-references,
   and repository delivery policy passed.
-- This revision did not rerun WebKit or Firefox beyond the 52 checks above.
-  Screen readers, disabled-participant sessions, true browser zoom, forced-colors
-  rendering, and complete manual criterion evaluation remain pending.
+- Chromium, Firefox, and WebKit now run the same 28 checks, so the run above is
+  the current cross-engine evidence. Screen readers, disabled-participant
+  sessions, true browser zoom, forced-colors rendering, and complete manual
+  criterion evaluation remain pending.
+
+### Publication verification
+
+- `PUBLIC_SITE_URL=https://rclabs.uk npm run build` produced the public output;
+  the default local build keeps localhost metadata and `noindex`.
+- Before this run the live origin still served source `1c542c4`, five commits
+  behind the reviewed source at `4a9b38e`, so the pre-redesign headlines, the
+  `live sample` wording, and the older email subjects were public.
+- The reviewed output was published to the `codex-product-site-preview` branch
+  as preview `894a0139-6b6b-4695-887f-0e488cece27e`, inspected there, and then
+  published to `main` as production deployment
+  `f5ca6be9-6681-4228-b296-8417402392b1` from source `4a9b38e`. The `email_off`
+  markers added to the contact, demo, and accessibility pages followed as
+  preview `f6d6d81c-7f15-47d4-97ed-ed234e8f6777` and production deployment
+  `a016abbb-cdf6-4be6-89f2-1e6fc5307ad8`, which is the current deployment, also
+  reported from source `4a9b38e` because the markers are uncommitted.
+- All five routes, `sitemap.xml`, `robots.txt`, `social-preview.png`,
+  `favicon.svg`, and the hashed `_astro` assets return 200 at
+  `https://rclabs.uk`. Each route's served HTML is byte-identical to the current
+  published build once the `email_off` markers that Cloudflare consumes and the
+  two elements it injects at the edge (a hidden `/cdn-cgi/content` anchor and
+  the challenge-platform script) are removed.
+- Live metadata is correct for the served origin: canonical URLs on all five
+  routes, `www` canonicalising to the apex, `og:` and `twitter:` tags pointing
+  at `social-preview.png` (200, `image/png`), a five-URL sitemap, `robots.txt`
+  allowing crawling with a sitemap link, and no `noindex` on any public route.
+- One response captured seconds after the marker-less publication served
+  Cloudflare email-obfuscated HTML, where the address reads
+  `[email protected]` and the `mailto:` links do not resolve without
+  JavaScript. Thirteen later fetches, including ten probes of the same URL,
+  served unobfuscated HTML with both `mailto:` links and their product subjects
+  intact; the zone-level setting was not readable with the available API scope,
+  so that flip is unexplained. After the markers were published the served HTML
+  is unobfuscated with the markers consumed, which is the intended behaviour.
+  No-JS email contact on the live origin still needs a manual recheck.
 
 ### Latest reference layout correction
 
@@ -120,9 +161,9 @@ by 812 with 4x CPU slowdown, 150ms network latency, and 1.6Mbps download.
 
 | Metric                             | Worst observed sample | Target                      |
 | ---------------------------------- | --------------------- | --------------------------- |
-| Largest Contentful Paint           | 644ms                 | <= 2500ms                   |
+| Largest Contentful Paint           | 620ms                 | <= 2500ms                   |
 | Cumulative Layout Shift            | 0.051 (rounded up)    | <= 0.1                      |
-| Observed event duration, lab proxy | 64ms                  | <= 200ms interaction target |
+| Observed event duration, lab proxy | 56ms                  | <= 200ms interaction target |
 
 The same run measured 0.157 to 0.189 cumulative layout shift on `/` and
 `/schema-migrator/` before the fix: the two Latin variable faces arrived after
@@ -136,9 +177,6 @@ and static build outputs are also generated locally and ignored.
 
 ## Remaining evaluation and delivery
 
-- Firefox's current downloaded test build failed at launch again on October 5,
-  2026, with "Could not find profile folder". Firefox checks remain unverified;
-  rerun the configured Firefox project on a compatible host.
 - WebKit is automated but cannot enumerate a full traversal: Tab can move focus
   into browser chrome part-way through, so focus-ring coverage there is per
   control rather than per traversal.
@@ -146,7 +184,18 @@ and static build outputs are also generated locally and ignored.
   sessions, true 400% browser zoom, forced-colors rendering, reading-level review,
   and complete manual criterion evaluation remain pending. WebKit automation is not
   VoiceOver/Safari.
-- A public hostname and reviewed Git/Kustomize/Argo CD hosting change have not
-  been selected or applied. The default local build disables indexing. Public
-  origin configuration was checked using a test-only hostname without publication.
+- No-JS email contact has not been rechecked on the live origin by a person:
+  one post-publication response was Cloudflare email-obfuscated, later fetches
+  were clean, and the zone-level Email Obfuscation setting is outside this
+  repository and was not readable with the available API scope.
+- The `email_off` markers in `Contact.astro`, `demo/index.astro`, and
+  `accessibility/index.astro` are published but still uncommitted in the
+  working tree, so the deployment and the reviewed source can diverge until
+  they are committed.
+- Social preview rendering on the selected sharing platforms is unconfirmed; the
+  image, `og:` tags, and `twitter:card` were checked only by inspecting the
+  served HTML and asset responses.
+- Publication on October 5, 2026 used approved direct uploads to Cloudflare
+  Pages, not the reviewed Git/Argo CD path, and Kubernetes desired state under
+  [cyber-stack](../../../cyber-stack) does not cover this site's hosting.
 - No production APIs, databases, authentication, or migration execution changed.

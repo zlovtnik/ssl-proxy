@@ -11,8 +11,12 @@ the reason each check passes are in
 
 ## Automated and local evaluation
 
-- [x] Run build/type checks and Playwright on all five routes in Chromium/WebKit.
-- [ ] Complete the configured Firefox suite on a compatible host.
+- [x] Run build/type checks and Playwright on all five routes in Chromium,
+      Firefox, and WebKit: 84 checks passed on October 5, 2026.
+- [x] Complete the configured Firefox suite. Ran on this host with
+      `CFFIXED_USER_HOME` pointing at a fresh directory, because macOS 27
+      denies this terminal access to the shared Firefox app-data directory;
+      28 of 28 checks passed.
 - [x] Run axe against dark/light pages with details open and every demo state.
 - [x] Inspect rendered pages at 320, 375, 768, and 1440 CSS pixels. Automated
       reflow checks cover these widths for overflow, and full-page screenshots at
@@ -52,13 +56,32 @@ the reason each check passes are in
 
 ## Reviewed delivery and field evaluation
 
-- [ ] Select the public hostname; set `PUBLIC_SITE_URL` and verify canonical,
+- [x] Select the public hostname; set `PUBLIC_SITE_URL` and verify canonical,
       sitemap, social preview, robots, and page metadata in the resulting build.
+      Verified on `https://rclabs.uk` on October 5, 2026: canonical URLs on all
+      five routes, `www` canonicalising to the apex, `og:`/`twitter:` tags,
+      five-URL sitemap, allowing `robots.txt`, and no `noindex`.
+- [x] Publish the reviewed source and confirm the served revision matches it.
+      Preview `894a0139-6b6b-4695-887f-0e488cece27e` was inspected before
+      production deployment `f5ca6be9-6681-4228-b296-8417402392b1`, both from
+      source `4a9b38e`; the marker publication
+      `a016abbb-cdf6-4be6-89f2-1e6fc5307ad8` superseded it, and the served
+      routes matched the published build at each step.
+- [ ] Recheck email contact without JavaScript on the live origin. One response
+      served seconds after the marker-less publication was Cloudflare
+      email-obfuscated; later fetches were clean, the markers are now published
+      and consumed by Cloudflare, and the zone-level Email Obfuscation setting
+      lives outside this repository.
 - [ ] Confirm social preview compatibility on the selected sharing platforms.
 - [ ] Add reviewed desired state under repository [cyber-stack](../../../cyber-stack),
-      following its [instructions](../../../AGENTS.md), for the selected hosting path.
+      following its [instructions](../../../AGENTS.md), for the selected hosting
+      path. The selected path is Cloudflare Pages, which cyber-stack does not
+      currently describe.
 - [ ] Keep first-party production images pinned by digest and promotion reviewed.
-- [ ] Publish only through the reviewed Git/Argo CD path.
+- [ ] Publish only through the reviewed Git/Argo CD path. The October 5, 2026
+      publications were approved direct uploads, recorded as an exception in
+      the [README](../README.md); moving Pages publication onto the reviewed
+      path is outstanding.
 - [ ] Measure post-launch field LCP, INP, and CLS with a consent/privacy-reviewed
       measurement approach; no third-party tracking is included in this release.
 
