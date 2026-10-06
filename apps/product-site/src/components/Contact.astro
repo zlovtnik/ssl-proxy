@@ -1,5 +1,6 @@
 ---
 import { bothProducts, contact, demoLink, email } from '../data/products';
+import { ArrowUpRight } from '@lucide/astro';
 interface Props {
   product?: string;
 }
@@ -12,7 +13,7 @@ const { product = bothProducts } = Astro.props;
   <h2 id="contact-title">{contact.headline.join(' ')}</h2>
   <p>{contact.supporting}</p>
   <a class="button primary" href={demoLink(product)}>
-    {contact.link} <span aria-hidden="true">&#8599;</span>
+    {contact.link} <ArrowUpRight size={18} aria-hidden="true" />
   </a>
   <p class="fine-print">
     Opens your email app, or write to <a href={`mailto:${email}`}>{email}</a>. A

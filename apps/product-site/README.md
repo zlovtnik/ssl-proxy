@@ -82,10 +82,12 @@ wrangler pages deploy dist --project-name rclabs --branch codex-product-site-pre
 Inspect the preview before publishing the same output with
 `wrangler pages deploy dist --project-name rclabs --branch main`.
 Direct production upload requires explicit approval. The October 5, 2026
-publication received that approval as an exception to the reviewed Git delivery
-path. The production deployment is `a016abbb-cdf6-4be6-89f2-1e6fc5307ad8`;
-the prior deployment `f5ca6be9-6681-4228-b296-8417402392b1` remains available
-for Cloudflare Pages rollback.
+publications received that approval as exceptions to the reviewed Git delivery
+path. The current production deployment is
+`28901202-7e1e-4e99-b370-541aa9f26987` from source `2ea9f34`, deployed
+straight to production without preview inspection; the prior deployment
+`a016abbb-cdf6-4be6-89f2-1e6fc5307ad8` remains available for Cloudflare Pages
+rollback.
 
 Every page that shows or links the address wraps it in `<!--email_off-->`
 markers so Cloudflare Email Obfuscation cannot replace the visible address or

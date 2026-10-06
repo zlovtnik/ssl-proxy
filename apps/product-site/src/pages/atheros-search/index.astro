@@ -1,4 +1,5 @@
 ---
+import { ArrowDown, ArrowUpRight, Check } from '@lucide/astro';
 import Layout from '../../layouts/Layout.astro';
 import SearchDemo from '../../components/SearchDemo';
 import Diagram from '../../components/Diagram.astro';
@@ -27,10 +28,11 @@ const product = products[0];
       <p class="lead">{product.summary}</p>
       <div class="actions">
         <a class="button primary" href={product.primaryCta.href}>
-          {product.primaryCta.label} <span aria-hidden="true">&#8595;</span>
+          {product.primaryCta.label} <ArrowDown size={18} aria-hidden="true" />
         </a>
         <a class="text-link" href={product.secondaryCta.href}>
-          {product.secondaryCta.label} <span aria-hidden="true">&#8599;</span>
+          {product.secondaryCta.label}{' '}
+          <ArrowUpRight size={18} aria-hidden="true" />
         </a>
       </div>
     </div>
@@ -84,7 +86,7 @@ const product = products[0];
           <ul class="checklist">
             {audience.points.map((point) => (
               <li>
-                <span aria-hidden="true">&#10003;</span>
+                <Check size={18} aria-hidden="true" />
                 <span>{point}</span>
               </li>
             ))}

@@ -66,7 +66,13 @@ the reason each check passes are in
       production deployment `f5ca6be9-6681-4228-b296-8417402392b1`, both from
       source `4a9b38e`; the marker publication
       `a016abbb-cdf6-4be6-89f2-1e6fc5307ad8` superseded it, and the served
-      routes matched the published build at each step.
+      routes matched the published build at each step. The homepage update
+      shipped as production deployment
+      `28901202-7e1e-4e99-b370-541aa9f26987` from source `2ea9f34` under
+      explicit approval as a direct upload without preview inspection; the
+      five routes, canonical URL, five-URL sitemap, allowing `robots.txt`,
+      homepage structured data, and unobfuscated email contact were verified
+      on `https://rclabs.uk` afterwards.
 - [ ] Recheck email contact without JavaScript on the live origin. One response
       served seconds after the marker-less publication was Cloudflare
       email-obfuscated; later fetches were clean, the markers are now published

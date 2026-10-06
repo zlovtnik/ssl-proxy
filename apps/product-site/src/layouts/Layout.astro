@@ -7,6 +7,7 @@ import interLatin from '@fontsource-variable/inter/files/inter-latin-wght-normal
 import monoLatin from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 import '../styles/site.css';
 import { contact } from '../data/products';
+import { ArrowUpRight, Menu } from '@lucide/astro';
 interface Props {
   title: string;
   description: string;
@@ -130,19 +131,19 @@ const navigation = [
             class="button small"
             aria-current={Astro.url.pathname === '/demo/' ? 'page' : undefined}
           >
-            {contact.cta} <span aria-hidden="true">&#8599;</span>
+            {contact.cta} <ArrowUpRight size={18} aria-hidden="true" />
           </a>
         </nav>
         <details class="mobile-menu">
           <summary aria-label="Toggle navigation">
-            <span aria-hidden="true">&#9776;</span>
+            <Menu size={20} aria-hidden="true" />
           </summary>
           <nav aria-label="Mobile navigation">
             {navigation.map(([path, label]) => (
               <a href={path}>{label}</a>
             ))}
             <a href="/demo/">
-              {contact.cta} <span aria-hidden="true">&#8599;</span>
+              {contact.cta} <ArrowUpRight size={18} aria-hidden="true" />
             </a>
           </nav>
         </details>

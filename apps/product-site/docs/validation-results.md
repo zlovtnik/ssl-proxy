@@ -117,8 +117,11 @@ Local evaluation on October 5, 2026. See the
   `f5ca6be9-6681-4228-b296-8417402392b1` from source `4a9b38e`. The `email_off`
   markers added to the contact, demo, and accessibility pages followed as
   preview `f6d6d81c-7f15-47d4-97ed-ed234e8f6777` and production deployment
-  `a016abbb-cdf6-4be6-89f2-1e6fc5307ad8`, which is the current deployment, also
-  reported from source `4a9b38e` because the markers are uncommitted.
+  `a016abbb-cdf6-4be6-89f2-1e6fc5307ad8`. The homepage structured data and
+  sections then shipped as production deployment
+  `28901202-7e1e-4e99-b370-541aa9f26987` from source `2ea9f34`, under explicit
+  approval as a direct upload without preview inspection; it is the current
+  deployment, and the prior one remains available for rollback.
 - All five routes, `sitemap.xml`, `robots.txt`, `social-preview.png`,
   `favicon.svg`, and the hashed `_astro` assets return 200 at
   `https://rclabs.uk`. Each route's served HTML is byte-identical to the current
@@ -229,9 +232,9 @@ and static build outputs are also generated locally and ignored.
   were clean, and the zone-level Email Obfuscation setting is outside this
   repository and was not readable with the available API scope.
 - The `email_off` markers in `Contact.astro`, `demo/index.astro`, and
-  `accessibility/index.astro` are published but still uncommitted in the
-  working tree, so the deployment and the reviewed source can diverge until
-  they are committed.
+  `accessibility/index.astro` are committed (`df030a08`) and included in the
+  current production deployment, so the served build and the reviewed source
+  agree.
 - Social preview rendering on the selected sharing platforms is unconfirmed; the
   image, `og:` tags, and `twitter:card` were checked only by inspecting the
   served HTML and asset responses.

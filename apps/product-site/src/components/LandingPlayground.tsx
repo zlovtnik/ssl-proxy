@@ -8,6 +8,7 @@ import {
 } from 'solid-js';
 import { investigations, migrationSteps } from '../data/fixtures';
 import { products } from '../data/products';
+import { ArrowRight, ArrowUpRight, Diamond, Search } from 'lucide-solid';
 
 const [search, migrator] = products;
 
@@ -125,7 +126,7 @@ export default function LandingPlayground() {
           <p class="preview-caveat">{migrator.caveat}</p>
           <a class="text-link preview-full" href={`${migrator.path}#demo`}>
             Open the migration walkthrough{' '}
-            <span aria-hidden="true">&#8594;</span>
+            <ArrowRight size={18} aria-hidden="true" />
           </a>
         </div>
         <div
@@ -139,18 +140,7 @@ export default function LandingPlayground() {
             <span class="preview-badge">SYNTHETIC</span>
           </div>
           <label class="preview-search">
-            <svg
-              viewBox="0 0 24 24"
-              width="20"
-              height="20"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <circle cx="10" cy="10" r="6" />
-              <path d="m15 15 5 5" />
-            </svg>
+            <Search size={20} aria-hidden="true" />
             <input
               aria-label="Filter sample observations"
               placeholder="Search guest, proxy, or wireless..."
@@ -180,23 +170,12 @@ export default function LandingPlayground() {
                     )
                   }
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="26"
-                    height="26"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.4"
-                    aria-hidden="true"
-                  >
-                    <path d="m12 2 10 10-10 10L2 12Z" />
-                    <path d="m12 7 5 5-5 5-5-5Z" />
-                  </svg>
+                  <Diamond size={26} strokeWidth={1.5} aria-hidden="true" />
                   <span>
                     <strong>{item.record}</strong>
                     <small>{item.source}</small>
                   </span>
-                  <span aria-hidden="true">&#8599;</span>
+                  <ArrowUpRight size={18} aria-hidden="true" />
                 </button>
               )}
             </For>
@@ -231,7 +210,8 @@ export default function LandingPlayground() {
             </div>
           </Show>
           <a class="text-link preview-full" href={`${search.path}#demo`}>
-            Open the full investigation <span aria-hidden="true">&#8594;</span>
+            Open the full investigation{' '}
+            <ArrowRight size={18} aria-hidden="true" />
           </a>
         </div>
       </div>

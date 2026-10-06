@@ -487,9 +487,8 @@ h4 {
   gap: 0.75rem;
   align-items: start;
 }
-.checklist li > span[aria-hidden] {
+.checklist li > svg {
   color: var(--action);
-  font-weight: 700;
 }
 .evidence-panel {
   padding: 1.75rem;

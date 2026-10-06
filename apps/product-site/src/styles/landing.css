@@ -188,11 +188,11 @@
 .landing-faq-list summary::-webkit-details-marker {
   display: none;
 }
-.landing-faq-list summary > span {
-  font-size: 1.3rem;
+.landing-faq-list summary > svg {
   color: var(--muted);
+  flex-shrink: 0;
 }
-.landing-faq-list details[open] summary > span {
+.landing-faq-list details[open] summary > svg {
   transform: rotate(45deg);
 }
 .landing-faq-list details > p {
@@ -354,10 +354,9 @@
   color: var(--preview-accent);
   flex-shrink: 0;
 }
-.preview-record > span:last-child {
+.preview-record > svg:last-child {
   margin-left: auto;
   color: var(--preview-accent);
-  font-size: 1.15rem;
 }
 .preview-record strong {
   display: block;
@@ -545,10 +544,8 @@
 .landing-details summary::-webkit-details-marker {
   display: none;
 }
-.landing-details summary > span,
-.landing-details summary > h3 > span {
-  font-size: 1.3rem;
-  font-weight: 400;
+.landing-details summary > svg,
+.landing-details summary > h3 > svg {
   color: var(--muted);
   flex-shrink: 0;
 }
@@ -562,8 +559,8 @@
   font-size: 1.125rem;
   font-weight: 600;
 }
-.landing-details[open] summary > span,
-.landing-details[open] summary > h3 > span {
+.landing-details[open] summary > svg,
+.landing-details[open] summary > h3 > svg {
   transform: rotate(45deg);
 }
 .landing-details > ul,

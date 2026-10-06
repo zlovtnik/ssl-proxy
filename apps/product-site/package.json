@@ -18,15 +18,17 @@
     "@astrojs/solid-js": "7.0.2",
     "@fontsource-variable/inter": "5.2.8",
     "@fontsource-variable/jetbrains-mono": "5.2.8",
+    "@lucide/astro": "1.52.0",
     "astro": "7.3.5",
+    "lucide-solid": "1.52.0",
     "solid-js": "1.9.15"
   },
   "devDependencies": {
     "@astrojs/check": "0.9.9",
     "@axe-core/playwright": "4.11.3",
     "@playwright/test": "1.63.0",
-    "typescript": "5.9.3",
     "prettier": "3.8.3",
-    "prettier-plugin-astro": "1.1.0"
+    "prettier-plugin-astro": "1.1.0",
+    "typescript": "5.9.3"
   }
 }
