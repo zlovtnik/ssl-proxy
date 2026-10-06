@@ -1,22 +1,34 @@
 // Entirely synthetic examples. No customer records, credentials, or API calls.
 export const investigations = [
   {
-    query: 'Guest network observations',
-    record: 'Guest device 07',
-    source: 'Wireless observation',
+    query: 'North Campus / suspected rogue access point',
+    site: 'North Campus / sample',
+    sensor: 'Sensor 02 / sample',
+    indicator: 'Suspected rogue access point',
+    reason: 'SSID lookalike heuristic / sample',
+    record: 'Observed access point 07',
+    identifier: 'Observed Wi-Fi identifier 07',
+    source: 'Beacon observation / sample',
+    channel: 'Channel 6 / 09:42 UTC / sample time',
     explanation:
-      'The record includes the term "guest" and a description of a guest network. Hybrid search combines term matches and similarity of meaning.',
+      'A sample beacon advertises an SSID that resembles a configured network name. The sensor can raise this configured heuristic as an indicator for analyst review; the match alone does not prove a rogue access point.',
     relation:
-      'Guest device 07 was observed with Lobby access point. This observation does not prove an active connection or confirmed device identity.',
+      'Sensor 02 recorded a beacon from observed access point 07 on channel 6 at the sample time. This synthetic relationship does not prove an active connection or physical device identity.',
   },
   {
-    query: 'Proxy requests to an API',
-    record: 'Proxy event 12',
-    source: 'Proxy observation',
+    query: 'West Distribution / PMF-related reconnect pattern',
+    site: 'West Distribution / sample',
+    sensor: 'Sensor 01 / sample',
+    indicator: 'PMF-related reconnect pattern',
+    reason: 'Deauthentication followed by reassociation / sample',
+    record: 'Observed Wi-Fi identifier 12',
+    identifier: 'Observed Wi-Fi identifier 12',
+    source: 'Wireless observation / sample',
+    channel: 'Channel 11 / 10:08 UTC / sample time',
     explanation:
-      'The record mentions an API request. The term match and similarity of meaning contribute to its position in the sample results.',
+      'The sample sequence contains wireless observations associated with a PMF-related detector pattern. It is presented as an indicator for a person to assess, not a confirmed attack.',
     relation:
-      'Proxy event 12 and Device identifier 03 share a recorded identifier. A shared identifier alone does not confirm a physical device identity.',
+      'The sample records a deauthentication observation followed by a reassociation observation on the monitored channel. Channel hopping, sensor placement, and the observation window affect what may be captured.',
   },
 ];
 export const migrationSteps = [

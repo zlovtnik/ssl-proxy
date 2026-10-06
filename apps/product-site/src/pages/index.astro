@@ -4,6 +4,7 @@ import Layout from '../layouts/Layout.astro';
 import Contact from '../components/Contact.astro';
 import LandingPlayground from '../components/LandingPlayground';
 import ReviewPath from '../components/ReviewPath.astro';
+import { investigations } from '../data/fixtures';
 import {
   bothProducts,
   contact,
@@ -15,6 +16,7 @@ import {
 import '../styles/landing.css';
 
 const { guide, reference, comparison, benchmark } = homeSections;
+const searchSample = investigations[0];
 const origin = new URL('/', Astro.site ?? Astro.url);
 // Identity only: no logo, no profiles, and no third party is named. The graph
 // is derived from the build origin, so a production build names rclabs.uk.
@@ -104,11 +106,20 @@ const structuredData = {
           </div>
           <div class="product-visual">
             {index === 0 ? (
-              <div class="product-network">
-                <span>Guest device 07</span>
+              <div
+                class="product-network"
+                role="img"
+                aria-label="Illustrative synthetic path from a monitored site to a wireless indicator and supporting observation. The current production console does not yet show this complete site overview."
+              >
+                <span>{searchSample.site}</span>
                 <ArrowRight size={18} aria-hidden="true" />
-                <span>Lobby access point</span>
-                <small>Observed relationship / identity unconfirmed</small>
+                <span>{searchSample.indicator}</span>
+                <ArrowRight size={18} aria-hidden="true" />
+                <span>{searchSample.record}</span>
+                <small>
+                  Synthetic sample / current console does not yet show this
+                  complete site overview
+                </small>
               </div>
             ) : (
               <pre><code>{'-- dry-run plan / sample\n+ CREATE TABLE evidence_records\n+ CREATE INDEX observed_at\n! Review before execution'}</code></pre>

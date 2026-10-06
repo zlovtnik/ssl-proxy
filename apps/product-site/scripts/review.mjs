@@ -72,7 +72,7 @@ async function reviewPage(profile, route) {
   await page.evaluate(() => document.fonts.ready);
   if (route === '/atheros-search/')
     await page
-      .getByLabel('1. Choose a sample query')
+      .getByLabel('1. Choose a monitored sample site')
       .waitFor({ state: 'visible' });
   const name = route === '/' ? 'hub' : route.replaceAll('/', '');
   async function captureTheme(theme) {
@@ -92,9 +92,11 @@ async function reviewPage(profile, route) {
     await page.getByRole('button', { name: '4. Inspect run record' }).click();
     await page.getByText('Read all steps as text', { exact: true }).click();
   } else if (route === '/atheros-search/') {
-    await page.getByLabel('1. Choose a sample query').selectOption('1');
     await page
-      .getByText('3. Open the ranking explanation', { exact: true })
+      .getByLabel('1. Choose a monitored sample site')
+      .selectOption('1');
+    await page
+      .getByText('3. Review why the indicator was raised', { exact: true })
       .click();
   } else {
     await page.locator('#reading-controls > summary').click();

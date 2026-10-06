@@ -123,9 +123,10 @@ narrow widths with enlarged text.
 
 ## Visuals and interaction
 
-- Use selectable SQL, real synthetic result records, ranking explanations, and
-  labelled input/process/output diagrams. Every synthetic dataset is visibly
-  labelled.
+- Use selectable SQL, synthetic wireless indicators and supporting
+  observations, ranking explanations, and labelled workflow diagrams. Every
+  synthetic dataset is visibly labelled, and illustrative paths are not shown
+  as production interfaces.
 - Do not add decorative 3D objects, stock photography, generic feature icons, or
   invented charts.
 - Keep headings descriptive, paragraphs short, and technical evidence adjacent to

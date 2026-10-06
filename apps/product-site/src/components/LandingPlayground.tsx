@@ -42,7 +42,7 @@ export default function LandingPlayground() {
   });
   const results = createMemo(() =>
     investigations.filter((item) =>
-      `${item.record} ${item.source} ${item.query}`
+      `${item.site} ${item.indicator} ${item.record} ${item.identifier} ${item.query}`
         .toLowerCase()
         .includes(query().trim().toLowerCase()),
     ),
@@ -136,22 +136,22 @@ export default function LandingPlayground() {
           aria-hidden={product() !== 'search'}
         >
           <div class="preview-title">
-            <h2>Follow the evidence.</h2>
+            <h2>Review wireless indicators by site.</h2>
             <span class="preview-badge">SYNTHETIC</span>
           </div>
           <label class="preview-search">
             <Search size={20} aria-hidden="true" />
             <input
-              aria-label="Filter sample observations"
-              placeholder="Search guest, proxy, or wireless..."
+              aria-label="Filter sample sites, indicators, and observations"
+              placeholder="Filter by site, indicator, or identifier..."
               value={query()}
               onInput={(event) => setQuery(event.currentTarget.value)}
               disabled={!ready()}
             />
           </label>
           <div class="preview-table-heading">
-            <span>OBSERVATION</span>
-            <span>INSPECT</span>
+            <span>SITE / INDICATOR</span>
+            <span>REVIEW</span>
           </div>
           <div class="preview-records">
             <For each={results()}>
@@ -172,8 +172,10 @@ export default function LandingPlayground() {
                 >
                   <Diamond size={26} strokeWidth={1.5} aria-hidden="true" />
                   <span>
-                    <strong>{item.record}</strong>
-                    <small>{item.source}</small>
+                    <strong>{item.indicator}</strong>
+                    <small>
+                      {item.site} / {item.record}
+                    </small>
                   </span>
                   <ArrowUpRight size={18} aria-hidden="true" />
                 </button>
@@ -181,36 +183,39 @@ export default function LandingPlayground() {
             </For>
             <Show when={!results().length}>
               <p class="preview-empty">
-                No sample observations match. Try "guest" or "proxy".
+                No sample observations match. Try a site name or indicator.
               </p>
             </Show>
           </div>
           <p class="preview-count" role="status">
-            {results().length} sample observations / local filtering
+            {results().length} wireless samples / local filtering
           </p>
           <Show when={results().includes(record())}>
             <div class="preview-evidence">
-              <p class="eyebrow">
-                RECORD CONTEXT / {selected() === 0 ? 'WIRELESS' : 'PROXY'}
-              </p>
+              <p class="eyebrow">SITE / INDICATOR / SUPPORTING OBSERVATION</p>
               <div class="evidence-path" aria-hidden="true">
-                <span>{record().record}</span>
+                <span>{record().site}</span>
                 <svg viewBox="0 0 90 24" fill="none" stroke="currentColor">
                   <path d="M0 12h90" stroke-dasharray="3 4" />
                   <circle cx="45" cy="12" r="4" fill="currentColor" />
                 </svg>
-                <span>
-                  {selected() === 0
-                    ? 'Lobby access point'
-                    : 'Device identifier 03'}
-                </span>
+                <span>{record().indicator}</span>
+                <svg viewBox="0 0 90 24" fill="none" stroke="currentColor">
+                  <path d="M0 12h90" stroke-dasharray="3 4" />
+                  <circle cx="45" cy="12" r="4" fill="currentColor" />
+                </svg>
+                <span>{record().record}</span>
               </div>
+              <p>
+                {record().sensor} / {record().channel}
+              </p>
+              <p>{record().reason}</p>
               <p>{record().relation}</p>
               <p class="preview-caveat">{search.caveat}</p>
             </div>
           </Show>
           <a class="text-link preview-full" href={`${search.path}#demo`}>
-            Open the full investigation{' '}
+            Open the Search sample workflow{' '}
             <ArrowRight size={18} aria-hidden="true" />
           </a>
         </div>

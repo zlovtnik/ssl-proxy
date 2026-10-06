@@ -7,16 +7,18 @@ const { kind } = Astro.props;
 const search = kind === 'search';
 const stages = search
   ? [
-      ['Question', 'or exact terms'],
-      ['Term, vector,', 'or hybrid rank'],
-      ['Ranked records', 'with explanations'],
+      ['Monitored site', 'sensor observations'],
+      ['Wireless indicator', 'for analyst review'],
+      ['Supporting', 'observations'],
     ]
   : [
       ['SQL files', 'and ordering'],
       ['Validate,', 'then dry-run'],
       ['Execution plan', 'and run record'],
     ];
-const labels = ['INPUT', 'PROCESSING', 'OUTPUT'];
+const labels = search
+  ? ['MONITORED SITE', 'INDICATOR', 'OBSERVATION']
+  : ['INPUT', 'PROCESSING', 'OUTPUT'];
 const centers = [100, 320, 540];
 ---
 
@@ -28,12 +30,12 @@ const centers = [100, 320, 540];
   >
     <title id={`${kind}-diagram-title`}>
       {search
-        ? 'Atheros Search input, processing, and output'
+        ? 'Illustrative site, wireless indicator, and supporting observation path'
         : 'Schema Migrator input, processing, and output'}
     </title>
     <desc id={`${kind}-diagram-desc`}>
       {search
-        ? 'Input: a question or exact terms with filters. Processing: term matching, vector similarity, or hybrid ranking. Output: ranked observation records with explanations. Lines show the review sequence, not confirmed connections.'
+        ? 'Illustrative sample only: a monitored site, a configured wireless indicator for analyst review, and supporting wireless observations. It does not represent an end-to-end site overview in the current production console. An observation does not confirm a current connection or physical device identity.'
         : 'Input: SQL files and ordering configuration. Processing: offline validation followed by a dry-run plan. Output: a proposed execution order and a run record. This is a review sequence, not an automatic execution.'}
     </desc>
     {[0, 1].map((index) => (
@@ -74,7 +76,7 @@ const centers = [100, 320, 540];
   </svg>
   <figcaption>
     {search
-      ? `Input, processing, and output for an investigation. ${products[0].caveat}`
+      ? `Illustrative synthetic path from a monitored site to an indicator and its supporting observations. The current production console does not show this complete overview end to end. ${products[0].caveat}`
       : 'Input, processing, and output for a change review. The public demonstration executes no SQL.'}
   </figcaption>
 </figure>

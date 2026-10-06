@@ -64,7 +64,7 @@ test('header stays visible and product samples preserve the landing layout', asy
   await expect(page.locator('#products')).toBeInViewport();
 });
 
-test('landing preview filters observations and reviews every migration step', async ({
+test('landing preview filters site-scoped wireless samples and reviews migration steps', async ({
   page,
 }) => {
   await page.goto('/');
@@ -73,27 +73,29 @@ test('landing preview filters observations and reviews every migration step', as
     preview.getByRole('button', { name: 'Schema Migrator', exact: true }),
   ).toBeEnabled();
   await expect(
-    preview.getByRole('button', { name: /Guest device 07/ }),
+    preview.getByRole('button', { name: /North Campus/ }),
   ).toHaveAttribute('aria-pressed', 'true');
   await expect(
-    preview.getByRole('button', { name: /Proxy event 12/ }),
+    preview.getByRole('button', { name: /West Distribution/ }),
   ).toHaveAttribute('aria-pressed', 'false');
-  await preview.getByLabel('Filter sample observations').fill('proxy');
-  await expect(preview.getByRole('status')).toContainText(
-    '1 sample observations',
-  );
-  await preview.getByRole('button', { name: /Proxy event 12/ }).press('Space');
+  await preview
+    .getByLabel('Filter sample sites, indicators, and observations')
+    .fill('West Distribution');
+  await expect(preview.getByRole('status')).toContainText('1 wireless samples');
+  await preview
+    .getByRole('button', { name: /West Distribution/ })
+    .press('Space');
   await expect(preview.locator('.preview-evidence')).toContainText(
-    'A shared identifier alone',
+    'deauthentication observation followed by a reassociation observation',
   );
   await preview
-    .getByLabel('Filter sample observations')
+    .getByLabel('Filter sample sites, indicators, and observations')
     .fill('no-matching-record');
-  await expect(preview.getByRole('status')).toContainText(
-    '0 sample observations',
-  );
+  await expect(preview.getByRole('status')).toContainText('0 wireless samples');
   await expect(preview.locator('.preview-evidence')).toHaveCount(0);
-  await preview.getByLabel('Filter sample observations').fill('');
+  await preview
+    .getByLabel('Filter sample sites, indicators, and observations')
+    .fill('');
   for (const theme of ['dark', 'light']) {
     await page.evaluate(
       (value) => (document.documentElement.dataset.theme = value),
@@ -212,36 +214,45 @@ for (const route of routes) {
   }
 }
 
-test('Search changes sample records and explains both states using a keyboard', async ({
+test('Search reviews sample sites and indicators with a keyboard', async ({
   page,
 }) => {
   await page.goto('/atheros-search/');
-  const nextQuery = page.getByRole('button', {
-    name: 'Try the next sample query',
+  await expect(
+    page.getByText(
+      'The current production console does not yet show this complete site overview end to end.',
+      { exact: false },
+    ),
+  ).toBeVisible();
+  const nextSite = page.getByRole('button', {
+    name: 'Try the next sample site',
   });
-  await expect(nextQuery).toBeEnabled();
-  await nextQuery.focus();
+  await expect(nextSite).toBeEnabled();
+  await nextSite.focus();
   await page.keyboard.press('Space');
   await expect(
-    page.getByRole('heading', { name: 'Proxy event 12' }),
+    page.getByRole('heading', { name: 'PMF-related reconnect pattern' }),
   ).toBeVisible();
-  const explanation = page.getByText('3. Open the ranking explanation', {
+  const explanation = page.getByText('3. Review why the indicator was raised', {
     exact: true,
   });
   await explanation.focus();
   await page.keyboard.press('Enter');
   await expect(
-    page.getByText('The record mentions an API request.', { exact: false }),
+    page.getByText('not a confirmed attack', { exact: false }),
   ).toBeVisible();
   await page
-    .getByText('4. Inspect observed relationships', { exact: true })
+    .getByText('4. Inspect the supporting observation', { exact: true })
     .click();
   await expect(
-    page.getByText('A shared identifier alone', { exact: false }),
+    page.getByText(
+      'deauthentication observation followed by a reassociation observation',
+      { exact: false },
+    ),
   ).toBeVisible();
-  await page.getByLabel('1. Choose a sample query').selectOption('0');
+  await page.getByLabel('1. Choose a monitored sample site').selectOption('0');
   await expect(
-    page.getByRole('heading', { name: 'Guest device 07' }),
+    page.getByRole('heading', { name: 'Suspected rogue access point' }),
   ).toBeVisible();
   for (const theme of ['dark', 'light']) {
     await page.evaluate(
@@ -249,7 +260,9 @@ test('Search changes sample records and explains both states using a keyboard', 
       theme,
     );
     for (const sample of ['0', '1']) {
-      await page.getByLabel('1. Choose a sample query').selectOption(sample);
+      await page
+        .getByLabel('1. Choose a monitored sample site')
+        .selectOption(sample);
       expect(
         (await new AxeBuilder({ page }).withTags(tags).analyze()).violations,
       ).toEqual([]);
@@ -367,10 +380,10 @@ test('core story, navigation, contact and text demos work without JavaScript', a
   ).toBeVisible();
   await page.goto('http://127.0.0.1:4323/atheros-search/');
   await page
-    .getByText('3. Open the ranking explanation', { exact: true })
+    .getByText('3. Review why the indicator was raised', { exact: true })
     .click();
   await expect(
-    page.getByText('No measured relevance score', { exact: false }),
+    page.getByText('does not prove a rogue access point', { exact: false }),
   ).toBeVisible();
   await context.close();
 });
@@ -727,7 +740,7 @@ test('rendered text and control boundaries meet the documented targets', async (
       );
     if (route === '/atheros-search/')
       await page
-        .getByRole('button', { name: 'Try the next sample query' })
+        .getByRole('button', { name: 'Try the next sample site' })
         .click();
     if (route === '/schema-migrator/')
       await page.getByRole('button', { name: '4. Inspect run record' }).click();
@@ -779,7 +792,7 @@ test('both caveats ship from the content model beside the content they qualify',
     .getByRole('button', { name: 'Atheros Search', exact: true })
     .click();
   await expect(
-    page.getByRole('link', { name: 'Open the full investigation' }),
+    page.getByRole('link', { name: 'Open the Search sample workflow' }),
   ).toHaveAttribute('href', `${products[0].path}#demo`);
   await page
     .getByRole('button', { name: 'Schema Migrator', exact: true })
@@ -955,7 +968,7 @@ test('hero calls to action keep their documented destinations', async ({
   await page.goto('/atheros-search/');
   const search = page.locator('.hero-split');
   await expect(
-    search.getByRole('link', { name: 'Explore a sample investigation' }),
+    search.getByRole('link', { name: 'Explore a sample site review' }),
   ).toHaveAttribute('href', '#demo');
   await expect(
     search.getByRole('link', { name: 'Discuss your use case' }),
@@ -1120,6 +1133,7 @@ test('homepage metadata, identity markup and technical sections ship from the mo
   await expect(
     page.getByRole('link', {
       name: homeSections.benchmark.status.sample.label,
+      exact: true,
     }),
   ).toHaveAttribute('href', homeSections.benchmark.status.sample.href);
   // The benchmark stays a protocol until results are measured.

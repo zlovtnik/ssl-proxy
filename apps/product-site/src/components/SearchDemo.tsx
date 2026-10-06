@@ -10,13 +10,18 @@ export default function SearchDemo() {
   return (
     <div class="demo-panel search-demo">
       <div class="demo-top">
-        <h2>Atheros Search / investigation</h2>
-        <span class="sample-label">Synthetic data</span>
+        <h2>Atheros Search / illustrative site review</h2>
+        <span class="sample-label">Synthetic sample</span>
       </div>
+      <p class="fine-print">
+        This sample illustrates a site-to-indicator-to-observation path. The
+        current production console does not show this complete site overview end
+        to end.
+      </p>
       <div class="demo-content">
-        <label for="sample-query">1. Choose a sample query</label>
+        <label for="sample-site">1. Choose a monitored sample site</label>
         <select
-          id="sample-query"
+          id="sample-site"
           disabled={!ready()}
           value={selected()}
           onChange={(event) => setSelected(Number(event.currentTarget.value))}
@@ -30,20 +35,26 @@ export default function SearchDemo() {
           disabled={!ready()}
           onClick={() => setSelected((selected() + 1) % investigations.length)}
         >
-          Try the next sample query
+          Try the next sample site
         </button>
         <div aria-live="polite" aria-atomic="true" class="result">
-          <p class="eyebrow">2. Inspect the matching record</p>
-          <h3>{sample().record}</h3>
-          <p>{sample().source} / sample hybrid result</p>
+          <p class="eyebrow">2. Review an indicator for analyst review</p>
+          <h3>{sample().indicator}</h3>
+          <p>
+            {sample().site} / {sample().sensor}
+          </p>
+          <p>{sample().reason}</p>
         </div>
         <details>
-          <summary>3. Open the ranking explanation</summary>
+          <summary>3. Review why the indicator was raised</summary>
           <p>{sample().explanation}</p>
-          <p>No measured relevance score is implied by this example.</p>
         </details>
         <details>
-          <summary>4. Inspect observed relationships</summary>
+          <summary>4. Inspect the supporting observation</summary>
+          <p>
+            {sample().record} / {sample().source}
+          </p>
+          <p>{sample().channel}</p>
           <p>{sample().relation}</p>
           <p class="caveat">{products[0].caveat}</p>
         </details>

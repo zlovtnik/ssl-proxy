@@ -3,23 +3,23 @@ export const email = 'rafael@rclabs.uk';
 // The two load-bearing caveats, defined once so the product pages and the
 // homepage reference entries can never drift apart.
 export const searchCaveat =
-  'An observation does not confirm a current connection or device identity.';
+  'Sensor placement, configured channel coverage, observation time, and MAC randomization limit what can be seen. An observed Wi-Fi identifier does not confirm a current connection or physical device identity.';
 export const migratorCaveat =
   'SQL-file snapshots preserve source files and checksums. They do not back up database data.';
 
 export const home = {
   // Google rewrites and truncates titles; this is an editorial target, not a
   // ranking rule. The homepage shares one title and description with Layout.
-  title: 'Network Evidence Search & PostgreSQL Migrations',
+  title: 'Site-aware Wi-Fi Security & PostgreSQL Migration Review',
   description:
-    'Explore Atheros Search for network evidence and Schema Migrator for ordered SQL validation, PostgreSQL drift checks, and migration dry-run plans.',
-  headline: ['Network evidence search', 'and PostgreSQL migration review'],
+    'Explore Atheros Search for site-scoped wireless indicators and Schema Migrator for ordered SQL validation, PostgreSQL drift checks, and migration dry-run plans.',
+  headline: ["Know what's happening in the air", 'around each monitored site.'],
   subheadline:
-    'Atheros Search and Schema Migrator are two independent products from RCLabs. Each one is shown here with a synthetic sample you can run in your browser.',
+    'Atheros Search helps security teams review wireless indicators with their site context and supporting observations. Schema Migrator reviews SQL changes as an independent product. Both have synthetic browser samples.',
   primaryCta: { label: 'Explore the samples', href: '#playground' },
   secondaryCta: { label: 'Discuss your use case', href: '/demo/' },
   supporting:
-    'Two independent tools. Browser-based samples. No account required.',
+    'Two independent tools. Synthetic browser samples. No account required.',
 } as const;
 
 // Homepage technical sections. Reference entries, capability tables and the
@@ -181,9 +181,9 @@ indexes/002_observed_at.sql                      -- object: observations observe
   reference: {
     id: 'technical-reference',
     eyebrow: 'TECHNICAL REFERENCE',
-    title: 'Six technical terms and what they prove.',
+    title: 'Six technical terms and what they do not prove.',
     summary:
-      'Evaluation questions come down to what a signal can establish. Each entry gives the operational meaning, a concrete example, and the limit.',
+      'Security and migration decisions depend on what evidence can establish. Each entry gives the meaning, an example, and its limits.',
     entries: [
       {
         term: 'Migration checksum mismatch',
@@ -225,15 +225,15 @@ indexes/002_observed_at.sql                      -- object: observations observe
         },
       },
       {
-        term: 'Hybrid ranking',
+        term: 'Configured wireless indicator',
         meaning:
-          'Sparse term matching and dense vector similarity are combined into one ranked list. ATHSEARCH_HYBRID_ALPHA controls the blend and defaults to 0.5.',
+          'A sensor heuristic that flags a wireless pattern for an analyst to review, such as a suspected rogue access point, deauthentication flood, signal anomaly, attack sequence, or PMF-related pattern.',
         example:
-          'An exact device identifier and a paraphrase of the same question are ranked together, with each contribution visible in the explanation.',
+          'A sample access point advertises an SSID that resembles a configured network name, so the sensor raises an indicator for review.',
         limit:
-          'An explanation shows why one record sits above another in a result set; it is not a relevance score you can cite. Hybrid retrieval and explanations are general capabilities that Elasticsearch also documents.',
+          'The configured heuristic raises a lead; it does not prove a successful attack, establish complete threat coverage, or replace analyst judgment.',
         link: {
-          label: 'Open the ranking explanation',
+          label: 'Review a synthetic wireless indicator',
           href: '/atheros-search/#demo',
         },
       },
@@ -242,7 +242,7 @@ indexes/002_observed_at.sql                      -- object: observations observe
         meaning:
           'A link between records that observations support: a device seen with an access point, or two events sharing a recorded identifier.',
         example:
-          'Guest device 07 was observed with Lobby access point in one sample record.',
+          'Observed Wi-Fi identifier 07 appeared in a synthetic beacon observation associated with a sample site.',
         limit: searchCaveat,
         link: {
           label: 'Follow a relationship in the sample',
@@ -315,36 +315,36 @@ indexes/002_observed_at.sql                      -- object: observations observe
       ],
     },
     atheros: {
-      title: 'Atheros Search versus keyword-only search',
+      title: 'Atheros Search / wireless indicators in site context',
       summary:
-        'The smaller comparison on the evidence side: what changes when retrieval and correlation are part of the product.',
+        'A synthetic review path shows how a monitored site, a configured wireless indicator, and its supporting observations fit together.',
       caption:
-        'How Atheros Search and keyword-only search with manual correlation handle each stage.',
+        'Illustrative path from a monitored site to an indicator and supporting wireless observation.',
       tableHead: [
         'Stage',
-        'Atheros Search',
-        'Keyword-only search and manual correlation',
+        'What the sample shows',
+        'What it does not establish',
       ],
       tableRows: [
         [
-          'Query',
-          'Term, vector, or hybrid retrieval over wireless, device, and proxy observations.',
-          'Exact keywords, one tool and one query language at a time.',
+          'Site scope',
+          'A sensor location label and the wireless records associated with it.',
+          'Complete coverage of the physical site or every device there.',
         ],
         [
-          'Ranking',
-          'Per-result ranking explanations you open next to the record.',
-          'Relevance is inferred from whatever order the tool returns.',
+          'Indicator',
+          'A configured sensor heuristic, such as a suspected rogue access point or deauthentication pattern.',
+          'Proof of a successful attack or a confirmed threat.',
         ],
         [
-          'Relationships',
-          'Recorded relationships retrieved with the result as investigation context.',
-          'Correlated by hand across tabs, exports, and dashboards.',
+          'Observation',
+          'Supporting wireless audit records with their observed time and channel.',
+          'A current connection or a known physical device identity.',
         ],
         [
-          'Identity',
-          'Suggestions are review candidates; an observation never confirms identity.',
-          'The same limits apply, without the recorded evidence laid out for review.',
+          'Analyst review',
+          'An inspectable example that keeps the indicator beside its evidence.',
+          'An end-to-end site dashboard in the current production console.',
         ],
       ],
     },
@@ -453,21 +453,21 @@ export const products = [
     id: 'search',
     name: 'Atheros Search',
     path: '/atheros-search/',
-    label: 'NETWORK EVIDENCE',
-    homeTitle: 'Atheros Search: investigate network observations',
-    headline: ['Search network records.', 'Inspect why they match.'],
+    label: 'SITE-AWARE WIRELESS SECURITY',
+    homeTitle: 'Atheros Search: review wireless indicators by site',
+    headline: ['Review wireless indicators.', 'See their site context.'],
     summary:
-      'Combine term and vector search across wireless, device, and proxy observations. Inspect ranking explanations and related records to assess a result with its context.',
+      'Atheros Sensor passively listens on configured Wi-Fi channels and publishes audit records to the backend. Atheros Search helps teams review wireless indicators with monitored-site context and supporting observations.',
     problem:
-      'Network and security engineers investigating records whose relevance, relationships, and identity implications need verification.',
-    promise: 'A match is a starting point.',
-    primaryCta: { label: 'Explore a sample investigation', href: '#demo' },
+      'Security teams responsible for monitored sites who need to assess wireless indicators alongside the observations that triggered them.',
+    promise: 'An indicator points to evidence for review.',
+    primaryCta: { label: 'Explore a sample site review', href: '#demo' },
     secondaryCta: { label: 'Discuss your use case', href: '/demo/#search' },
     sections: {
       workflow: {
         ...workflowSection,
-        title: 'From a question to leads you can review.',
-        note: 'Each step takes a defined input and produces something you can read. Every record in the sample is synthetic.',
+        title: 'From a monitored site to observations for review.',
+        note: 'The synthetic sample illustrates a site-to-indicator-to-observation workflow. The current production console does not yet show this complete site overview end to end.',
       },
       value: {
         ...audienceSection,
@@ -475,9 +475,9 @@ export const products = [
       },
       evidence: {
         ...evidenceSection,
-        caveatLabel: 'RELATIONSHIP VIEWS / READ WITH CARE',
+        caveatLabel: 'COVERAGE AND IDENTITY / READ WITH CARE',
         footnote:
-          'The sample shows recorded observations only. It connects to no production system and makes no identity determination.',
+          'The sensor listens on configured channels and publishes audit records to the configured backend. Deployment requires monitor-mode Wi-Fi hardware. Audit fields and retention depend on deployment; no retention duration is promised here.',
       },
       glossary: glossarySection,
     },
@@ -486,66 +486,70 @@ export const products = [
         id: 'technical',
         title: 'For technical users',
         proposition:
-          'Query, inspect, and review without leaving the investigation.',
+          'Review a wireless indicator alongside its supporting observations.',
         points: [
-          'Query dense, sparse, or hybrid search through HTTP and gRPC interfaces.',
-          'Inspect ranking explanations and related observations alongside each investigation; treat identity suggestions as candidates for review.',
+          'Search dense, sparse, or hybrid records through HTTP and gRPC interfaces, with site and sensor scope where supported.',
+          'Review configured rogue-access-point, deauthentication, signal, sequence, and PMF-related indicators as leads, not proof of compromise.',
         ],
       },
       {
         id: 'buyers',
-        title: 'For buyers and investors',
+        title: 'For buyers and operators',
         proposition: 'Keep the operating picture inspectable.',
         points: [
           'Keep search and vector storage in PostgreSQL, with embedding work handled by a configurable worker pool.',
-          'Inspect embedding jobs, worker heartbeats, and processing failures when evaluating capacity and operating cost.',
+          'Inspect embedding jobs, worker heartbeats, and processing failures when evaluating the search service and its operations.',
         ],
       },
     ],
     workflow: [
       {
-        step: 'Search',
-        input: 'A question or exact terms, with filters',
-        processing: 'Term matching, vector similarity, or hybrid ranking',
-        output: 'Ranked observation records',
+        step: 'Scope a site',
+        input: 'A monitored location and available sensor observations',
+        processing: 'Use recorded location and sensor context',
+        output: 'Wireless records within the sample scope',
       },
       {
-        step: 'Inspect',
-        input: 'A selected result',
-        processing: 'Retrieve ranking explanations and record context',
-        output: 'Evidence explaining the match',
+        step: 'Review an indicator',
+        input: 'A configured wireless detection pattern',
+        processing: 'Inspect the heuristic reason and related records',
+        output: 'An indicator for analyst review',
       },
       {
-        step: 'Investigate',
-        input: 'A device, access point, or related observation',
-        processing: 'Retrieve recorded relationships and inventory context',
-        output: 'Leads for further investigation',
+        step: 'Inspect observations',
+        input: 'Supporting wireless audit records',
+        processing: 'Review observed identifiers, time, channel, and evidence',
+        output: 'Context for a human assessment',
       },
     ],
     caveat: searchCaveat,
     highlights: [
-      ['Find the signal', 'Search by meaning, exact terms, or both.'],
+      ['Scope the evidence', 'Review observations from a monitored site.'],
       [
-        'Understand the match',
-        'Inspect ranking explanations and related observations.',
+        'Review wireless indicators',
+        'See configured patterns beside supporting observations.',
       ],
       [
-        'Investigate the context',
-        'Review relationships and possible identity matches.',
+        'Keep judgment with the analyst',
+        'Treat an indicator as a lead to investigate, not a verdict.',
       ],
     ],
     features: [
       [
-        'Search beyond exact words',
-        'Use dense search for meaning, sparse search for terms, or hybrid search to combine both. Inspect wireless, device, and proxy records.',
+        'Listen on configured Wi-Fi channels',
+        'Atheros Sensor uses monitor-mode capture. It listens on configured channels rather than joining access points, then publishes audit records to the configured backend.',
       ],
       [
-        'Follow the evidence',
-        'Open ranking explanations and related observations. Network views help you explore relationships without treating an observation as a confirmed connection.',
+        'Review configured wireless indicators',
+        'Sensor heuristics can flag suspected rogue access points, deauthentication floods, signal anomalies, attack sequences, and PMF-related patterns for analyst review.',
       ],
       [
-        'Review your inventory',
-        'Explore observed device identifiers and review possible identity matches. A suggested match is a review candidate, not a confirmed device identity.',
+        'Inspect supporting observations',
+        'Review wireless audit records with site, sensor, channel, and observed-time context. Retention details depend on deployment.',
+      ],
+      [
+        'Treat identifiers carefully',
+        'Inventory shows observed Wi-Fi identifiers. MAC randomization and incomplete sensor coverage mean identifiers are not a count of confirmed physical devices.',
       ],
       [
         'See processing progress',
@@ -559,6 +563,14 @@ export const products = [
       ],
       ['Sparse search', 'Finds records by matching terms.'],
       ['Hybrid search', 'Combines meaning and term matches to rank results.'],
+      [
+        'Wireless indicator',
+        'A configured sensor heuristic that points to a wireless pattern for an analyst to review. It does not prove a threat.',
+      ],
+      [
+        'Observed Wi-Fi identifier',
+        'An identifier seen in captured wireless traffic. It may not map one-to-one to a physical device.',
+      ],
       [
         'Observed relationship',
         'A link supported by recorded observations. It does not prove a current connection or confirmed identity.',
@@ -714,7 +726,7 @@ export const contactOptions = [
     id: 'search',
     label: 'Atheros Search',
     subject: 'Atheros Search',
-    text: 'Explore network evidence and investigation context.',
+    text: 'Review site-scoped wireless indicators and supporting observations.',
   },
   {
     id: 'migrator',
