@@ -106,6 +106,19 @@ the "Discuss your use case." heading with the shorter `contact.link` label, and
 the product breadcrumb carries the product name so the hero eyebrow carries only
 the story label.
 
+Homepage technical sections compose those shared patterns with
+composition-only classes in `landing.css`: `.landing-block`, `.landing-points`,
+`.landing-list`, `.landing-details`, `.landing-reference-list`,
+`.landing-table-wrap`, and `.landing-table`. Prose keeps the 64-character
+measure; tables and diagrams take the full shell width. Tables use a
+`<caption>`, `scope` on every header cell, and whole-word wrapping, and each one
+sits inside `.landing-table-wrap`: a `role="region"` scroll area named by its
+caption and reachable with Tab. A narrow viewport therefore scrolls the table
+inside that wrapper instead of breaking words mid-word or scrolling the page.
+Disclosure rows reserve 1rem on the right because the open marker
+rotates 45 degrees, and that painted box would otherwise reach past the row at
+narrow widths with enlarged text.
+
 ## Visuals and interaction
 
 - Use selectable SQL, real synthetic result records, ranking explanations, and

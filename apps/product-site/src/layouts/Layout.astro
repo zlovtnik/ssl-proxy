@@ -11,8 +11,11 @@ interface Props {
   title: string;
   description: string;
   product?: string;
+  // Homepage-only identity markup. Routes that pass nothing emit nothing, so
+  // the other four pages keep byte-identical output.
+  structuredData?: Record<string, unknown>;
 }
-const { title, description, product } = Astro.props;
+const { title, description, product, structuredData } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const publicBuild =
   canonical.hostname !== 'localhost' && canonical.hostname !== '127.0.0.1';
@@ -63,6 +66,13 @@ const navigation = [
       content="RCLabs: Investigate network evidence. Review database changes."
     />
     <meta name="twitter:card" content="summary_large_image" />
+    {structuredData && (
+      <script
+        type="application/ld+json"
+        is:inline
+        set:html={JSON.stringify(structuredData)}
+      />
+    )}
     <script is:inline>
       try {
         const preferences = JSON.parse(

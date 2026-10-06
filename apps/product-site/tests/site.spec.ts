@@ -1,6 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { bothProducts, contact, email, products } from '../src/data/products';
+import {
+  bothProducts,
+  contact,
+  email,
+  home,
+  homeSections,
+  products,
+} from '../src/data/products';
 
 const routes = [
   '/',
@@ -989,5 +996,83 @@ test('both product demos sit in the hero proof column exactly once', async ({
         return copy.width < proof.width;
       }),
     ).toBe(true);
+  }
+});
+
+test('homepage metadata, identity markup and technical sections ship from the model', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page).toHaveTitle(`${home.title} | RCLabs`);
+  await expect(page.locator('meta[name="description"]')).toHaveAttribute(
+    'content',
+    home.description,
+  );
+  // One H1, built from the two halves of the modelled headline.
+  const headings = page.getByRole('heading', { level: 1 });
+  await expect(headings).toHaveCount(1);
+  await expect(headings).toHaveText(home.headline.join(' '));
+
+  // Identity markup only on the homepage, and only what this site can verify.
+  await expect(page.locator('script[type="application/ld+json"]')).toHaveCount(
+    1,
+  );
+  const graph = JSON.parse(
+    (await page.locator('script[type="application/ld+json"]').textContent())!,
+  );
+  expect(graph['@context']).toBe('https://schema.org');
+  const nodes = graph['@graph'] as Record<string, any>[];
+  expect(nodes.map((node) => node['@type'])).toEqual([
+    'Organization',
+    'WebSite',
+  ]);
+  expect(nodes[0].name).toBe('RCLabs');
+  expect(nodes[0].url).toBe('http://localhost:4321/');
+  expect(nodes[0].email).toBe(email);
+  expect(nodes[0].logo).toBeUndefined();
+  expect(nodes[0].sameAs).toBeUndefined();
+  expect(nodes[1].publisher['@id']).toBe(nodes[0]['@id']);
+  expect(nodes[0]['@id']).toBe('http://localhost:4321/#organization');
+
+  // Every modelled section is published once, with its own heading.
+  for (const section of Object.values(homeSections)) {
+    await expect(page.locator(`#${section.id}`), section.id).toHaveCount(1);
+    await expect(
+      page.getByRole('heading', { level: 2, name: section.title }),
+      section.id,
+    ).toHaveCount(1);
+  }
+  for (const product of products)
+    await expect(
+      page.getByRole('heading', { level: 2, name: product.homeTitle }),
+      product.name,
+    ).toHaveCount(1);
+
+  // The four new calls to action keep their documented destinations.
+  await expect(
+    page.getByRole('link', { name: homeSections.guide.sample.primary.label }),
+  ).toHaveAttribute('href', homeSections.guide.sample.primary.href);
+  await expect(
+    page.getByRole('link', { name: homeSections.guide.sample.secondary.label }),
+  ).toHaveAttribute('href', homeSections.guide.sample.secondary.href);
+  await expect(
+    page.getByRole('link', { name: homeSections.comparison.cta.label }),
+  ).toHaveAttribute('href', homeSections.comparison.cta.href);
+  await expect(
+    page.getByRole('link', {
+      name: homeSections.benchmark.status.sample.label,
+    }),
+  ).toHaveAttribute('href', homeSections.benchmark.status.sample.href);
+  // The benchmark stays a protocol until results are measured.
+  await expect(page.locator('#search-benchmark')).toContainText(
+    'No relevance, latency, or storage figures appear here yet',
+  );
+  // The other four routes carry no structured data of their own.
+  for (const route of routes.slice(1)) {
+    await page.goto(route);
+    await expect(
+      page.locator('script[type="application/ld+json"]'),
+      route,
+    ).toHaveCount(0);
   }
 });

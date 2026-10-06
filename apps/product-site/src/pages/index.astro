@@ -2,14 +2,47 @@
 import Layout from '../layouts/Layout.astro';
 import Contact from '../components/Contact.astro';
 import LandingPlayground from '../components/LandingPlayground';
-import { bothProducts, contact, home, products } from '../data/products';
+import ReviewPath from '../components/ReviewPath.astro';
+import {
+  bothProducts,
+  contact,
+  email,
+  home,
+  homeSections,
+  products,
+} from '../data/products';
 import '../styles/landing.css';
+
+const { guide, reference, comparison, benchmark } = homeSections;
+const origin = new URL('/', Astro.site ?? Astro.url);
+// Identity only: no logo, no profiles, and no third party is named. The graph
+// is derived from the build origin, so a production build names rclabs.uk.
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      '@id': `${origin}#organization`,
+      name: 'RCLabs',
+      url: origin.toString(),
+      email,
+    },
+    {
+      '@type': 'WebSite',
+      '@id': `${origin}#website`,
+      name: 'RCLabs',
+      url: origin.toString(),
+      publisher: { '@id': `${origin}#organization` },
+    },
+  ],
+};
 ---
 
 <Layout
-  title="Investigate network evidence. Review database changes."
-  description="Two independent tools from RCLabs. Atheros Search combines search results, ranking explanations, and recorded relationships. Schema Migrator validates ordered SQL and produces plans before execution. Explore both workflows with interactive, synthetic samples."
+  title={home.title}
+  description={home.description}
   product="landing"
+  structuredData={structuredData}
 >
   <section id="top" class="hero hero-split" aria-labelledby="hero-title">
     <div class="hero-copy">
@@ -18,8 +51,7 @@ import '../styles/landing.css';
         TWO INDEPENDENT PRODUCTS
       </p>
       <h1 id="hero-title">
-        {home.headline[0]}
-        <span class="muted">{home.headline[1]}</span>
+        {home.headline[0]} <span class="muted">{home.headline[1]}</span>
       </h1>
       <p class="lead">{home.subheadline}</p>
       <div class="actions">
@@ -64,7 +96,7 @@ import '../styles/landing.css';
             <p class="eyebrow">{product.label}</p>
           </div>
           <div class="landing-product-copy">
-            <h3>{product.name}</h3>
+            <h2>{product.homeTitle}</h2>
             <p class="landing-promise">{product.promise}</p>
             <p>{product.summary}</p>
           </div>
@@ -85,7 +117,7 @@ import '../styles/landing.css';
               <li>
                 <span>0{number + 1}</span>
                 <div>
-                  <h4>{title}</h4>
+                  <h3>{title}</h3>
                   <p>{text}</p>
                 </div>
               </li>
@@ -101,13 +133,342 @@ import '../styles/landing.css';
               <span aria-hidden="true">&#8594;</span>
             </a>
             <a class="text-link" href={product.path}>
-              Product details <span aria-hidden="true">&#8599;</span>
+              {product.name} product details{' '}
+              <span aria-hidden="true">&#8599;</span>
             </a>
           </div>
         </article>
       ))}
     </div>
   </section>
+
+  <section
+    id={guide.id}
+    class="section landing-guide"
+    aria-labelledby="guide-title"
+  >
+    <div class="section-heading">
+      <p class="eyebrow">{guide.eyebrow}</p>
+      <h2 id="guide-title">{guide.title}</h2>
+      <p>{guide.summary}</p>
+    </div>
+
+    <div class="landing-block">
+      <h3>{guide.checks.title}</h3>
+      <p>{guide.checks.summary}</p>
+      <ul class="landing-points">
+        {guide.checks.points.map(([title, text]) => (
+          <li>
+            <strong>{title}</strong>
+            <span>{text}</span>
+          </li>
+        ))}
+      </ul>
+      <p class="fine-print">{guide.checks.note}</p>
+    </div>
+
+    <div class="landing-block">
+      <h3>{guide.ordering.title}</h3>
+      <p>{guide.ordering.summary}</p>
+      <details class="landing-details">
+        <summary>
+          {guide.ordering.detailLabel}
+          <span aria-hidden="true">+</span>
+        </summary>
+        <p class="landing-command">Directory and apply order</p>
+        <pre><code>{guide.ordering.tree}</code></pre>
+        {guide.ordering.files.map((file) => (
+          <>
+            <p class="landing-command">{file.path}</p>
+            <pre><code>{file.sql}</code></pre>
+          </>
+        ))}
+        <ul class="landing-list">
+          {guide.ordering.notes.map((note) => (
+            <li>{note}</li>
+          ))}
+        </ul>
+      </details>
+    </div>
+
+    <div class="landing-block">
+      <h3>{guide.preview.title}</h3>
+      <p>{guide.preview.summary}</p>
+      <details class="landing-details">
+        <summary>
+          {guide.preview.detailLabel}
+          <span aria-hidden="true">+</span>
+        </summary>
+        {guide.preview.runs.map((run) => (
+          <>
+            <p class="landing-command">{run.command}</p>
+            <pre><code>{run.output}</code></pre>
+            <p class="fine-print">{run.note}</p>
+          </>
+        ))}
+      </details>
+    </div>
+
+    <div class="landing-block landing-block-wide">
+      <h3>{guide.separation.title}</h3>
+      <p>{guide.separation.summary}</p>
+      <div
+        class="landing-table-wrap"
+        role="region"
+        aria-labelledby="separation-caption"
+        tabindex="0"
+      >
+        <table class="landing-table">
+          <caption id="separation-caption">{guide.separation.caption}</caption>
+          <thead>
+            <tr>
+              {guide.separation.tableHead.map((head) => (
+                <th scope="col">{head}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {guide.separation.tableRows.map((row) => (
+              <tr>
+                <th scope="row">{row[0]}</th>
+                <td>{row[1]}</td>
+                <td>{row[2]}</td>
+                <td>{row[3]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ReviewPath />
+      <p class="fine-print">{guide.separation.risk}</p>
+    </div>
+
+    <div class="landing-block">
+      <h3>{guide.sample.title}</h3>
+      <p>{guide.sample.summary}</p>
+      <div class="actions">
+        <a class="button primary" href={guide.sample.primary.href}>
+          {guide.sample.primary.label} <span aria-hidden="true">&#8599;</span>
+        </a>
+        <a class="text-link" href={guide.sample.secondary.href}>
+          {guide.sample.secondary.label} <span aria-hidden="true">&#8599;</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section
+    id={reference.id}
+    class="section landing-reference"
+    aria-labelledby="reference-title"
+  >
+    <div class="section-heading">
+      <p class="eyebrow">{reference.eyebrow}</p>
+      <h2 id="reference-title">{reference.title}</h2>
+      <p>{reference.summary}</p>
+    </div>
+    <div class="landing-reference-list">
+      {reference.entries.map((entry) => (
+        <details class="landing-details">
+          <summary>
+            <h3>
+              {entry.term}
+              <span aria-hidden="true">+</span>
+            </h3>
+          </summary>
+          <dl class="landing-definition">
+            <dt>In operation</dt>
+            <dd>{entry.meaning}</dd>
+            <dt>Example</dt>
+            <dd>{entry.example}</dd>
+            <dt>Does not prove</dt>
+            <dd>{entry.limit}</dd>
+          </dl>
+          <a class="text-link" href={entry.link.href}>
+            {entry.link.label} <span aria-hidden="true">&#8594;</span>
+          </a>
+        </details>
+      ))}
+    </div>
+  </section>
+
+  <section
+    id={comparison.id}
+    class="section landing-comparison"
+    aria-labelledby="comparison-title"
+  >
+    <div class="section-heading">
+      <p class="eyebrow">{comparison.eyebrow}</p>
+      <h2 id="comparison-title">{comparison.title}</h2>
+      <p>{comparison.summary}</p>
+    </div>
+    <div class="landing-block landing-block-wide">
+      <div
+        class="landing-table-wrap"
+        role="region"
+        aria-labelledby="migration-comparison-caption"
+        tabindex="0"
+      >
+        <table class="landing-table">
+          <caption id="migration-comparison-caption">
+            {comparison.caption}
+          </caption>
+          <thead>
+            <tr>
+              {comparison.tableHead.map((head) => (
+                <th scope="col">{head}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {comparison.tableRows.map((row) => (
+              <tr>
+                <th scope="row">{row[0]}</th>
+                <td>{row[1]}</td>
+                <td>{row[2]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="landing-block">
+      <h3>{comparison.adequacy.title}</h3>
+      <p>{comparison.adequacy.summary}</p>
+      <ul class="landing-list">
+        {comparison.adequacy.points.map((point) => (
+          <li>{point}</li>
+        ))}
+      </ul>
+    </div>
+    <div class="landing-block landing-block-wide">
+      <h3>{comparison.atheros.title}</h3>
+      <p>{comparison.atheros.summary}</p>
+      <div
+        class="landing-table-wrap"
+        role="region"
+        aria-labelledby="atheros-comparison-caption"
+        tabindex="0"
+      >
+        <table class="landing-table">
+          <caption id="atheros-comparison-caption">
+            {comparison.atheros.caption}
+          </caption>
+          <thead>
+            <tr>
+              {comparison.atheros.tableHead.map((head) => (
+                <th scope="col">{head}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {comparison.atheros.tableRows.map((row) => (
+              <tr>
+                <th scope="row">{row[0]}</th>
+                <td>{row[1]}</td>
+                <td>{row[2]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="landing-block">
+      <h3>{comparison.notes.title}</h3>
+      <details class="landing-details">
+        <summary>
+          {comparison.notes.detailLabel}
+          <span aria-hidden="true">+</span>
+        </summary>
+        <p>{comparison.notes.summary}</p>
+        {comparison.notes.items.map((item) => (
+          <p>
+            <a class="text-link" href={item.href}>
+              {item.label} <span aria-hidden="true">&#8599;</span>
+            </a>
+          </p>
+        ))}
+        <p class="fine-print">{comparison.notes.close}</p>
+      </details>
+      <div class="actions">
+        <a class="button primary" href={comparison.cta.href}>
+          {comparison.cta.label} <span aria-hidden="true">&#8599;</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section
+    id={benchmark.id}
+    class="section landing-benchmark"
+    aria-labelledby="benchmark-title"
+  >
+    <div class="section-heading">
+      <p class="eyebrow">{benchmark.eyebrow}</p>
+      <h2 id="benchmark-title">{benchmark.title}</h2>
+      <p>{benchmark.summary}</p>
+    </div>
+    <div class="landing-block landing-block-wide">
+      <h3>{benchmark.modes.title}</h3>
+      <p>{benchmark.modes.summary}</p>
+      <div
+        class="landing-table-wrap"
+        role="region"
+        aria-labelledby="search-modes-caption"
+        tabindex="0"
+      >
+        <table class="landing-table">
+          <caption id="search-modes-caption">{benchmark.modes.caption}</caption>
+          <thead>
+            <tr>
+              {benchmark.modes.tableHead.map((head) => (
+                <th scope="col">{head}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {benchmark.modes.tableRows.map((row) => (
+              <tr>
+                <th scope="row">{row[0]}</th>
+                <td>{row[1]}</td>
+                <td>{row[2]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="landing-block">
+      <h3>{benchmark.protocol.title}</h3>
+      <p>{benchmark.protocol.summary}</p>
+      <details class="landing-details">
+        <summary>
+          {benchmark.protocol.detailLabel}
+          <span aria-hidden="true">+</span>
+        </summary>
+        <ul class="landing-list">
+          {benchmark.protocol.points.map((point) => (
+            <li>{point}</li>
+          ))}
+        </ul>
+      </details>
+    </div>
+    <div class="landing-block">
+      <h3>{benchmark.status.title}</h3>
+      <ul class="landing-list">
+        {benchmark.status.points.map((point) => (
+          <li>{point}</li>
+        ))}
+      </ul>
+      <div class="actions">
+        <a class="text-link" href={benchmark.status.sample.href}>
+          {benchmark.status.sample.label}{' '}
+          <span aria-hidden="true">&#8599;</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
   <section
     id="approach"
     class="section landing-approach"
@@ -186,6 +547,18 @@ import '../styles/landing.css';
       </details>
       <details>
         <summary>
+          Does Schema Migrator fix schema drift?
+          <span aria-hidden="true">+</span>
+        </summary>
+        <p>
+          No. The drift check reports differences between the structure your SQL
+          files expect and the structure the live PostgreSQL catalog reports,
+          for a reviewed correction. Reading the catalog needs a target
+          connection; the file checks do not.
+        </p>
+      </details>
+      <details>
+        <summary>
           Does the sample change anything?<span aria-hidden="true">+</span>
         </summary>
         <p>
@@ -226,6 +599,8 @@ import '../styles/landing.css';
     { rootMargin: '-20% 0px -50% 0px' },
   );
   document
-    .querySelectorAll('#top, #products, #approach, #faq, #contact')
+    .querySelectorAll(
+      '#top, #products, #approach, #faq, #contact, #postgres-migration-review, #technical-reference, #workflow-comparison, #search-benchmark',
+    )
     .forEach((section) => activeSections.observe(section));
 </script>

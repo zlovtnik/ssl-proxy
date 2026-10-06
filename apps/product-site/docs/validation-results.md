@@ -6,12 +6,51 @@ Local evaluation on October 5, 2026. See the
 
 ## Completed checks
 
+### Homepage technical sections
+
+- `npm run build`: five static pages, zero errors, warnings, or hints, with the
+  four new homepage sections rendered from `homeSections`.
+- `npm run test:all-browsers`: 87 checks passed, 29 each in Chromium, Firefox,
+  and WebKit. `npm test` alone passes the same 29 in Chromium, including a new
+  homepage check that
+  asserts the modelled title, description, single H1, one heading per section,
+  both product capability headings, the four call-to-action destinations, the
+  benchmark status statement, and the absence of structured data on the other
+  four routes.
+- Identity markup is limited to `Organization` and `WebSite`, derived from
+  `Astro.site`: a production build names `https://rclabs.uk/` and the default
+  build keeps localhost. No logo, `sameAs`, `SoftwareApplication`, FAQ, or HowTo
+  markup is published, because none of it is verified here.
+- The rendered-text walk, axe, target-size, and tab-traversal checks cover the
+  new sections with every reference disclosure open, in both themes. The
+  homepage stays inside the 60-press tab-traversal budget.
+- Reflow defect found and fixed in that run: at 320px with 200% root text, WCAG
+  text-spacing overrides, and the reader's enlarged size, the fifth FAQ question
+  pushed the page one pixel past the viewport because the rotated disclosure
+  marker painted outside its row. Disclosure summaries now reserve 1rem on the
+  right.
+- Reflow defect found and fixed in a follow-up pass: `overflow-wrap: anywhere`
+  on table cells let the auto table layout shrink columns below word width, so
+  labels broke mid-word at 375px (`Stag e`, `Valid ation`, `Executio n`). Tables
+  now wrap whole words inside `.landing-table-wrap`, a caption-named and
+  Tab-reachable scroll region. Measured at 1440, 768, 375, and 320 CSS pixels:
+  no cell needs a mid-word break, only hyphenated compounds break at their
+  hyphen, the document never scrolls horizontally, and the widest table scrolls
+  110px inside its own region at 320px.
+- `PUBLIC_SITE_URL=https://rclabs.uk npm run build` confirmed canonical,
+  `og:url`, sitemap, and JSON-LD URLs on the public origin, with no `noindex`.
+  The default local build keeps localhost metadata and `noindex`.
+- `npm run review`: no browser script errors on any route; worst sample 656ms
+  largest contentful paint, 0.009 cumulative layout shift, and 64ms observed
+  event duration against the local targets below.
+
 ### Content model, composition, and rendered evidence
 
 - `npm run build`: five static pages, zero errors, warnings, or hints.
-- `CFFIXED_USER_HOME=<fresh directory> npm run test:all-browsers`: 84 checks
-  passed on October 5, 2026, 28 each in Chromium, Firefox, and WebKit. Earlier
-  rounds recorded 26 Chromium checks and 52 Chromium/WebKit checks.
+- `CFFIXED_USER_HOME=<fresh directory> npm run test:all-browsers`: 87 checks
+  passed on October 5, 2026, 29 each in Chromium, Firefox, and WebKit. Earlier
+  rounds recorded 84 checks (28 each), 26 Chromium checks, and 52
+  Chromium/WebKit checks.
 - Firefox needs `CFFIXED_USER_HOME` on this host: macOS 27 denies terminal-launched
   processes access to `~/Library/Application Support/Firefox`, so Playwright's
   bundled Firefox 155.0 exits at launch with "Could not find profile folder"
@@ -60,8 +99,8 @@ Local evaluation on October 5, 2026. See the
   links, and no external network requests.
 - `python3 scripts/check-docs.py`: documentation inventory, cross-references,
   and repository delivery policy passed.
-- Chromium, Firefox, and WebKit now run the same 28 checks, so the run above is
-  the current cross-engine evidence. Screen readers, disabled-participant
+- Chromium, Firefox, and WebKit run the same 29 checks, so the run above is the
+  current cross-engine evidence. Screen readers, disabled-participant
   sessions, true browser zoom, forced-colors rendering, and complete manual
   criterion evaluation remain pending.
 
@@ -161,15 +200,16 @@ by 812 with 4x CPU slowdown, 150ms network latency, and 1.6Mbps download.
 
 | Metric                             | Worst observed sample | Target                      |
 | ---------------------------------- | --------------------- | --------------------------- |
-| Largest Contentful Paint           | 620ms                 | <= 2500ms                   |
-| Cumulative Layout Shift            | 0.051 (rounded up)    | <= 0.1                      |
-| Observed event duration, lab proxy | 56ms                  | <= 200ms interaction target |
+| Largest Contentful Paint           | 656ms                 | <= 2500ms                   |
+| Cumulative Layout Shift            | 0.009 (rounded up)    | <= 0.1                      |
+| Observed event duration, lab proxy | 64ms                  | <= 200ms interaction target |
 
 The same run measured 0.157 to 0.189 cumulative layout shift on `/` and
 `/schema-migrator/` before the fix: the two Latin variable faces arrived after
 first paint, and the swap reflowed the hero and header. `Layout.astro` now
-preloads them through build-time asset URLs, and cold-load layout shift measures
-0.000 on all five routes. No browser script errors were recorded. Event duration
+preloads them through build-time asset URLs. The current run measures 0.000
+cumulative layout shift on nine of the ten route/profile samples, with
+`/schema-migrator/` mobile at 0.008. No browser script errors were recorded. Event duration
 is not field Interaction to Next Paint (INP). These single local samples are not
 production field evidence or a performance guarantee. JSON and PNG outputs are in
 the ignored `review-artifacts/` directory; Playwright reports/traces, dependencies,

@@ -1,0 +1,117 @@
+---
+// Homepage-only figure: the offline review path and the separate path that
+// reads a live PostgreSQL catalog. Shared diagram styling lives in site.css.
+const offline = [
+  { x: 10, label: 'SQL files', note: 'and ordering' },
+  { x: 240, label: 'Discovery', note: 'apply order' },
+  { x: 470, label: 'Validation', note: 'headers, parse' },
+  { x: 700, label: 'Dry-run review', note: 'shortened SQL' },
+];
+const target = [
+  { x: 10, label: 'Live PostgreSQL', note: 'catalog' },
+  { x: 300, label: 'Catalog drift', note: 'check' },
+  { x: 560, label: 'Findings', note: 'for review' },
+];
+const offlineArrows = [180, 410, 640];
+const targetArrows = [
+  { from: 230, to: 300 },
+  { from: 520, to: 560 },
+];
+---
+
+<figure class="diagram migrator landing-path">
+  <svg viewBox="0 0 900 300" role="img" aria-labelledby="path-title path-desc">
+    <title id="path-title">Offline review path and target inspection path</title>
+    <desc id="path-desc">
+      Offline path: SQL files move through discovery, validation, then a dry-run
+      review, with no database connection. Target inspection path: the live
+      PostgreSQL catalog and the expected definitions in the SQL files are
+      compared by a catalog drift check that reports findings for review. This
+      diagram shows a review sequence, not an automatic execution.
+    </desc>
+
+    <text class="diagram-label" x="10" y="34">
+      OFFLINE / NO TARGET
+    </text>
+    {offlineArrows.map((edge) => (
+      <g class="diagram-arrow">
+        <path
+          d={`M${edge + 4} 95 H${edge + 44}`}
+          fill="none"
+          stroke-width="2"
+        />
+        <path
+          d={`M${edge + 46} 89 L${edge + 54} 95 L${edge + 46} 101`}
+          fill="none"
+          stroke-width="2"
+        />
+      </g>
+    ))}
+    {offline.map((box) => (
+      <g>
+        <rect x={box.x} y="60" width="170" height="70" rx="8" />
+        <g text-anchor="middle">
+          <text x={box.x + 85} y="90">
+            {box.label}
+          </text>
+          <text x={box.x + 85} y="112">
+            {box.note}
+          </text>
+        </g>
+      </g>
+    ))}
+
+    <path
+      class="diagram-dash"
+      d="M95 130 V170 H410 V204"
+      fill="none"
+      stroke-width="2"
+    />
+    <path
+      class="diagram-dash"
+      d="M403 196 L410 208 L417 196"
+      fill="none"
+      stroke-width="2"
+    />
+    <text class="diagram-label" x="250" y="162" text-anchor="middle">
+      expected definitions
+    </text>
+
+    <text class="diagram-label" x="10" y="196">
+      TARGET INSPECTION / CONNECTION REQUIRED
+    </text>
+    {targetArrows.map((arrow) => (
+      <g class="diagram-arrow">
+        <path
+          d={`M${arrow.from + 4} 245 H${arrow.to - 14}`}
+          fill="none"
+          stroke-width="2"
+        />
+        <path
+          d={`M${arrow.to - 12} 239 L${arrow.to - 4} 245 L${arrow.to - 12} 251`}
+          fill="none"
+          stroke-width="2"
+        />
+      </g>
+    ))}
+    {target.map((box) => (
+      <g>
+        <rect x={box.x} y="210" width="220" height="70" rx="8" />
+        <g text-anchor="middle">
+          <text x={box.x + 110} y="240">
+            {box.label}
+          </text>
+          <text x={box.x + 110} y="262">
+            {box.note}
+          </text>
+        </g>
+      </g>
+    ))}
+  </svg>
+  <figcaption>
+    SQL files move through discovery, validation, and dry-run review without a
+    target. Reading the live catalog is a separate path that needs a connection,
+    and it reports differences instead of correcting them. The public
+    demonstration executes no SQL.
+  </figcaption>
+</figure>

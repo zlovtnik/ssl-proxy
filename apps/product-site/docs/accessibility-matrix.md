@@ -26,7 +26,7 @@ evidence alone is never a passed conformance result.
 | 1.2.7 Extended Audio Description                | AAA   | N/A: no video                                                                                                                                                                               |
 | 1.2.8 Media Alternative (Prerecorded)           | AAA   | N/A: no time-based media                                                                                                                                                                    |
 | 1.2.9 Audio-only (Live)                         | AAA   | N/A: no live audio                                                                                                                                                                          |
-| 1.3.1 Info and Relationships                    | A     | AUTO: axe; CODE: headings, labels, lists, definitions, groups; MANUAL: assistive-technology structure                                                                                       |
+| 1.3.1 Info and Relationships                    | A     | AUTO: axe; CODE: headings, labels, lists, definitions, table captions and scope, groups; MANUAL: assistive-technology structure                                                             |
 | 1.3.2 Meaningful Sequence                       | A     | CODE: document order matches reading order; MANUAL: CSS-off and screen reader                                                                                                               |
 | 1.3.3 Sensory Characteristics                   | A     | CODE: named steps, labels, text captions; MANUAL: instructions review                                                                                                                       |
 | 1.3.4 Orientation                               | AA    | CODE: no orientation lock; MANUAL: portrait/landscape devices                                                                                                                               |
@@ -63,7 +63,7 @@ evidence alone is never a passed conformance result.
 | 2.4.3 Focus Order                               | A     | CODE: source order, no positive tabindex; MANUAL: whole-site focus order                                                                                                                    |
 | 2.4.4 Link Purpose (In Context)                 | A     | AUTO: axe; CODE: descriptive links; MANUAL: purpose review                                                                                                                                  |
 | 2.4.5 Multiple Ways                             | AA    | CODE: navigation/footer and hub product links; MANUAL: route discoverability                                                                                                                |
-| 2.4.6 Headings and Labels                       | AA    | AUTO: one h1, axe; MANUAL: heading/label clarity                                                                                                                                            |
+| 2.4.6 Headings and Labels                       | AA    | AUTO: one h1, axe; CODE: modelled section titles and capability-led product headings; MANUAL: heading/label clarity                                                                         |
 | 2.4.7 Focus Visible                             | AA    | AUTO: every tabbable control on every route shows a >= 2px outline at >= 3:1 in both themes; MANUAL: reading the ring while navigating                                                      |
 | 2.4.8 Location                                  | AAA   | CODE: product breadcrumbs, current navigation, route headings; MANUAL: location clarity                                                                                                     |
 | 2.4.9 Link Purpose (Link Only)                  | AAA   | CODE: named product/action links; MANUAL: isolated link list                                                                                                                                |
@@ -128,6 +128,19 @@ selectors, a result-count status, and four user-controlled migration steps in
 [browser tests](../tests/site.spec.ts) cover initial selection, filtering, empty
 results, keyboard selection, and both themes at 320 through 1440 CSS pixels.
 Screen-reader and participant evaluation remain pending.
+
+The homepage technical sections add four model-driven sections built from
+`homeSections`: a migration review guide, a six-term reference, two workflow
+comparisons, and a Search benchmark. They introduce data tables with captions
+and scoped headers, native disclosures, and an SVG review-path diagram with a
+title, description, and visible caption. Each data table sits inside a
+`role="region"` scroll wrapper named by its caption and reachable with Tab, so
+at 320px the table scrolls inside its own region with whole words instead of
+scrolling the page. The browser tests assert the homepage
+title, description, single H1, `Organization`/`WebSite` identity markup, one
+heading per section, and the four calls to action, alongside the existing axe,
+contrast, reflow, and tab-traversal checks in both themes. Walkthroughs of the
+tables and disclosures with a screen reader remain pending.
 
 The latest layout revision adds persistent navigation, a native mobile menu,
 in-page product sample links, and equal-height preview panels. Inactive panels

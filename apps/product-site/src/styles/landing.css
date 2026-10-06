@@ -17,6 +17,12 @@
 .landing-approach {
   scroll-margin-top: 8rem;
 }
+.landing-guide,
+.landing-reference,
+.landing-comparison,
+.landing-benchmark {
+  scroll-margin-top: 8rem;
+}
 .landing-product-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -46,7 +52,7 @@
   font-size: 0.875rem;
   margin: 0;
 }
-.landing-product-copy h3 {
+.landing-product-copy h2 {
   font-size: 1.8rem;
   margin: 0 0 1rem;
   font-weight: 550;
@@ -118,7 +124,7 @@
   color: var(--accent, var(--muted));
   padding-top: 0.3rem;
 }
-.landing-capabilities h4 {
+.landing-capabilities h3 {
   font-size: 0.9375rem;
   letter-spacing: -0.02em;
   font-weight: 600;
@@ -474,6 +480,162 @@
   background: var(--action);
   display: inline-block;
 }
+/* Homepage technical sections. Prose keeps the reading measure; tables and the
+   review-path figure take the full shell width. */
+.landing-block {
+  margin-top: 3rem;
+  max-width: var(--reading-width);
+}
+.landing-block-wide {
+  max-width: none;
+}
+.landing-block-wide > h3 {
+  max-width: var(--reading-width);
+}
+.landing-points {
+  list-style: none;
+  margin: 1.5rem 0;
+  padding: 0;
+}
+.landing-points li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border-top: 1px solid var(--divider);
+  padding: 0.9rem 0;
+}
+.landing-points strong {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.landing-points span {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.landing-list {
+  margin: 1.25rem 0;
+  padding-left: 1.15rem;
+  max-width: var(--reading-width);
+}
+.landing-list li {
+  font-size: 0.875rem;
+  color: var(--muted);
+  margin: 0.6rem 0;
+}
+.landing-command {
+  font-family: 'JetBrains Mono Variable', monospace;
+  font-size: 0.875rem;
+  color: var(--accent, var(--muted));
+  margin: 1.5rem 0 0.5rem;
+}
+/* The marker rotates 45deg when open, which widens its painted box past the
+   right edge of the row; the padding keeps that paint inside narrow viewports. */
+.landing-faq-list summary,
+.landing-details summary {
+  padding-right: 1rem;
+}
+.landing-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  list-style: none;
+}
+.landing-details summary::-webkit-details-marker {
+  display: none;
+}
+.landing-details summary > span,
+.landing-details summary > h3 > span {
+  font-size: 1.3rem;
+  font-weight: 400;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.landing-details summary > h3 {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+.landing-details[open] summary > span,
+.landing-details[open] summary > h3 > span {
+  transform: rotate(45deg);
+}
+.landing-details > ul,
+.landing-details > dl,
+.landing-details > pre,
+.landing-details > .landing-command {
+  padding-inline: 0.5rem;
+}
+.landing-reference-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 3rem;
+}
+.landing-definition {
+  margin: 0;
+}
+.landing-definition dt {
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-top: 1.1rem;
+}
+.landing-definition dd {
+  margin: 0.35rem 0 1rem;
+  font-size: 0.875rem;
+  color: var(--muted);
+  max-width: var(--reading-width);
+}
+.landing-table-wrap {
+  overflow-x: auto;
+  margin-top: 1.5rem;
+}
+.landing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+.landing-table caption {
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.875rem;
+  padding-bottom: 0.75rem;
+}
+.landing-table th,
+.landing-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.9rem 0.75rem;
+  border-bottom: 1px solid var(--divider);
+  /* Words stay intact so the column keeps its natural width and the wrapper
+     scrolls instead of breaking text mid-word. */
+  overflow-wrap: break-word;
+}
+.landing-table thead th {
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-bottom-color: var(--rule);
+}
+.landing-table tbody th {
+  font-weight: 600;
+}
+.landing-table td {
+  color: var(--muted);
+}
+.landing-table tbody tr:last-child th,
+.landing-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.landing-path .diagram-dash {
+  stroke: var(--rule);
+}
 @media (prefers-reduced-motion: no-preference) {
   html {
     scroll-behavior: smooth;
@@ -483,6 +645,9 @@
   .landing-product-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+  .landing-reference-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .landing-principles {
     gap: 2rem;
   }
@@ -490,6 +655,16 @@
 @media (max-width: 600px) {
   .landing-product {
     padding: 1.5rem;
+  }
+  .landing-block {
+    margin-top: 2rem;
+  }
+  .landing-table {
+    font-size: 0.875rem;
+  }
+  .landing-table th,
+  .landing-table td {
+    padding: 0.7rem 0.4rem;
   }
   .landing-principles {
     grid-template-columns: minmax(0, 1fr);

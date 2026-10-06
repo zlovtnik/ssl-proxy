@@ -34,6 +34,28 @@ Product pages follow one order: hero with sample, three-step workflow, technical
 and buyer value, supporting capability evidence, glossary, contact. The homepage
 carries the shared FAQ.
 
+## Homepage order
+
+The homepage runs hero, products, then four technical sections in this order,
+followed by the shared principles, FAQ, and contact:
+
+| Anchor                       | Section                                       | Model key                 |
+| ---------------------------- | --------------------------------------------- | ------------------------- |
+| `#postgres-migration-review` | Review PostgreSQL migrations before execution | `homeSections.guide`      |
+| `#technical-reference`       | Six technical terms and what they prove       | `homeSections.reference`  |
+| `#workflow-comparison`       | Schema Migrator versus manually reviewed SQL  | `homeSections.comparison` |
+| `#search-benchmark`          | Term, vector and hybrid search protocol       | `homeSections.benchmark`  |
+
+The homepage title is `Network Evidence Search & PostgreSQL Migrations` and its
+single H1 is `Network evidence search and PostgreSQL migration review`; both ship
+from `home`. Each product card heading is a capability statement that starts with
+the product name, so the two tools stay distinguishable in the outline.
+
+Each technical section keeps its summary short and puts commands, protocols, and
+references inside a native `details` disclosure. The guide separates the offline
+file checks from the target-connected catalog check, and repeats the two
+load-bearing caveats beside the reference entries they qualify.
+
 ## Audience propositions
 
 Both audience readings appear openly on each product page. They are not hidden
@@ -56,6 +78,12 @@ establish a moat.
 Numeric improvement requires a documented baseline, workload, environment, and
 measurement method. Until those exist, no figure appears on the public site.
 Supporting evidence is traced in [content evidence](content-evidence.md).
+
+The Search benchmark section follows that rule directly: it publishes the
+dataset, labelled query set, retrieval modes, and metrics to be computed, plus a
+status statement that measurement has not run. Synthetic examples are never
+reported as performance evidence, and no drop-in compatibility or performance
+advantage is claimed against another tool.
 
 ## Preserved caveats
 
@@ -95,7 +123,9 @@ under that heading, so one block never repeats the same words.
 
 ## Adding copy
 
-1. Add or change the entry in `src/data/products.ts`.
+1. Add or change the entry in `src/data/products.ts`. Homepage sections live in
+   `homeSections`; route copy lives on `home`, `products`, `contact`, and the
+   section objects.
 2. Keep the synthetic label visible on anything the reader could mistake for
    real data.
 3. Add or update the corresponding capability row in
