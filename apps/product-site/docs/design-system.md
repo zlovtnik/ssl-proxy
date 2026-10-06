@@ -77,6 +77,8 @@ the prose measure.
 - Hero: five columns of copy, seven of proof at desktop. Stacks below 1024px.
 - Depth comes from differentiated surfaces, restrained shadows, and a faint
   violet glow behind the hero proof panel.
+- The reading controls dock to the bottom right inside a reserved 96px strip,
+  so the collapsed dock never covers the footer or a control scrolled into view.
 - The header stays on one row at every width: the wordmark descriptor is dropped
   below 1024px before the navigation would wrap.
 
@@ -139,7 +141,10 @@ narrow widths with enlarged text.
 Theme, text size, line width, text spacing, and movement are reader settings
 that persist in local storage with a working fallback. Theme changes apply
 immediately so text never crosses an intermediate contrast state. All settings
-are offered in the same position on every route. Settings are progressive
+are offered in the same position on every route: one compact row docked to the
+bottom right of the viewport, opening upward into a two-column card that stays
+inside the viewport at every reader text size. Escape or a press outside closes
+the card and Escape returns focus to its toggle. Settings are progressive
 enhancement: browser zoom, text sizing, and custom styles keep working without
 JavaScript.
 

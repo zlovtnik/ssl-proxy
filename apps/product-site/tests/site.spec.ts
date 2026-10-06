@@ -716,8 +716,10 @@ test('rendered text and control boundaries meet the documented targets', async (
     await page.addStyleTag({
       content: '* { transition: none !important; animation: none !important; }',
     });
+    // The reading controls dock over the page, so they open last: the
+    // in-page interactions below must not sit underneath them.
     await page
-      .locator('details')
+      .locator('details:not(#reading-controls)')
       .evaluateAll((elements) =>
         elements.forEach(
           (element) => ((element as HTMLDetailsElement).open = true),
@@ -729,6 +731,9 @@ test('rendered text and control boundaries meet the documented targets', async (
         .click();
     if (route === '/schema-migrator/')
       await page.getByRole('button', { name: '4. Inspect run record' }).click();
+    await page
+      .locator('#reading-controls')
+      .evaluate((element) => ((element as HTMLDetailsElement).open = true));
     for (const theme of ['dark', 'light']) {
       await page.evaluate(
         (value) => (document.documentElement.dataset.theme = value),
@@ -862,6 +867,8 @@ test('all five routes share one system of colours, header geometry, type and con
         ].map((name) => `${name}:${root.getPropertyValue(name).trim()}`),
         header: `${Math.round(header.width)}x${Math.round(header.height)}`,
         readingTop: Math.round(reading.top),
+        // Distance from the viewport bottom, so a docked bar reports one value.
+        readingBottomGap: Math.round(innerHeight - reading.bottom),
         h1: `${h1.fontSize}/${h1.fontWeight}/${h1.fontFamily}`,
         body: getComputedStyle(document.body).fontFamily,
         controlRadius: control.borderRadius,
@@ -875,11 +882,63 @@ test('all five routes share one system of colours, header geometry, type and con
   };
   for (const theme of ['dark', 'light']) {
     const reference = await snapshot(routes[0], theme);
+    // The reading controls are docked inside the viewport bottom, and every
+    // route docks them identically.
+    expect(
+      reference.readingBottomGap,
+      `${theme} reading dock`,
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      reference.readingBottomGap,
+      `${theme} reading dock`,
+    ).toBeLessThanOrEqual(24);
     for (const route of routes.slice(1))
       expect(await snapshot(route, theme), `${route} ${theme}`).toEqual(
         reference,
       );
   }
+});
+
+test('reading controls dock below the footer, open inside the viewport, and close on Escape', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const bar = page.locator('.reading-bar');
+  const summary = page.locator('#reading-controls > summary');
+  const controls = page.locator('#reading-controls');
+  const footer = page.locator('.site-footer');
+  const bottomGap = async () => {
+    const box = await bar.boundingBox();
+    return page.viewportSize()!.height - (box!.y + box!.height);
+  };
+  // Collapsed, the reserved page padding keeps the dock clear of the footer,
+  // at the reader's size as well as the default.
+  for (const size of ['standard', 'extra']) {
+    await summary.click();
+    await page.locator('#setting-size').selectOption(size);
+    await summary.click();
+    await expect(controls).toHaveJSProperty('open', false);
+    expect(await bottomGap(), `${size} dock bottom`).toBeLessThanOrEqual(24);
+    await page.evaluate(() =>
+      window.scrollTo(0, document.documentElement.scrollHeight),
+    );
+    await expect
+      .poll(async () => {
+        const dock = await bar.boundingBox();
+        const footerBox = await footer.boundingBox();
+        return dock!.y - (footerBox!.y + footerBox!.height);
+      }, `${size} dock below the footer`)
+      .toBeGreaterThanOrEqual(0);
+  }
+  // Open, the whole card stays inside the viewport and grows upward.
+  await summary.click();
+  await expect(controls).toHaveJSProperty('open', true);
+  expect(await bottomGap()).toBeLessThanOrEqual(24);
+  expect((await bar.boundingBox())!.y).toBeGreaterThanOrEqual(0);
+  await page.locator('#setting-theme').focus();
+  await page.keyboard.press('Escape');
+  await expect(controls).toHaveJSProperty('open', false);
+  await expect(summary).toBeFocused();
 });
 
 test('hero calls to action keep their documented destinations', async ({

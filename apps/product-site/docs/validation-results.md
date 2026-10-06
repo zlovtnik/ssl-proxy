@@ -1,10 +1,30 @@
 # Local validation results
 
-Local evaluation on October 5, 2026. See the
+Local evaluation on October 5, 2026, with the reading-controls revision of
+October 6, 2026. See the
 [criterion matrix](accessibility-matrix.md) and
 [release checklist](release-checklist.md). No AAA conformance claim is made.
 
 ## Completed checks
+
+### Reading controls docked to the page bottom
+
+- The reading and display controls moved out of the band above `main` into a
+  compact card docked to the bottom right of the viewport: one 44px row when
+  closed, opening upward into a two-column panel. `body` padding and root
+  `scroll-padding-bottom` reserve 96px above the footer. Escape or a press
+  outside closes the card, and Escape returns focus to its toggle.
+- `npm run build`: five static pages, zero errors, warnings, or hints.
+- `npm test`: 30 Chromium checks passed on October 6, 2026, including new dock
+  checks for viewport containment when open, footer clearance when collapsed at
+  standard and enlarged text, and Escape with focus return. The rendered-text
+  and control walk opens the dock after the in-page interactions, because the
+  open card covers the page content underneath it.
+- `npm run review`: no browser script errors on any route; worst samples 592ms
+  largest contentful paint, 0.011 cumulative layout shift, and 176ms observed
+  event duration (opening the dock on the homepage, desktop profile).
+- `/accessibility/` now points readers to the controls at the bottom of the
+  page. WebKit and Firefox were not rerun in this revision.
 
 ### Homepage technical sections
 

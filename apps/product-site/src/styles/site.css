@@ -20,6 +20,8 @@
   --section-space: 6rem;
   --control-radius: 6px;
   --panel-radius: 12px;
+  /* Reserved by the docked reading controls at the bottom of the viewport. */
+  scroll-padding-bottom: 6rem;
   font-family: 'Inter Variable', sans-serif;
   font-size: 100%;
   background: var(--bg);
@@ -49,6 +51,7 @@ body {
   font-size: 1rem;
   color: var(--text);
   overflow-wrap: anywhere;
+  padding-bottom: 6rem;
 }
 a {
   color: inherit;
@@ -584,32 +587,84 @@ details > section {
 .skip-link:focus {
   top: 1rem;
 }
+/* The reading controls dock to the bottom right of the viewport: one compact
+   row when closed, a two-column card that grows upward when open. Page and
+   scroll padding keep the dock clear of the footer and of focused controls. */
 .reading-bar {
-  padding-top: 0.6rem;
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right, 0px));
+  bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  z-index: 50;
+  width: min(24rem, calc(100% - 2rem));
   color: var(--muted);
   font-size: 0.875rem;
 }
 .reading-bar > details {
-  border: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--panel-radius);
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.3);
 }
 .reading-bar summary {
-  width: fit-content;
-  min-width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 44px;
+  padding: 0.65rem 0.9rem;
+  color: var(--text);
+  font-weight: 600;
+  list-style: none;
+}
+.reading-bar summary::-webkit-details-marker {
+  display: none;
+}
+.reading-summary-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.reading-bar summary > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.reading-bar > details[open] summary {
+  border-bottom: 1px solid var(--divider);
+}
+.reading-bar > details[open] summary > svg:last-child {
+  transform: rotate(45deg);
+}
+.reading-panel {
+  max-height: calc(100vh - 9rem);
+  max-height: calc(100dvh - 9rem);
+  overflow-y: auto;
+  padding: 0.7rem 0.9rem 0.85rem;
 }
 .reading-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  padding-block: 1rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
   align-items: end;
 }
 .reading-options label {
   display: grid;
-  gap: 0.4rem;
-  min-width: 130px;
+  gap: 0.25rem;
+  line-height: 1.3;
+  min-width: 0;
 }
 .reading-options select {
   width: 100%;
+  font-size: 1rem;
+  padding: 0.5rem 1.9rem 0.5rem 0.6rem;
+}
+.reading-options button {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+.reading-panel p {
+  max-width: none;
+  line-height: 1.5;
+  margin: 0.7rem 0 0;
 }
 .demo-panel {
   border: 1px solid var(--rule);
@@ -871,6 +926,9 @@ select:disabled {
 @media (max-width: 480px) {
   .site-header nav {
     gap: 0.4rem 1rem;
+  }
+  .reading-options {
+    grid-template-columns: minmax(0, 1fr);
   }
   h1 {
     font-size: 2.45rem;

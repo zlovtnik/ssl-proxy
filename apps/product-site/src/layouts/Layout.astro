@@ -7,7 +7,7 @@ import interLatin from '@fontsource-variable/inter/files/inter-latin-wght-normal
 import monoLatin from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 import '../styles/site.css';
 import { contact } from '../data/products';
-import { ArrowUpRight, Menu } from '@lucide/astro';
+import { ArrowUpRight, Menu, Plus, SlidersHorizontal } from '@lucide/astro';
 interface Props {
   title: string;
   description: string;
@@ -149,66 +149,6 @@ const navigation = [
         </details>
       </header>
     </div>
-    <aside
-      class="shell reading-bar"
-      aria-label="Reading and display preferences"
-    >
-      <details id="reading-controls">
-        <summary>Reading &amp; display settings</summary>
-        <div class="reading-options">
-          <label>
-            Theme
-            <select id="setting-theme">
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
-            </select>
-          </label>
-          <label>
-            Text size
-            <select id="setting-size">
-              <option value="standard">Standard</option>
-              <option value="large">Large</option>
-              <option value="extra">Extra large</option>
-            </select>
-          </label>
-          <label>
-            Line width
-            <select id="setting-width">
-              <option value="standard">Standard</option>
-              <option value="narrow">Narrow</option>
-              <option value="wide">Wide</option>
-            </select>
-          </label>
-          <label>
-            Text spacing
-            <select id="setting-spacing">
-              <option value="standard">Standard</option>
-              <option value="comfortable">Comfortable</option>
-            </select>
-          </label>
-          <label>
-            Movement
-            <select id="setting-motion">
-              <option value="standard">Follow system</option>
-              <option value="reduced">Reduce movement</option>
-            </select>
-          </label>
-          <button id="reset-settings" type="button">
-            Reset settings
-          </button>
-        </div>
-        <p>
-          Settings stay in this browser when storage is available. Browser zoom
-          and your own styles also work.
-        </p>
-        <noscript>
-          <p>
-            Display controls need JavaScript. Your browser's zoom, text
-            settings, and custom styles remain available.
-          </p>
-        </noscript>
-      </details>
-    </aside>
     <main id="main" class="shell" tabindex="-1">
       <slot />
     </main>
@@ -222,6 +162,68 @@ const navigation = [
         <a href="/demo/">Contact &amp; demo</a>
       </nav>
     </footer>
+    <aside class="reading-bar" aria-label="Reading and display preferences">
+      <details id="reading-controls">
+        <summary>
+          <span class="reading-summary-label">
+            <SlidersHorizontal size={16} aria-hidden="true" />
+            Reading &amp; display settings
+          </span>
+          <Plus size={16} aria-hidden="true" />
+        </summary>
+        <div class="reading-panel">
+          <div class="reading-options">
+            <label>
+              Theme
+              <select id="setting-theme">
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+              </select>
+            </label>
+            <label>
+              Text size
+              <select id="setting-size">
+                <option value="standard">Standard</option>
+                <option value="large">Large</option>
+                <option value="extra">Extra large</option>
+              </select>
+            </label>
+            <label>
+              Line width
+              <select id="setting-width">
+                <option value="standard">Standard</option>
+                <option value="narrow">Narrow</option>
+                <option value="wide">Wide</option>
+              </select>
+            </label>
+            <label>
+              Text spacing
+              <select id="setting-spacing">
+                <option value="standard">Standard</option>
+                <option value="comfortable">Comfortable</option>
+              </select>
+            </label>
+            <label>
+              Movement
+              <select id="setting-motion">
+                <option value="standard">Follow system</option>
+                <option value="reduced">Reduce movement</option>
+              </select>
+            </label>
+            <button id="reset-settings" type="button">
+              Reset settings
+            </button>
+          </div>
+          <p>Saved in this browser when storage is available.</p>
+          <noscript>
+            <p>
+              Display controls need JavaScript. Your browser's zoom, text
+              settings, and custom styles remain available.
+            </p>
+          </noscript>
+        </div>
+      </details>
+    </aside>
     <script>
       const menu = document.querySelector<HTMLDetailsElement>('.mobile-menu');
       menu?.querySelectorAll('a').forEach((link) =>
@@ -264,6 +266,27 @@ const navigation = [
           }
           save();
         });
+      // The panel is docked to the viewport, so it closes like a popover: a
+      // press outside dismisses it, and Escape dismisses it and puts focus
+      // back on the toggle.
+      const readingControls = document.getElementById(
+        'reading-controls',
+      ) as HTMLDetailsElement;
+      const readingToggle = readingControls.querySelector('summary');
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || !readingControls.open) return;
+        readingControls.open = false;
+        readingToggle?.focus();
+      });
+      document.addEventListener('pointerdown', (event) => {
+        if (!readingControls.open) return;
+        if (
+          event.target instanceof Node &&
+          readingControls.contains(event.target)
+        )
+          return;
+        readingControls.open = false;
+      });
     </script>
   </body>
 </html>
