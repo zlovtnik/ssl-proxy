@@ -79,15 +79,17 @@ the reason each check passes are in
       and consumed by Cloudflare, and the zone-level Email Obfuscation setting
       lives outside this repository.
 - [ ] Confirm social preview compatibility on the selected sharing platforms.
-- [ ] Add reviewed desired state under repository [cyber-stack](../../../cyber-stack),
-      following its [instructions](../../../AGENTS.md), for the selected hosting
-      path. The selected path is Cloudflare Pages, which cyber-stack does not
-      currently describe.
+- [x] Keep the Pages build output in the reviewed repository configuration.
+      [`wrangler.jsonc`](../wrangler.jsonc) defines the Astro `dist` output;
+      Cloudflare's `rclabs` project is Git-connected to `zlovtnik/ssl-proxy`,
+      watches `apps/product-site/*`, and builds from `main`. Kubernetes desired
+      state remains under [cyber-stack](../../../cyber-stack).
 - [ ] Keep first-party production images pinned by digest and promotion reviewed.
-- [ ] Publish only through the reviewed Git/Argo CD path. The October 5, 2026
-      publications were approved direct uploads, recorded as an exception in
-      the [README](../README.md); moving Pages publication onto the reviewed
-      path is outstanding.
+- [x] Publish the public site through reviewed Git changes and Cloudflare
+      Pages automatic deployments. Branch `6d2aacc` produced a successful
+      preview on October 6, 2026. The October 5 direct uploads remain recorded
+      as exceptions in the [README](../README.md). Argo CD continues to manage
+      Kubernetes workloads separately.
 - [ ] Measure post-launch field LCP, INP, and CLS with a consent/privacy-reviewed
       measurement approach; no third-party tracking is included in this release.
 

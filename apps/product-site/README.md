@@ -62,32 +62,35 @@ is a raster export of the original SVG in `public/`.
 
 ## Publication
 
-The public site uses the existing Cloudflare Pages project `rclabs`, connected
-to `https://rclabs.uk` and `https://www.rclabs.uk`. The Search and Migrator
-operator frontends retain their separate Pages projects and subdomains.
+The public site uses the Cloudflare Pages project `rclabs`, connected to
+`https://rclabs.uk` and `https://www.rclabs.uk`. Like the separate Search and
+Migrator Pages projects, it is connected to `zlovtnik/ssl-proxy` and deploys
+automatically from `main`. Cloudflare watches `apps/product-site/*`, runs
+`npm run build` in `apps/product-site`, and uses the `dist` output declared in
+[`wrangler.jsonc`](wrangler.jsonc). Other repository changes do not trigger a
+public-site build.
 
 The default local metadata origin is localhost and indexing is disabled.
-The public origin is passed as `PUBLIC_SITE_URL`
-at build time. The configuration validates that it is an HTTP(S) origin.
+Cloudflare sets the production build's `PUBLIC_SITE_URL` to
+`https://rclabs.uk`; preview builds use the localhost default and remain
+`noindex`. The configuration validates that the value is an HTTP(S) origin.
 The sitemap, canonical URLs, social URLs, and robots response use that origin.
 Do not ship localhost metadata.
 
-After reviewing the Git source and running local tests, build the public output:
+After reviewing the Git source and running local tests, push a branch touching
+`apps/product-site/` and inspect its automatic Pages preview. Merge the
+reviewed change to `main` to publish automatically, then verify the live site.
+To reproduce the production build locally:
 
 ```sh
 PUBLIC_SITE_URL=https://rclabs.uk npm run build
-wrangler pages deploy dist --project-name rclabs --branch codex-product-site-preview
 ```
 
-Inspect the preview before publishing the same output with
-`wrangler pages deploy dist --project-name rclabs --branch main`.
-Direct production upload requires explicit approval. The October 5, 2026
-publications received that approval as exceptions to the reviewed Git delivery
-path. The current production deployment is
-`28901202-7e1e-4e99-b370-541aa9f26987` from source `2ea9f34`, deployed
-straight to production without preview inspection; the prior deployment
-`a016abbb-cdf6-4be6-89f2-1e6fc5307ad8` remains available for Cloudflare Pages
-rollback.
+Do not use a direct Wrangler upload for routine publication. The October 5,
+2026 direct uploads were approved exceptions before Git deployment was
+connected. Their production deployments
+`28901202-7e1e-4e99-b370-541aa9f26987` and
+`a016abbb-cdf6-4be6-89f2-1e6fc5307ad8` remain in Pages history for rollback.
 
 Every page that shows or links the address wraps it in `<!--email_off-->`
 markers so Cloudflare Email Obfuscation cannot replace the visible address or
