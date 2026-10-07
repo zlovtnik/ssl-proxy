@@ -57,3 +57,13 @@ export const migrationSteps = [
     code: 'Run: sample-run-004\nTarget: example-postgres\nOutcome: completed (synthetic)\nFiles: 2\nSQL-file snapshot: sample-snapshot-004',
   },
 ];
+
+// Labels and decisions are fixed illustrations, not a browser policy engine.
+export const trafficFlows = [
+  { category: 'ads_tracker', label: 'Advertising / tracker', destination: 'ads.example.test:443', decision: 'Block', reason: 'The sample configuration blocks this destination. Its advertising/tracking category is a heuristic label, not proof of malicious traffic.' },
+  { category: 'analytics', label: 'Analytics', destination: 'metrics.example.test:443', decision: 'Block', reason: 'This fictional analytics destination matches a configured block rule in the sample. Other deployments may handle it differently.' },
+  { category: 'cdn', label: 'Content delivery', destination: 'cdn.example.test:443', decision: 'Bypass inspection', reason: 'The sample configuration forwards this content-delivery flow through its bypass path.' },
+  { category: 'essential_api', label: 'Essential API', destination: 'api.example.test:443', decision: 'Bypass inspection', reason: 'The sample configuration bypasses inspection for this application endpoint. The category does not guarantee that a service is essential in your environment.' },
+  { category: 'auth', label: 'Authentication', destination: 'login.example.test:443', decision: 'Bypass inspection', reason: 'A configured exception sends this sample authentication flow through the bypass path.' },
+  { category: 'unknown', label: 'Unknown traffic', destination: 'unclassified.example.test:9443', decision: 'Block', reason: 'The sample has no matching category heuristic and uses a configured block rule. Unknown traffic is not automatically malicious or automatically blocked in every deployment.' },
+] as const;

@@ -1,17 +1,22 @@
 ---
-import { products } from '../data/products';
+import { getProduct, type ProductId } from '../data/products';
 interface Props {
-  kind: 'search' | 'migrator';
+  kind: ProductId;
 }
 const { kind } = Astro.props;
 const search = kind === 'search';
+const vpn = kind === 'vpn';
 const stages = search
   ? [
       ['Monitored site', 'sensor observations'],
       ['Wireless indicator', 'for analyst review'],
       ['Supporting', 'observations'],
     ]
-  : [
+  : vpn ? [
+      ['WireGuard peer', 'configured ingress'],
+      ['Proxy handling', 'category / policy'],
+      ['Audit events', 'backend pipeline'],
+    ] : [
       ['SQL files', 'and ordering'],
       ['Validate,', 'then dry-run'],
       ['Execution plan', 'and run record'],
@@ -31,12 +36,12 @@ const centers = [100, 320, 540];
     <title id={`${kind}-diagram-title`}>
       {search
         ? 'Illustrative site, wireless indicator, and supporting observation path'
-        : 'Schema Migrator input, processing, and output'}
+        : vpn ? 'WireGuard ingress, proxy handling, and audit publishing' : 'Schema Migrator input, processing, and output'}
     </title>
     <desc id={`${kind}-diagram-desc`}>
       {search
         ? 'Illustrative sample only: a monitored site, a configured wireless indicator for analyst review, and supporting wireless observations. It does not represent an end-to-end site overview in the current production console. An observation does not confirm a current connection or physical device identity.'
-        : 'Input: SQL files and ordering configuration. Processing: offline validation followed by a dry-run plan. Output: a proposed execution order and a run record. This is a review sequence, not an automatic execution.'}
+        : vpn ? 'Illustrative flow from a configured WireGuard peer through transparent proxy handling to audit publishing. Outcomes depend on configuration.' : 'Input: SQL files and ordering configuration. Processing: offline validation followed by a dry-run plan. Output: a proposed execution order and a run record. This is a review sequence, not an automatic execution.'}
     </desc>
     {[0, 1].map((index) => (
       <g class="diagram-arrow">
@@ -76,7 +81,7 @@ const centers = [100, 320, 540];
   </svg>
   <figcaption>
     {search
-      ? `Illustrative synthetic path from a monitored site to an indicator and its supporting observations. The current production console does not show this complete overview end to end. ${products[0].caveat}`
-      : 'Input, processing, and output for a change review. The public demonstration executes no SQL.'}
+      ? `Illustrative synthetic path from a monitored site to an indicator and its supporting observations. The current production console does not show this complete overview end to end. ${getProduct('search').caveat}`
+      : vpn ? 'Configured WireGuard ingress, proxy handling, and audit publishing. The public demonstration sends no traffic.' : 'Input, processing, and output for a change review. The public demonstration executes no SQL.'}
   </figcaption>
 </figure>

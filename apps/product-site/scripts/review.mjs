@@ -12,10 +12,13 @@ await mkdir(output, { recursive: true });
 const browser = await chromium.launch();
 const routes = [
   '/',
+  '/products/',
+  '/vpn-proxy/',
   '/atheros-search/',
   '/schema-migrator/',
   '/demo/',
   '/accessibility/',
+  '/privacy/',
 ];
 const results = [];
 async function reviewPage(profile, route) {

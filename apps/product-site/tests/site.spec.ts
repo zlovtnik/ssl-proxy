@@ -1,7 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import {
-  bothProducts,
+  allProducts,
+  contactOptions,
   contact,
   email,
   home,
@@ -11,6 +12,8 @@ import {
 
 const routes = [
   '/',
+  '/products/',
+  '/vpn-proxy/',
   '/atheros-search/',
   '/schema-migrator/',
   '/demo/',
@@ -48,17 +51,16 @@ test('header stays visible and product samples preserve the landing layout', asy
   await expect(
     preview.getByRole('button', { name: 'Schema Migrator', exact: true }),
   ).toBeEnabled();
-  const initial = await preview.boundingBox();
-  for (const product of ['Schema Migrator', 'Atheros Search']) {
-    await page.getByRole('link', { name: `Try the ${product} sample` }).click();
+  for (const product of products) {
+    await page.getByRole('link', { name: `Try the ${product.name} sample` }).click();
     await expect(
-      preview.getByRole('button', { name: product, exact: true }),
+      preview.getByRole('button', { name: product.name, exact: true }),
     ).toHaveAttribute('aria-pressed', 'true');
     expect(new URL(page.url()).pathname).toBe('/');
-    expect((await preview.boundingBox())!.height).toBeCloseTo(
-      initial!.height,
-      0,
-    );
+    await expect(preview.locator('.preview-panel:visible')).toHaveCount(1);
+    const panel = (await preview.boundingBox())!;
+    const next = (await page.locator('#products').boundingBox())!;
+    expect(next.y).toBeGreaterThanOrEqual(panel.y + panel.height);
   }
   await page
     .getByRole('navigation', { name: 'Main navigation', exact: true })
@@ -74,8 +76,9 @@ test('header stays visible and product samples preserve the landing layout', asy
     .getByRole('navigation', { name: 'Mobile navigation', exact: true })
     .getByRole('link', { name: 'Products', exact: true })
     .click();
+  await expect(page).toHaveURL(/\/products\/$/);
   await expect(page.locator('.mobile-menu')).not.toHaveAttribute('open');
-  await expect(page.locator('#products')).toBeInViewport();
+  await expect(page.locator('.product-card')).toHaveCount(3);
 });
 
 test('landing preview filters site-scoped wireless samples and reviews migration steps', async ({
@@ -330,11 +333,7 @@ test('email requests have the recipient, product subjects, and honest scheduling
         },
       }),
     );
-  for (const [id, subject] of [
-    ['search', 'Atheros Search'],
-    ['migrator', 'Schema Migrator'],
-    ['both', 'Atheros Search and Schema Migrator'],
-  ]) {
+  for (const { id, subject } of contactOptions) {
     const href = await page.locator(`#${id} a`).getAttribute('href');
     const url = new URL(href!);
     expect(url.pathname).toBe('rafael@rclabs.uk');
@@ -521,7 +520,8 @@ test('enhanced text contrast and control boundaries meet thresholds in both them
     const ratios = await page.evaluate(() => {
       const style = getComputedStyle(document.documentElement);
       function luminance(token: string) {
-        const hex = style.getPropertyValue(token).trim().slice(1);
+        const value = style.getPropertyValue(token).trim().slice(1);
+        const hex = value.length === 3 ? [...value].map((digit) => digit + digit).join('') : value;
         const rgb = [0, 2, 4]
           .map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255)
           .map((value) =>
@@ -534,11 +534,12 @@ test('enhanced text contrast and control boundaries meet thresholds in both them
         '--muted',
         '--search',
         '--migrator',
+        '--vpn',
         '--action',
         '--success',
         '--rule',
       ].flatMap((foreground) =>
-        ['--bg', '--surface'].map((background) => {
+        ['--bg', '--surface', '--raised', '--inset'].map((background) => {
           const values = [luminance(foreground), luminance(background)].sort(
             (a, b) => b - a,
           );
@@ -888,7 +889,7 @@ test('every tabbable control shows a compliant focus ring and keeps tab order', 
   }
 });
 
-test('all six routes share one system of colours, header geometry, type and controls', async ({
+test('all eight routes share one system of colours, header geometry, type and controls', async ({
   page,
 }) => {
   const snapshot = async (route: string, theme: string) => {
@@ -913,6 +914,8 @@ test('all six routes share one system of colours, header geometry, type and cont
         tokens: [
           '--bg',
           '--surface',
+          '--raised',
+          '--inset',
           '--text',
           '--muted',
           '--action',
@@ -921,6 +924,7 @@ test('all six routes share one system of colours, header geometry, type and cont
           '--divider',
           '--search',
           '--migrator',
+          '--vpn',
         ].map((name) => `${name}:${root.getPropertyValue(name).trim()}`),
         header: `${Math.round(header.width)}x${Math.round(header.height)}`,
         readingTop: Math.round(reading.top),
@@ -1010,7 +1014,7 @@ test('hero calls to action keep their documented destinations', async ({
     home.getByRole('link', { name: 'Discuss your use case' }),
   ).toHaveAttribute('href', '/demo/');
   await page.goto('/atheros-search/');
-  const search = page.locator('.hero-split');
+  const search = page.locator('.product-hero');
   await expect(
     search.getByRole('link', { name: 'Explore a sample site review' }),
   ).toHaveAttribute('href', '#demo');
@@ -1018,7 +1022,7 @@ test('hero calls to action keep their documented destinations', async ({
     search.getByRole('link', { name: 'Discuss your use case' }),
   ).toHaveAttribute('href', '/demo/#search');
   await page.goto('/schema-migrator/');
-  const migrator = page.locator('.hero-split');
+  const migrator = page.locator('.product-hero');
   await expect(
     migrator.getByRole('link', { name: 'Explore a sample migration review' }),
   ).toHaveAttribute('href', '#demo');
@@ -1046,7 +1050,7 @@ test('every route that offers a commercial action uses the shared contact patter
     const request = new URL(href!, 'https://example.invalid');
     expect(request.pathname, route).toBe(email);
     expect(request.searchParams.get('subject'), route).toBe(
-      `Use-case discussion: ${product ? product.name : bothProducts}`,
+      `Use-case discussion: ${product ? product.name : allProducts}`,
     );
     expect(request.searchParams.get('body'), route).toContain(
       'Preferred times and time zone:',
@@ -1059,7 +1063,7 @@ test('every route that offers a commercial action uses the shared contact patter
   }
 });
 
-test('the two product routes share the same section structure from the model', async ({
+test('the three product routes share the same section structure from the model', async ({
   page,
 }) => {
   const labels: string[][] = [];
@@ -1086,30 +1090,30 @@ test('the two product routes share the same section structure from the model', a
     await expect(page.locator('.evidence-panel')).toHaveCount(1);
     await expect(page.locator('.contact-banner')).toHaveCount(1);
   }
-  // Same section order on both routes, so neither page can grow its own structure.
-  expect(labels[1]).toEqual(labels[0]);
+  for (const label of labels.slice(1)) expect(label).toEqual(labels[0]);
 });
 
-test('both product demos sit in the hero proof column exactly once', async ({
+test('each product demo appears once below its introduction', async ({
   page,
 }) => {
   for (const [route, panel] of [
     ['/atheros-search/', '.search-demo'],
     ['/schema-migrator/', '.migrator-demo'],
+    ['/vpn-proxy/', '.vpn-demo'],
   ] as const) {
     await page.goto(route);
     await expect(page.locator('#demo')).toHaveCount(1);
-    await expect(page.locator('.hero-proof ' + panel)).toHaveCount(1);
+    await expect(page.locator('.product-demo ' + panel)).toHaveCount(1);
     await expect(page.locator(panel)).toHaveCount(1);
     expect(
       await page.evaluate(() => {
-        const proof = document
-          .querySelector('.hero-split')!
+        const intro = document
+          .querySelector('.product-hero')!
           .getBoundingClientRect();
-        const copy = document
-          .querySelector('.hero-copy')!
+        const demo = document
+          .querySelector('.product-demo')!
           .getBoundingClientRect();
-        return copy.width < proof.width;
+        return demo.top >= intro.bottom && demo.width === intro.width;
       }),
     ).toBe(true);
   }

@@ -1,0 +1,33 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import ProductCards from '../../components/ProductCards.astro';
+import Contact from '../../components/Contact.astro';
+import { catalogue, products } from '../../data/products';
+---
+<Layout title={catalogue.title} description={catalogue.description}>
+  <section class="hero">
+    <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">RCLabs</a><span aria-hidden="true">/</span><span aria-current="page">Products</span></nav>
+    <p class="eyebrow">RCLABS / PRODUCTS</p>
+    <h1>{catalogue.headline[0]} <span class="accent">{catalogue.headline[1]}</span></h1>
+    <p class="lead">{catalogue.summary}</p>
+  </section>
+  <ProductCards />
+  <section class="section catalogue-comparison" aria-labelledby="comparison-title">
+    <div class="section-heading"><p class="eyebrow">COMPARE THE WORKFLOWS</p><h2 id="comparison-title">{catalogue.comparisonTitle}</h2><p>{catalogue.comparisonSummary}</p></div>
+    <div class="comparison-grid">
+      {products.map((product) => (
+        <article>
+          <h3><a href={product.path}>{product.name}</a></h3>
+          <dl>
+            <dt>Audience</dt><dd>{product.problem}</dd>
+            <dt>Input</dt><dd>{product.workflow[0].input}</dd>
+            <dt>Workflow</dt><dd>{product.workflow.map((item) => item.step).join(' / ')}</dd>
+            <dt>Output</dt><dd>{product.workflow[2].output}</dd>
+          </dl>
+          <p class="caveat">{product.caveat}</p>
+        </article>
+      ))}
+    </div>
+  </section>
+  <Contact />
+</Layout>

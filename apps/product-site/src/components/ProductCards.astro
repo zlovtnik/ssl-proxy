@@ -1,0 +1,40 @@
+---
+import { ArrowRight, ArrowUpRight, Database, Network, Radio } from '@lucide/astro';
+import { products } from '../data/products';
+interface Props { preview?: boolean }
+const { preview = false } = Astro.props;
+const icons = { search: Radio, migrator: Database, vpn: Network };
+---
+
+<div class="product-grid">
+  {products.map((product, index) => {
+    const Icon = icons[product.id];
+    return (
+      <article class:list={['product-card', product.id]}>
+        <div class="product-card-top">
+          <Icon size={26} stroke-width={1.5} aria-hidden="true" />
+          <span class="eyebrow">0{index + 1}</span>
+        </div>
+        <div class="product-card-copy">
+          <p class="eyebrow">{product.label}</p>
+          <h2>{product.homeTitle}</h2>
+          <p class="product-promise">{product.promise}</p>
+          <p>{product.summary}</p>
+        </div>
+        <ul class="product-capabilities">
+          {product.highlights.map(([title, text]) => (
+            <li><strong>{title}</strong><span>{text}</span></li>
+          ))}
+        </ul>
+        <div class="product-links">
+          <a class="text-link" href={product.path}>
+            {product.name} product details <ArrowUpRight size={18} aria-hidden="true" />
+          </a>
+          <a class="text-link sample-link" href={`${product.path}#demo`} data-preview={preview ? product.id : undefined}>
+            Try the {product.name} sample <ArrowRight size={18} aria-hidden="true" />
+          </a>
+        </div>
+      </article>
+    );
+  })}
+</div>

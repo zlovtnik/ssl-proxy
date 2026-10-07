@@ -1,6 +1,6 @@
 import { createSignal, For, onMount } from 'solid-js';
 import { investigations } from '../data/fixtures';
-import { products } from '../data/products';
+import { getProduct } from '../data/products';
 
 export default function SearchDemo() {
   const [selected, setSelected] = createSignal(0);
@@ -18,7 +18,8 @@ export default function SearchDemo() {
         current production console does not show this complete site overview end
         to end.
       </p>
-      <div class="demo-content">
+      <div class="demo-content demo-workspace">
+        <div class="demo-inputs">
         <label for="sample-site">1. Choose a monitored sample site</label>
         <select
           id="sample-site"
@@ -41,6 +42,8 @@ export default function SearchDemo() {
         >
           Try the next sample site
         </button>
+        </div>
+        <div class="demo-output">
         <div aria-live="polite" aria-atomic="true" class="result">
           <p class="eyebrow">2. Review an indicator for analyst review</p>
           <h3>{sample().indicator}</h3>
@@ -60,8 +63,9 @@ export default function SearchDemo() {
           </p>
           <p>{sample().channel}</p>
           <p>{sample().relation}</p>
-          <p class="caveat">{products[0].caveat}</p>
+          <p class="caveat">{getProduct('search').caveat}</p>
         </details>
+        </div>
       </div>
     </div>
   );

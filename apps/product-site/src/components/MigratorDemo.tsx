@@ -1,6 +1,6 @@
 import { createSignal, For, onMount } from 'solid-js';
 import { migrationSteps } from '../data/fixtures';
-import { products } from '../data/products';
+import { getProduct } from '../data/products';
 
 export default function MigratorDemo() {
   const [step, setStep] = createSignal(0);
@@ -13,7 +13,8 @@ export default function MigratorDemo() {
         <h2>Schema Migrator / change review</h2>
         <span class="sample-label">Synthetic data</span>
       </div>
-      <div class="demo-content">
+      <div class="demo-content demo-workspace">
+        <div class="demo-inputs">
         <div
           class="step-controls"
           role="group"
@@ -34,6 +35,8 @@ export default function MigratorDemo() {
             )}
           </For>
         </div>
+        </div>
+        <div class="demo-output">
         <section aria-live="polite" aria-atomic="true" class="run-stage">
           <h3>{current().title}</h3>
           <p>{current().text}</p>
@@ -41,7 +44,7 @@ export default function MigratorDemo() {
             <code>{current().code}</code>
           </pre>
         </section>
-        <p class="caveat">{products[1].caveat}</p>
+        <p class="caveat">{getProduct('migrator').caveat}</p>
         <p class="fine-print">
           SQL means Structured Query Language. This demo never connects to or
           changes a database.
@@ -60,6 +63,7 @@ export default function MigratorDemo() {
             )}
           </For>
         </details>
+        </div>
       </div>
     </div>
   );

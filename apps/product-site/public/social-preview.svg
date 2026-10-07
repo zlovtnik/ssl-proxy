@@ -1,11 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <rect width="1200" height="630" fill="#090D1A" />
-  <path d="M80 95h1040M80 535h1040" stroke="#26324A" />
-  <g font-family="sans-serif" fill="#F4F6FF">
-    <text x="80" y="155" font-size="26" fill="#B8C4DD">RCLABS / SITE-AWARE WIRELESS SECURITY</text>
-    <text x="80" y="280" font-size="64">Know what's happening in the air</text>
-    <text x="80" y="360" font-size="64">around each monitored site.</text>
-    <text x="80" y="465" font-size="28" fill="#67E8F9">Atheros Search</text>
-    <text x="395" y="465" font-size="28" fill="#C4B5FD">Schema Migrator / PostgreSQL review</text>
+  <rect width="1200" height="630" fill="#090909" />
+  <path d="M80 95h1040M80 535h1040" stroke="#343632" />
+  <g font-family="sans-serif" fill="#F5F5F2">
+    <text x="80" y="155" font-size="26" fill="#BEC2B9">RCLABS / INFRASTRUCTURE TOOLS</text>
+    <text x="80" y="280" font-size="64">Understand the evidence.</text>
+    <text x="80" y="360" font-size="64" fill="#A3E6A3">Control the next step.</text>
+    <text x="80" y="465" font-size="26">Atheros Search</text>
+    <text x="400" y="465" font-size="26">Schema Migrator</text>
+    <text x="745" y="465" font-size="26">RCLabs VPN / Proxy</text>
   </g>
 </svg>

@@ -23,127 +23,6 @@
 .landing-benchmark {
   scroll-margin-top: 8rem;
 }
-.landing-product-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1.5rem;
-}
-.landing-product {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  padding: 2.25rem;
-  border: 1px solid var(--divider);
-  border-radius: var(--panel-radius);
-  background: var(--surface);
-}
-.product-index {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-}
-.product-index > span {
-  font-family: 'JetBrains Mono Variable', monospace;
-  font-size: 0.875rem;
-  letter-spacing: -0.04em;
-  color: var(--accent, var(--muted));
-}
-.product-index .eyebrow {
-  font-size: 0.875rem;
-  margin: 0;
-}
-.landing-product-copy h2 {
-  font-size: 1.8rem;
-  margin: 0 0 1rem;
-  font-weight: 550;
-  letter-spacing: -0.04em;
-}
-.landing-promise {
-  font-size: 1.07rem;
-}
-.landing-product-copy > p:not(.landing-promise) {
-  font-size: 0.875rem;
-  color: var(--muted);
-}
-.product-visual {
-  border: 1px solid var(--divider);
-  border-radius: var(--control-radius);
-  background: var(--bg);
-  padding: 1rem;
-  min-height: 140px;
-  display: grid;
-  align-items: center;
-}
-.product-visual pre {
-  border: 0;
-  padding: 0;
-  margin: 0;
-  font-size: 0.875rem;
-  background: transparent;
-  color: var(--accent, var(--muted));
-  white-space: pre-wrap;
-}
-.product-network {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.7rem;
-  font-size: 0.875rem;
-  color: var(--accent, var(--muted));
-}
-.product-network small {
-  width: 100%;
-  color: var(--muted);
-}
-.product-network > span:not(:nth-child(2)) {
-  padding: 0.6rem;
-  border: 1px solid var(--divider);
-  border-radius: var(--control-radius);
-}
-.landing-capabilities {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.landing-capabilities li {
-  display: flex;
-  gap: 1.2rem;
-  border-bottom: 1px solid var(--divider);
-  padding: 0.9rem 0;
-}
-.landing-capabilities li:first-child {
-  padding-top: 0;
-}
-.landing-capabilities li:last-child {
-  border: 0;
-}
-.landing-capabilities li > span {
-  flex-shrink: 0;
-  font-family: 'JetBrains Mono Variable', monospace;
-  font-size: 0.875rem;
-  color: var(--accent, var(--muted));
-  padding-top: 0.3rem;
-}
-.landing-capabilities h3 {
-  font-size: 0.9375rem;
-  letter-spacing: -0.02em;
-  font-weight: 600;
-  margin: 0;
-}
-.landing-capabilities p {
-  font-size: 0.875rem;
-  color: var(--muted);
-  margin: 0.35rem 0 0;
-}
-.product-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-  margin-top: auto;
-}
-.product-links > a {
-  color: var(--accent, var(--muted));
-}
 .landing-principles {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -205,8 +84,7 @@
   border: 1px solid var(--divider);
   background: var(--surface);
   border-radius: var(--panel-radius);
-  box-shadow: 0 25px 70px color-mix(in srgb, var(--bg) 55%, transparent);
-  overflow: hidden;
+  box-shadow: var(--panel-shadow);
 }
 .preview-migrator {
   --preview-accent: var(--migrator);
@@ -254,6 +132,7 @@
 }
 .preview-switch {
   display: flex;
+  flex-wrap: wrap;
   gap: 1.5rem;
   padding: 0 1.4rem;
   border-bottom: 1px solid var(--divider);
@@ -272,22 +151,30 @@
   border-bottom-color: var(--preview-accent);
 }
 .preview-panels {
-  display: grid;
+  display: block;
 }
 .preview-panel {
-  grid-area: 1 / 1;
   min-width: 0;
 }
-.preview-panel.is-inactive {
-  visibility: hidden;
-  pointer-events: none;
-}
 .preview-body {
-  min-height: 510px;
-  padding: 1.4rem;
+  padding: clamp(1rem, 3vw, 2rem);
+}
+.preview-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 2rem;
+  align-items: start;
+}
+.preview-detail {
+  border-left: 1px solid var(--divider);
+  padding-left: 2rem;
+}
+.vpn-full {
+  margin: 0 2rem 1.5rem;
 }
 .preview-title {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.7rem;
@@ -315,7 +202,7 @@
   color: var(--text);
   background: none;
   border: 0;
-  min-height: 28px;
+  min-height: 44px;
 }
 .preview-search input::placeholder {
   color: var(--muted);
@@ -348,7 +235,7 @@
   /* The 3px accent rule and aria-pressed carry the state; the tint stays light
      enough for secondary text to keep its 7:1 target on the selected row. */
   border-left-color: var(--preview-accent);
-  background: color-mix(in srgb, var(--preview-accent) 6%, var(--surface));
+  background: var(--raised);
 }
 .preview-record > svg {
   color: var(--preview-accent);
@@ -376,10 +263,7 @@
   margin: 0.8rem 0 1.2rem;
 }
 .preview-evidence {
-  border: 1px solid var(--divider);
-  background: var(--bg);
-  border-radius: var(--control-radius);
-  padding: 1rem;
+  display: flow-root;
 }
 .preview-evidence .eyebrow {
   color: var(--preview-accent);
@@ -425,20 +309,21 @@
   gap: 0.5rem;
   padding: 0.9rem 1.4rem;
   border-top: 1px solid var(--divider);
+  background: var(--inset);
+  border-radius: 0 0 var(--panel-radius) var(--panel-radius);
   font-size: 0.875rem;
   color: var(--muted);
 }
 .preview-steps {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.4rem;
-  margin: 1.3rem 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  margin: 0;
 }
 .preview-steps button {
-  padding: 0.5rem 0.4rem;
-  border: 0;
-  border-radius: 0;
-  border-bottom: 1px solid var(--divider);
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--control-radius);
   color: var(--muted);
   font-size: 0.875rem;
   background: transparent;
@@ -451,7 +336,8 @@
 }
 .preview-steps button[aria-pressed='true'] {
   color: var(--migrator);
-  border-bottom: 2px solid var(--migrator);
+  border-color: var(--migrator);
+  box-shadow: inset 3px 0 0 var(--migrator);
 }
 .preview-file {
   display: flex;
@@ -639,8 +525,14 @@
   }
 }
 @media (max-width: 767px) {
-  .landing-product-grid {
+  .preview-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .preview-detail {
+    padding-left: 0;
+    border-left: 0;
+    border-top: 1px solid var(--divider);
+    padding-top: 1.5rem;
   }
   .landing-reference-list {
     grid-template-columns: minmax(0, 1fr);
@@ -650,9 +542,6 @@
   }
 }
 @media (max-width: 600px) {
-  .landing-product {
-    padding: 1.5rem;
-  }
   .landing-block {
     margin-top: 2rem;
   }
@@ -679,7 +568,7 @@
     gap: 1.5rem;
   }
   .preview-steps {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
   }
   .playground-chrome {
     gap: 0.5rem;

@@ -4,9 +4,9 @@ import Layout from '../layouts/Layout.astro';
 import Contact from '../components/Contact.astro';
 import LandingPlayground from '../components/LandingPlayground';
 import ReviewPath from '../components/ReviewPath.astro';
-import { investigations } from '../data/fixtures';
+import ProductCards from '../components/ProductCards.astro';
 import {
-  bothProducts,
+  allProducts,
   contact,
   email,
   home,
@@ -16,7 +16,6 @@ import {
 import '../styles/landing.css';
 
 const { guide, reference, comparison, benchmark } = homeSections;
-const searchSample = investigations[0];
 const origin = new URL('/', Astro.site ?? Astro.url);
 // Identity only: no logo, no profiles, and no third party is named. The graph
 // is derived from the build origin, so a production build names rclabs.uk.
@@ -47,14 +46,14 @@ const structuredData = {
   product="landing"
   structuredData={structuredData}
 >
-  <section id="top" class="hero hero-split" aria-labelledby="hero-title">
+  <section id="top" class="hero home-hero" aria-labelledby="hero-title">
     <div class="hero-copy">
       <p class="eyebrow">
         <span class="eyebrow-stroke" aria-hidden="true" />
-        TWO INDEPENDENT PRODUCTS
+        {home.eyebrow}
       </p>
       <h1 id="hero-title">
-        {home.headline[0]} <span class="muted">{home.headline[1]}</span>
+        {home.headline[0]} <span class="accent">{home.headline[1]}</span>
       </h1>
       <p class="lead">{home.subheadline}</p>
       <div class="actions">
@@ -68,9 +67,22 @@ const structuredData = {
       </div>
       <p class="hero-note">{home.supporting}</p>
     </div>
-    <div class="hero-proof">
-      <LandingPlayground client:load />
+    <div class="hero-outline" aria-label="Product workflows">
+      {products.map((product, index) => (
+        <a href={product.path}>
+          <span class="eyebrow">0{index + 1}</span>
+          <div><strong class="outline-title">{product.name}</strong><p>{product.promise}</p></div>
+          <ArrowUpRight size={20} aria-hidden="true" />
+        </a>
+      ))}
     </div>
+  </section>
+  <section class="playground-section" aria-labelledby="playground-title">
+    <div class="section-heading split">
+      <div><p class="eyebrow">{home.playground.eyebrow}</p><h2 id="playground-title">{home.playground.title}</h2></div>
+      <p>{home.playground.summary}</p>
+    </div>
+    <LandingPlayground client:load />
   </section>
   <section
     id="products"
@@ -79,7 +91,7 @@ const structuredData = {
   >
     <div class="section-heading split">
       <div>
-        <p class="eyebrow">THE PRODUCTS / TWO INDEPENDENT TOOLS</p>
+        <p class="eyebrow">{home.productsEyebrow}</p>
         <h2 id="products-title">
           Start with the job
           <br />
@@ -92,67 +104,8 @@ const structuredData = {
         The same attention to evidence.
       </p>
     </div>
-    <div class="landing-product-grid">
-      {products.map((product, index) => (
-        <article class:list={['landing-product', product.id]}>
-          <div class="product-index">
-            <span>0{index + 1}</span>
-            <p class="eyebrow">{product.label}</p>
-          </div>
-          <div class="landing-product-copy">
-            <h2>{product.homeTitle}</h2>
-            <p class="landing-promise">{product.promise}</p>
-            <p>{product.summary}</p>
-          </div>
-          <div class="product-visual">
-            {index === 0 ? (
-              <div
-                class="product-network"
-                role="img"
-                aria-label="Illustrative synthetic path from a monitored site to a wireless indicator and supporting observation. The current production console does not yet show this complete site overview."
-              >
-                <span>{searchSample.site}</span>
-                <ArrowRight size={18} aria-hidden="true" />
-                <span>{searchSample.indicator}</span>
-                <ArrowRight size={18} aria-hidden="true" />
-                <span>{searchSample.record}</span>
-                <small>
-                  Synthetic sample / current console does not yet show this
-                  complete site overview
-                </small>
-              </div>
-            ) : (
-              <pre><code>{'-- dry-run plan / sample\n+ CREATE TABLE evidence_records\n+ CREATE INDEX observed_at\n! Review before execution'}</code></pre>
-            )}
-          </div>
-          <ol class="landing-capabilities">
-            {product.highlights.map(([title, text], number) => (
-              <li>
-                <span>0{number + 1}</span>
-                <div>
-                  <h3>{title}</h3>
-                  <p>{text}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
-          <div class="product-links">
-            <a
-              class="text-link sample-link"
-              href={`${product.path}#demo`}
-              data-preview={product.id}
-            >
-              Try the {product.name} sample{' '}
-              <ArrowRight size={18} aria-hidden="true" />
-            </a>
-            <a class="text-link" href={product.path}>
-              {product.name} product details{' '}
-              <ArrowUpRight size={18} aria-hidden="true" />
-            </a>
-          </div>
-        </article>
-      ))}
-    </div>
+    <ProductCards preview />
+    <div class="actions"><a class="text-link" href="/products/">Compare all products <ArrowRight size={18} aria-hidden="true" /></a></div>
   </section>
 
   <section
@@ -495,9 +448,7 @@ const structuredData = {
         <h2 id="approach-title">The details stay visible.</h2>
       </div>
       <p>
-        Each tool has its own workflow.
-        <br />
-        They do not share a live connection.
+        {home.approach}
       </p>
     </div>
     <div class="landing-principles">
@@ -521,8 +472,7 @@ const structuredData = {
         <span class="principle-index">[ 03 / EXPLORE ]</span>
         <h3>Start with an interactive sample.</h3>
         <p>
-          Try both workflows with synthetic records in your browser. No account,
-          credentials, or database connection required.
+          {home.explore}
         </p>
       </article>
     </div>
@@ -557,9 +507,7 @@ const structuredData = {
           <Plus size={18} aria-hidden="true" />
         </summary>
         <p>
-          They are independent tools with separate workflows. There is no
-          automatic connection between a network investigation and a database
-          migration.
+          {home.relationship}
         </p>
       </details>
       <details>
@@ -597,7 +545,7 @@ const structuredData = {
     </div>
   </section>
   <div id="contact" class="section">
-    <Contact product={bothProducts} />
+    <Contact product={allProducts} />
   </div>
 </Layout>
 <script>

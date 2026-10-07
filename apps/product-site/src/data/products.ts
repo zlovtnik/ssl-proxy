@@ -6,20 +6,41 @@ export const searchCaveat =
   'Sensor placement, configured channel coverage, observation time, and MAC randomization limit what can be seen. An observed Wi-Fi identifier does not confirm a current connection or physical device identity.';
 export const migratorCaveat =
   'SQL-file snapshots preserve source files and checksums. They do not back up database data.';
+export const vpnCaveat =
+  'Traffic categories are heuristics. Routing, inspection, and policy outcomes depend on deployment configuration. This synthetic sample establishes no VPN connection and sends no traffic.';
 
 export const home = {
   // Google rewrites and truncates titles; this is an editorial target, not a
   // ranking rule. The homepage shares one title and description with Layout.
-  title: 'Site-aware Wi-Fi Security & PostgreSQL Migration Review',
+  title: 'Wireless Evidence, SQL Review & WireGuard VPN / Proxy',
   description:
-    'Explore Atheros Search for site-scoped wireless indicators and Schema Migrator for ordered SQL validation, PostgreSQL drift checks, and migration dry-run plans.',
-  headline: ["Know what's happening in the air", 'around each monitored site.'],
+    'Explore Atheros Search, Schema Migrator, and RCLabs VPN / Proxy through synthetic samples of wireless investigation, SQL review, and network traffic handling.',
+  headline: ['Understand the evidence.', 'Control the next step.'],
   subheadline:
-    'Atheros Search helps security teams review wireless indicators with their site context and supporting observations. Schema Migrator reviews SQL changes as an independent product. Both have synthetic browser samples.',
+    'Investigate wireless indicators, review database changes, and follow traffic through a WireGuard VPN and transparent proxy. Three focused products, with workflows you can inspect.',
   primaryCta: { label: 'Explore the samples', href: '#playground' },
   secondaryCta: { label: 'Discuss your use case', href: '/demo/' },
   supporting:
-    'Two independent tools. Synthetic browser samples. No account required.',
+    'Three products. Synthetic browser samples. No account required.',
+  eyebrow: 'RCLABS / INFRASTRUCTURE TOOLS',
+  productsEyebrow: 'THREE PRODUCTS / THREE WORKFLOWS',
+  playground: {
+    eyebrow: 'THE PLAYGROUND',
+    title: 'Take a closer look.',
+    summary: 'Choose a product and follow a sample workflow. Every interaction stays in your browser.',
+  },
+  relationship: 'Search can review proxy observations through the configured backend. Schema Migrator has its own change-review workflow. The public samples run independently in your browser.',
+  approach: 'Each product makes a different part of your infrastructure inspectable.',
+  explore: 'Try all three workflows with synthetic records in your browser. No account or production connection required.',
+} as const;
+
+export const catalogue = {
+  title: 'Products',
+  description: 'Compare Atheros Search, Schema Migrator, and RCLabs VPN / Proxy by audience, inputs, workflow, and output.',
+  headline: ['Find the tool', 'for the work ahead.'],
+  summary: 'Start with the question you need to answer. Each product has a focused workflow, an interactive sample, and a clear operating boundary.',
+  comparisonTitle: 'A different job for each tool.',
+  comparisonSummary: 'Compare what goes in, what happens, and what you can review afterward.',
 } as const;
 
 // Homepage technical sections. Reference entries, capability tables and the
@@ -431,8 +452,7 @@ indexes/002_observed_at.sql                      -- object: observations observe
   },
 } as const;
 
-// Section headings shared by both product pages. The product-specific parts of
-// each section sit on the product itself, so the two routes cannot drift apart.
+// Shared section structure, with each product's story kept in its own model.
 const workflowSection = { label: 'HOW IT WORKS' } as const;
 const audienceSection = {
   label: 'AUDIENCE VALUE',
@@ -454,7 +474,7 @@ export const products = [
     name: 'Atheros Search',
     path: '/atheros-search/',
     label: 'SITE-AWARE WIRELESS SECURITY',
-    homeTitle: 'Atheros Search: review wireless indicators by site',
+    homeTitle: 'Atheros Search',
     headline: ['Review wireless indicators.', 'See their site context.'],
     summary:
       'Atheros Sensor passively listens on configured Wi-Fi channels and publishes audit records to the backend. Atheros Search helps teams review wireless indicators with monitored-site context and supporting observations.',
@@ -585,7 +605,7 @@ export const products = [
     id: 'migrator',
     name: 'Schema Migrator',
     path: '/schema-migrator/',
-    homeTitle: 'Schema Migrator: review PostgreSQL changes before execution',
+    homeTitle: 'Schema Migrator',
     label: 'DATABASE CHANGE REVIEW',
     headline: ['Review SQL changes', 'before you run them.'],
     summary:
@@ -707,19 +727,97 @@ export const products = [
       ],
     ],
   },
+  {
+    id: 'vpn',
+    name: 'RCLabs VPN / Proxy',
+    path: '/vpn-proxy/',
+    homeTitle: 'RCLabs VPN / Proxy',
+    label: 'WIREGUARD / TRANSPARENT PROXY',
+    headline: ['Follow the traffic.', 'Inspect the decision.'],
+    summary: 'Bring traffic through WireGuard ingress, handle connections with a transparent proxy, and inspect classification and policy decisions through audit records.',
+    problem: 'Network and platform teams operating WireGuard ingress, transparent proxy policies, and traffic audit pipelines.',
+    promise: 'An inspectable path through your network.',
+    primaryCta: { label: 'Explore a sample traffic flow', href: '#demo' },
+    secondaryCta: { label: 'Discuss your use case', href: '/demo/#vpn' },
+    sections: {
+      workflow: {
+        ...workflowSection,
+        title: 'From ingress to an inspectable decision.',
+        note: 'Follow a configured traffic path, its classification, and the evidence it produces. The sample does not establish a tunnel.',
+      },
+      value: { ...audienceSection, title: 'Two ways to assess RCLabs VPN / Proxy.' },
+      evidence: {
+        ...evidenceSection,
+        caveatLabel: 'CONFIGURATION / COVERAGE',
+        footnote: 'Sample flows and decisions are illustrative fixtures. No credentials, network connection, or live policy changes are involved.',
+      },
+      glossary: glossarySection,
+    },
+    audiences: [
+      {
+        id: 'technical',
+        title: 'For technical users',
+        proposition: 'Trace ingress, handling, and evidence.',
+        points: [
+          'Review WireGuard ingress and transparent proxy handling as distinct stages of the traffic path.',
+          'Inspect coarse traffic categories and the configured reasons behind connection handling.',
+        ],
+      },
+      {
+        id: 'buyers',
+        title: 'For buyers and operators',
+        proposition: 'Understand the operating boundary.',
+        points: [
+          'Evaluate the proxy, administrative readiness surfaces, and the separate staged WireGuard key rotator.',
+          'Plan for audit publishing through Redpanda and backend processing through Octopus; persistence is owned by the backend.',
+        ],
+      },
+    ],
+    workflow: [
+      { step: 'Enter', input: 'A configured WireGuard peer and traffic', processing: 'Receive traffic through WireGuard ingress', output: 'Traffic available to the configured proxy path' },
+      { step: 'Handle', input: 'Destination and available connection metadata', processing: 'Classify the flow and apply configured handling', output: 'A connection decision with a recorded reason' },
+      { step: 'Inspect', input: 'Proxy observations and audit events', processing: 'Publish evidence to the configured backend', output: 'Records for operational review' },
+    ],
+    caveat: vpnCaveat,
+    highlights: [
+      ['WireGuard ingress', 'Receive traffic from configured peers.'],
+      ['Transparent handling', 'Inspect categories and configured decisions.'],
+      ['Audit publishing', 'Follow observations into the backend pipeline.'],
+    ],
+    features: [
+      ['Receive WireGuard traffic', 'The Rust proxy owns WireGuard ingress and tunnel transport. Peer setup and network routing are deployment prerequisites.'],
+      ['Classify destinations', 'Hostname and port heuristics group traffic as advertising/tracking, analytics, CDN, essential API, authentication, or unknown. A category is not a security verdict.'],
+      ['Inspect configured handling', 'The transparent proxy supports policy-driven connection handling, including blocking and bypass paths. The active configuration determines the outcome.'],
+      ['Publish audit evidence', 'The proxy publishes observations to the configured Redpanda pipeline. Octopus owns durable ingestion and maintained PostgreSQL projections.'],
+      ['Operate peer keys separately', 'The WireGuard key rotator supports staged server and peer key rotation as a separate operational component.'],
+    ],
+    glossary: [
+      ['WireGuard', 'A VPN protocol used here as a traffic ingress path for configured peers.'],
+      ['Transparent proxy', 'A proxy that receives traffic through configured network routing rather than an application-specific proxy setting.'],
+      ['Traffic category', 'A coarse label inferred from destination metadata. It does not prove whether traffic is safe or malicious.'],
+      ['Policy decision', 'The connection handling selected by the configured rules, with its recorded reason.'],
+      ['Audit publishing', 'Sending observations to a backend pipeline for processing and later review.'],
+    ],
+  },
 ] as const;
+
+export type Product = (typeof products)[number];
+export type ProductId = Product['id'];
+export function getProduct(id: ProductId): Product {
+  return products.find((product) => product.id === id)!;
+}
 
 export const contact = {
   headline: ['Discuss your', 'use case.'],
   supporting:
-    "Tell us what you need to investigate or change, your environment, and the constraints that matter. We'll agree on the next step by email.",
+    "Tell us what you need to investigate, change, or route, your environment, and the constraints that matter. We'll agree on the next step by email.",
   cta: 'Discuss your use case',
   // Short form for a mailto link that already sits under the headline, so the
   // same words never appear twice in one block.
   link: 'Write to us',
 } as const;
 
-export const bothProducts = 'Atheros Search and Schema Migrator';
+export const allProducts = products.map((product) => product.name).join(', ');
 
 export const contactOptions = [
   {
@@ -735,10 +833,16 @@ export const contactOptions = [
     text: 'Review SQL files, dry-run plans, and run records.',
   },
   {
-    id: 'both',
-    label: 'Both products',
-    subject: bothProducts,
-    text: 'Discuss the two separate tools in one conversation.',
+    id: 'vpn',
+    label: 'RCLabs VPN / Proxy',
+    subject: 'RCLabs VPN / Proxy',
+    text: 'Review WireGuard ingress, transparent proxy handling, and audit evidence.',
+  },
+  {
+    id: 'all',
+    label: 'All products',
+    subject: allProducts,
+    text: 'Discuss all three products in one conversation.',
   },
 ] as const;
 

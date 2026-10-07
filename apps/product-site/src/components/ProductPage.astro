@@ -1,0 +1,76 @@
+---
+import { ArrowDown, ArrowUpRight, Check } from '@lucide/astro';
+import Layout from '../layouts/Layout.astro';
+import SearchDemo from './SearchDemo';
+import MigratorDemo from './MigratorDemo';
+import VpnDemo from './VpnDemo';
+import Diagram from './Diagram.astro';
+import Contact from './Contact.astro';
+import { getProduct, type ProductId } from '../data/products';
+interface Props { id: ProductId }
+const product = getProduct(Astro.props.id);
+---
+
+<Layout title={`${product.name} - ${product.headline.join(' ')}`} description={product.summary} product={product.id}>
+  <section class="hero product-hero" aria-labelledby="hero-title">
+    <div class="hero-copy">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/">RCLabs</a><span aria-hidden="true">/</span>
+        <a href="/products/">Products</a><span aria-hidden="true">/</span>
+        <span aria-current="page">{product.name}</span>
+      </nav>
+      <p class="eyebrow">{product.label}</p>
+      <h1 id="hero-title">{product.headline[0]} <span class="accent">{product.headline[1]}</span></h1>
+      <p class="lead">{product.summary}</p>
+      <div class="actions">
+        <a class="button primary" href={product.primaryCta.href}>{product.primaryCta.label}<ArrowDown size={18} aria-hidden="true" /></a>
+        <a class="text-link" href={product.secondaryCta.href}>{product.secondaryCta.label}<ArrowUpRight size={18} aria-hidden="true" /></a>
+      </div>
+    </div>
+    <div class="hero-outline" aria-label={`${product.name} workflow summary`}>
+      {product.highlights.map(([title, text], index) => (
+        <div><span class="eyebrow">0{index + 1}</span><div><strong class="outline-title">{title}</strong><p>{text}</p></div></div>
+      ))}
+    </div>
+  </section>
+  <section class="product-demo" id="demo" aria-label={`${product.name} interactive sample`}>
+    {product.id === 'search' && <SearchDemo client:load />}
+    {product.id === 'migrator' && <MigratorDemo client:load />}
+    {product.id === 'vpn' && <VpnDemo client:load />}
+    <noscript><p class="fine-print">JavaScript is off. Read the initial sample and expand its explanations as text. Choosing another sample needs JavaScript.</p></noscript>
+  </section>
+  <section class="section" aria-labelledby="workflow-title">
+    <div class="section-heading"><p class="eyebrow">{product.sections.workflow.label}</p><h2 id="workflow-title">{product.sections.workflow.title}</h2><p>{product.sections.workflow.note}</p></div>
+    <ol class="workflow-steps">
+      {product.workflow.map((item, index) => (
+        <li class="workflow-step">
+          <span class="workflow-index">0{index + 1} / {item.step}</span><h3>{item.step}</h3>
+          <dl><dt>Input</dt><dd>{item.input}</dd><dt>Processing</dt><dd>{item.processing}</dd><dt>Output</dt><dd>{item.output}</dd></dl>
+        </li>
+      ))}
+    </ol>
+  </section>
+  <section class="section" aria-labelledby="value-title">
+    <div class="section-heading"><p class="eyebrow">{product.sections.value.label}</p><h2 id="value-title">{product.sections.value.title}</h2><p class="lead">{product.problem}</p><p>{product.sections.value.note}</p></div>
+    <div class="audience-grid">
+      {product.audiences.map((audience) => (
+        <article class="audience-card"><p class="eyebrow">{audience.title.toUpperCase()}</p><h3>{audience.proposition}</h3>
+          <ul class="checklist">{audience.points.map((point) => <li><Check size={18} aria-hidden="true" /><span>{point}</span></li>)}</ul>
+        </article>
+      ))}
+    </div>
+  </section>
+  <section class="section" aria-labelledby="evidence-title">
+    <div class="section-heading"><p class="eyebrow">{product.sections.evidence.label}</p><h2 id="evidence-title">{product.sections.evidence.title}</h2><p>{product.sections.evidence.note}</p></div>
+    <div class="feature-grid">{product.features.map(([title, text], index) => <article><p class="feature-number">0{index + 1}</p><h3>{title}</h3><p>{text}</p></article>)}</div>
+    <div class="two-column product-evidence">
+      <Diagram kind={product.id} />
+      <div class="evidence-panel"><p class="eyebrow">{product.sections.evidence.caveatLabel}</p><p class="caveat">{product.caveat}</p><p class="fine-print">{product.sections.evidence.footnote}</p></div>
+    </div>
+  </section>
+  <section class="section glossary" aria-labelledby="terms-title">
+    <p class="eyebrow">{product.sections.glossary.label}</p><h2 id="terms-title">{product.sections.glossary.title}</h2>
+    <dl>{product.glossary.map(([term, definition]) => <div><dt>{term}</dt><dd>{definition}</dd></div>)}</dl>
+  </section>
+  <Contact product={product.name} />
+</Layout>

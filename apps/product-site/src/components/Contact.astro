@@ -1,10 +1,10 @@
 ---
-import { bothProducts, contact, demoLink, email } from '../data/products';
+import { allProducts, contact, demoLink, email } from '../data/products';
 import { ArrowUpRight } from '@lucide/astro';
 interface Props {
   product?: string;
 }
-const { product = bothProducts } = Astro.props;
+const { product = allProducts } = Astro.props;
 ---
 
 <!--email_off-->

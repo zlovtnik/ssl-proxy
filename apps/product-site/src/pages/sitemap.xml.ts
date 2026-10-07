@@ -2,6 +2,8 @@ import type { APIRoute } from 'astro';
 export const GET: APIRoute = ({ site }) => {
   const paths = [
     '/',
+    '/products/',
+    '/vpn-proxy/',
     '/atheros-search/',
     '/schema-migrator/',
     '/demo/',

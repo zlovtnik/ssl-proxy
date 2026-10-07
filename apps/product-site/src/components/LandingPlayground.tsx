@@ -7,13 +7,15 @@ import {
   onCleanup,
 } from 'solid-js';
 import { investigations, migrationSteps } from '../data/fixtures';
-import { products } from '../data/products';
+import { getProduct, products, type ProductId } from '../data/products';
+import VpnDemo from './VpnDemo';
 import { ArrowRight, ArrowUpRight, Diamond, Search } from 'lucide-solid';
 
-const [search, migrator] = products;
+const search = getProduct('search');
+const migrator = getProduct('migrator');
 
 export default function LandingPlayground() {
-  const [product, setProduct] = createSignal('search');
+  const [product, setProduct] = createSignal<ProductId>('search');
   const [query, setQuery] = createSignal('');
   const [selected, setSelected] = createSignal(0);
   const [step, setStep] = createSignal(0);
@@ -27,7 +29,9 @@ export default function LandingPlayground() {
         return;
       event.preventDefault();
       const value = (event.currentTarget as HTMLAnchorElement).dataset.preview;
-      setProduct(value === 'migrator' ? 'migrator' : 'search');
+      const target = products.find((item) => item.id === value);
+      if (!target) return;
+      setProduct(target.id);
       document
         .querySelector<HTMLButtonElement>(
           `#playground button[data-product="${product()}"]`,
@@ -52,7 +56,6 @@ export default function LandingPlayground() {
     <div
       id="playground"
       class="landing-playground"
-      classList={{ 'preview-migrator': product() === 'migrator' }}
     >
       <div class="playground-chrome">
         <span class="chrome-dots" aria-hidden="true">
@@ -70,31 +73,21 @@ export default function LandingPlayground() {
         role="group"
         aria-label="Choose a product preview"
       >
-        <button
-          data-product="search"
-          data-analytics-product="landing"
-          data-analytics-action="choose_search"
-          disabled={!ready()}
-          aria-pressed={product() === 'search'}
-          onClick={() => setProduct('search')}
-        >
-          Atheros Search
-        </button>
-        <button
-          data-product="migrator"
-          data-analytics-product="landing"
-          data-analytics-action="choose_migrator"
-          disabled={!ready()}
-          aria-pressed={product() === 'migrator'}
-          onClick={() => setProduct('migrator')}
-        >
-          Schema Migrator
-        </button>
+        <For each={products}>{(item) => (
+          <button
+            data-product={item.id}
+            data-analytics-product="landing"
+            data-analytics-action={`choose_${item.id}`}
+            disabled={!ready()}
+            aria-pressed={product() === item.id}
+            onClick={() => setProduct(item.id)}
+          >{item.name}</button>
+        )}</For>
       </div>
       <div class="preview-panels">
         <div
           class="preview-body preview-panel panel-migrator"
-          classList={{ 'is-inactive': product() !== 'migrator' }}
+          hidden={product() !== 'migrator'}
           inert={product() !== 'migrator'}
           aria-hidden={product() !== 'migrator'}
         >
@@ -102,6 +95,7 @@ export default function LandingPlayground() {
             <h2>Review before the run.</h2>
             <span class="preview-badge">OFFLINE</span>
           </div>
+          <div class="preview-layout">
           <div
             class="preview-steps"
             role="group"
@@ -123,6 +117,7 @@ export default function LandingPlayground() {
               )}
             </For>
           </div>
+          <div class="preview-detail">
           <div class="preview-file">
             <span>{migrationSteps[step()].title}</span>
             <span>SQL / SAMPLE</span>
@@ -134,10 +129,12 @@ export default function LandingPlayground() {
             Open the migration walkthrough{' '}
             <ArrowRight size={18} aria-hidden="true" />
           </a>
+          </div>
+          </div>
         </div>
         <div
           class="preview-body preview-panel panel-search"
-          classList={{ 'is-inactive': product() !== 'search' }}
+          hidden={product() !== 'search'}
           inert={product() !== 'search'}
           aria-hidden={product() !== 'search'}
         >
@@ -145,6 +142,8 @@ export default function LandingPlayground() {
             <h2>Review wireless indicators by site.</h2>
             <span class="preview-badge">SYNTHETIC</span>
           </div>
+          <div class="preview-layout">
+          <div class="preview-inputs">
           <label class="preview-search">
             <Search size={20} aria-hidden="true" />
             <input
@@ -198,6 +197,8 @@ export default function LandingPlayground() {
           <p class="preview-count" role="status">
             {results().length} wireless samples / local filtering
           </p>
+          </div>
+          <div class="preview-detail">
           <Show when={results().includes(record())}>
             <div class="preview-evidence">
               <p class="eyebrow">SITE / INDICATOR / SUPPORTING OBSERVATION</p>
@@ -226,6 +227,14 @@ export default function LandingPlayground() {
             Open the Search sample workflow{' '}
             <ArrowRight size={18} aria-hidden="true" />
           </a>
+          </div>
+          </div>
+        </div>
+        <div class="preview-panel panel-vpn" hidden={product() !== 'vpn'} inert={product() !== 'vpn'} aria-hidden={product() !== 'vpn'}>
+          <VpnDemo embedded />
+          <a class="text-link preview-full vpn-full" href={`${getProduct('vpn').path}#demo`}>
+            Open the traffic walkthrough <ArrowRight size={18} aria-hidden="true" />
+          </a>
         </div>
       </div>
       <div class="preview-caption">
@@ -234,7 +243,7 @@ export default function LandingPlayground() {
       </div>
       <noscript>
         <p class="preview-explanation">
-          Interactive controls need JavaScript. Follow either product link to
+          Interactive controls need JavaScript. Follow a product link to
           read its sample workflow.
         </p>
       </noscript>
