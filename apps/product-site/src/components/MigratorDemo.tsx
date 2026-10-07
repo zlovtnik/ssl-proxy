@@ -23,6 +23,8 @@ export default function MigratorDemo() {
             {(item, index) => (
               <button
                 type="button"
+                data-analytics-product="schema_migrator"
+                data-analytics-action="migration_step"
                 disabled={!ready()}
                 aria-pressed={step() === index()}
                 onClick={() => setStep(index())}

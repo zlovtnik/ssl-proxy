@@ -72,6 +72,8 @@ export default function LandingPlayground() {
       >
         <button
           data-product="search"
+          data-analytics-product="landing"
+          data-analytics-action="choose_search"
           disabled={!ready()}
           aria-pressed={product() === 'search'}
           onClick={() => setProduct('search')}
@@ -80,6 +82,8 @@ export default function LandingPlayground() {
         </button>
         <button
           data-product="migrator"
+          data-analytics-product="landing"
+          data-analytics-action="choose_migrator"
           disabled={!ready()}
           aria-pressed={product() === 'migrator'}
           onClick={() => setProduct('migrator')}
@@ -106,6 +110,8 @@ export default function LandingPlayground() {
             <For each={migrationSteps}>
               {(item, index) => (
                 <button
+                  data-analytics-product="landing"
+                  data-analytics-action="migration_step"
                   aria-label={item.name}
                   disabled={!ready()}
                   aria-pressed={step() === index()}
@@ -158,6 +164,8 @@ export default function LandingPlayground() {
               {(item) => (
                 <button
                   class="preview-record"
+                  data-analytics-product="landing"
+                  data-analytics-action="wireless_sample"
                   aria-pressed={
                     record().record === item.record ? 'true' : 'false'
                   }

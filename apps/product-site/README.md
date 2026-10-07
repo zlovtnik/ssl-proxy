@@ -15,7 +15,7 @@ npm run dev
 ```
 
 Open `http://localhost:4321`. Routes are `/`, `/atheros-search/`,
-`/schema-migrator/`, `/demo/`, and `/accessibility/`.
+`/schema-migrator/`, `/demo/`, `/accessibility/`, and `/privacy/`.
 
 ```sh
 npm run build
@@ -32,11 +32,13 @@ npm run test:all-browsers
 ```
 
 Generated dependency, build, and test outputs are ignored. The npm lockfile is
-committed. Fonts are bundled locally from Fontsource packages; no font CDN or
-third-party analytics is used. The two Latin variable faces are preloaded from
-build-time asset URLs so the first paint already uses them. Display preferences
-are stored only in browser local storage, with a fallback when storage is
-unavailable.
+committed. Fonts are bundled locally from Fontsource packages; no font CDN is
+used. The two Latin variable faces are preloaded from build-time asset URLs so
+the first paint already uses them. Display preferences can be stored in browser
+local storage when the reader leaves “Save these settings in this browser”
+enabled. Google Analytics 4 is loaded only on the production host, after
+analytics consent, and only when PUBLIC_GA4_MEASUREMENT_ID contains the GA4 web
+stream ID. Local and Pages preview builds do not include the analytics ID.
 Original font licenses are shipped in `public/font-licenses/`.
 
 Use `npm run format:check` to check source formatting and `npm run format`
@@ -74,6 +76,9 @@ The default local metadata origin is localhost and indexing is disabled.
 Cloudflare sets the production build's `PUBLIC_SITE_URL` to
 `https://rclabs.uk`; preview builds use the localhost default and remain
 `noindex`. The configuration validates that the value is an HTTP(S) origin.
+Set PUBLIC_GA4_MEASUREMENT_ID in the production Pages build environment after
+creating the GA4 web stream. It is a public measurement ID, not a credential.
+Leave it unset in local and preview builds.
 The sitemap, canonical URLs, social URLs, and robots response use that origin.
 Do not ship localhost metadata.
 

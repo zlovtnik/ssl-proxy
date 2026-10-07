@@ -90,8 +90,16 @@ the reason each check passes are in
       preview on October 6, 2026. The October 5 direct uploads remain recorded
       as exceptions in the [README](../README.md). Argo CD continues to manage
       Kubernetes workloads separately.
+- [ ] Create the GA4 web stream and set its measurement ID only in the
+      production Cloudflare Pages environment.
+- [ ] Configure GA4 user/event retention to two months; disable Google Signals,
+      Ads linking, remarketing, and automatic enhanced-measurement events.
+- [ ] Confirm the Google data-processing terms and any international-transfer
+      details before enabling the measurement ID.
+- [ ] Verify that no analytics request or identifier occurs before consent,
+      after rejection, or after withdrawal.
 - [ ] Measure post-launch field LCP, INP, and CLS with a consent/privacy-reviewed
-      measurement approach; no third-party tracking is included in this release.
+      approach; analytics must remain blocked until consent.
 
 Evaluation references: [W3C evaluation guidance](https://www.w3.org/WAI/test-evaluate/tools/selecting/),
 [Core Web Vitals](https://web.dev/articles/vitals), and

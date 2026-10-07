@@ -1,0 +1,61 @@
+---
+interface Props {
+  measurementId: string;
+}
+
+const { measurementId } = Astro.props;
+---
+
+{measurementId && (
+  <section
+    id="privacy-consent"
+    class="privacy-consent"
+    aria-labelledby="privacy-consent-title"
+    aria-describedby="privacy-consent-description"
+    hidden
+  >
+    <h2 id="privacy-consent-title" tabindex="-1">
+      Your privacy choices
+    </h2>
+    <p id="privacy-consent-description">
+      Allow optional Google Analytics to measure page visits, campaign sources,
+      calls to action, and sample interactions. It uses a pseudonymous browser
+      identifier. We do not send names, email addresses, or sample-filter text.
+      <a href="/privacy/">Read the privacy and cookies notice</a>.
+    </p>
+    <div class="privacy-consent-actions">
+      <button type="button" data-consent="accept">
+        Accept analytics
+      </button>
+      <button type="button" data-consent="reject">
+        Reject optional
+      </button>
+      <button
+        type="button"
+        data-consent="settings"
+        aria-expanded="false"
+        aria-controls="privacy-consent-settings"
+      >
+        Settings
+      </button>
+    </div>
+    <div id="privacy-consent-settings" class="privacy-consent-settings" hidden>
+      <fieldset>
+        <legend>Optional analytics</legend>
+        <label>
+          <input type="checkbox" data-consent="analytics-toggle" />
+          Allow Google Analytics to measure site use
+        </label>
+        <p>
+          Analytics stays off unless you turn it on. You can change this choice
+          at any time using Cookie preferences in the footer.
+        </p>
+      </fieldset>
+      <button type="button" data-consent="save">
+        Save choice
+      </button>
+    </div>
+  </section>
+)}
+
+<script src="../scripts/analytics.ts"></script>

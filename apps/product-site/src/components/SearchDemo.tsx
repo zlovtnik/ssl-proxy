@@ -22,6 +22,8 @@ export default function SearchDemo() {
         <label for="sample-site">1. Choose a monitored sample site</label>
         <select
           id="sample-site"
+          data-analytics-product="atheros_search"
+          data-analytics-action="sample_site"
           disabled={!ready()}
           value={selected()}
           onChange={(event) => setSelected(Number(event.currentTarget.value))}
@@ -32,6 +34,8 @@ export default function SearchDemo() {
         </select>
         <button
           type="button"
+          data-analytics-product="atheros_search"
+          data-analytics-action="next_sample_site"
           disabled={!ready()}
           onClick={() => setSelected((selected() + 1) % investigations.length)}
         >

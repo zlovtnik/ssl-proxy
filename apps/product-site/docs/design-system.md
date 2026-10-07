@@ -87,9 +87,9 @@ page-level horizontal scrolling, including enlarged text.
 
 ## Shared patterns
 
-`Layout.astro` owns the header, footer, navigation, display settings, and
-theme tokens. Route files compose these patterns and add nothing of their own
-structure where a shared one exists.
+`Layout.astro` owns the header, footer, navigation, display settings, consent
+panel, privacy links, and theme tokens. Route files compose these patterns and
+add nothing of their own structure where a shared one exists.
 
 | Pattern         | Classes                                             |
 | --------------- | --------------------------------------------------- |
@@ -102,6 +102,7 @@ structure where a shared one exists.
 | Contact         | `.contact-banner`, `.email-row`                     |
 | Actions         | `.actions`, `.button`, `.text-link`                 |
 | Location        | `.breadcrumb`                                       |
+| Privacy choice  | `.privacy-consent`, `.privacy-consent-actions`      |
 
 A pattern never repeats its own words next to itself: the contact banner pairs
 the "Discuss your use case." heading with the shorter `contact.link` label, and
@@ -139,15 +140,24 @@ narrow widths with enlarged text.
 
 ## Display preferences
 
-Theme, text size, line width, text spacing, and movement are reader settings
-that persist in local storage with a working fallback. Theme changes apply
-immediately so text never crosses an intermediate contrast state. All settings
+Theme, text size, line width, text spacing, and movement are reader settings.
+They persist in local storage only while “Save these settings in this browser”
+is enabled; disabling it clears saved values and keeps current choices in
+memory. Theme changes apply immediately so text never crosses an intermediate
+contrast state. All settings
 are offered in the same position on every route: one compact row docked to the
 bottom right of the viewport, opening upward into a two-column card that stays
 inside the viewport at every reader text size. Escape or a press outside closes
 the card and Escape returns focus to its toggle. Settings are progressive
 enhancement: browser zoom, text sizing, and custom styles keep working without
 JavaScript.
+
+## Privacy controls
+
+When a production GA4 measurement ID is configured, the consent panel appears
+until the reader accepts or rejects analytics. Acceptance and rejection have
+equal button styling. The footer keeps a permanent privacy notice link and a
+control to reopen the choice. Analytics remains off until affirmative consent.
 
 ## Changing the system
 

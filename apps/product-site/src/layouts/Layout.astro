@@ -7,6 +7,7 @@ import interLatin from '@fontsource-variable/inter/files/inter-latin-wght-normal
 import monoLatin from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 import '../styles/site.css';
 import { contact } from '../data/products';
+import PrivacyConsent from '../components/PrivacyConsent.astro';
 import { ArrowUpRight, Menu, Plus, SlidersHorizontal } from '@lucide/astro';
 interface Props {
   title: string;
@@ -20,6 +21,15 @@ const { title, description, product, structuredData } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const publicBuild =
   canonical.hostname !== 'localhost' && canonical.hostname !== '127.0.0.1';
+const candidateMeasurementId =
+  import.meta.env.PUBLIC_GA4_MEASUREMENT_ID?.trim();
+const analyticsMeasurementId =
+  import.meta.env.PROD &&
+  ['rclabs.uk', 'www.rclabs.uk'].includes(canonical.hostname) &&
+  candidateMeasurementId &&
+  /^G-[A-Z0-9]{5,}$/.test(candidateMeasurementId)
+    ? candidateMeasurementId
+    : '';
 const navigation = [
   ['/#products', 'Products'],
   ['/#approach', 'How they work'],
@@ -28,7 +38,11 @@ const navigation = [
 ---
 
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html
+  lang="en"
+  data-theme="dark"
+  data-ga4-id={analyticsMeasurementId || undefined}
+>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -83,6 +97,9 @@ const navigation = [
     )}
     <script is:inline>
       try {
+        if (sessionStorage.getItem('rclabs-display-persistence') === 'off') {
+          throw new Error('Display settings are not being persisted.');
+        }
         const preferences = JSON.parse(
           localStorage.getItem('rclabs-reading') || '{}',
         );
@@ -166,9 +183,16 @@ const navigation = [
       <p>Tools for evidence and deliberate change.</p>
       <nav aria-label="Footer">
         <a href="/accessibility/">Accessibility</a>
+        <a href="/privacy/">Privacy &amp; cookies</a>
+        {analyticsMeasurementId && (
+          <button type="button" id="privacy-settings-link">
+            Cookie preferences
+          </button>
+        )}
         <a href="/demo/">Contact &amp; demo</a>
       </nav>
     </footer>
+    <PrivacyConsent measurementId={analyticsMeasurementId} />
     <aside class="reading-bar" aria-label="Reading and display preferences">
       <details id="reading-controls">
         <summary>
@@ -217,11 +241,15 @@ const navigation = [
                 <option value="reduced">Reduce movement</option>
               </select>
             </label>
+            <label class="remember-settings">
+              <input id="remember-display-settings" type="checkbox" />
+              Save these settings in this browser
+            </label>
             <button id="reset-settings" type="button">
               Reset settings
             </button>
           </div>
-          <p>Saved in this browser when storage is available.</p>
+          <p>Saved in this browser only while the option below is on.</p>
           <noscript>
             <p>
               Display controls need JavaScript. Your browser's zoom, text
@@ -239,10 +267,22 @@ const navigation = [
         }),
       );
       const keys = ['theme', 'size', 'width', 'spacing', 'motion'] as const;
+      const rememberSettings = document.getElementById(
+        'remember-display-settings',
+      ) as HTMLInputElement | null;
+      const persistenceDisabled = () => {
+        try {
+          return sessionStorage.getItem('rclabs-display-persistence') === 'off';
+        } catch {
+          return false;
+        }
+      };
+      if (rememberSettings) rememberSettings.checked = !persistenceDisabled();
       function save() {
         const values = Object.fromEntries(
           keys.map((key) => [key, document.documentElement.dataset[key]]),
         );
+        if (persistenceDisabled()) return;
         try {
           localStorage.setItem('rclabs-reading', JSON.stringify(values));
         } catch {
@@ -261,6 +301,19 @@ const navigation = [
           save();
         });
       }
+      rememberSettings?.addEventListener('change', () => {
+        try {
+          if (rememberSettings.checked) {
+            sessionStorage.removeItem('rclabs-display-persistence');
+            save();
+          } else {
+            sessionStorage.setItem('rclabs-display-persistence', 'off');
+            localStorage.removeItem('rclabs-reading');
+          }
+        } catch {
+          /* Current-page display settings continue to work without storage. */
+        }
+      });
       document
         .getElementById('reset-settings')
         ?.addEventListener('click', () => {

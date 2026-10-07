@@ -1,0 +1,100 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { email } from '../../data/products';
+---
+
+<Layout
+  title="Privacy and cookies"
+  description="How the RCLabs public product site stores display preferences and, when enabled and accepted, uses Google Analytics 4."
+>
+  <section class="hero">
+    <div class="hero-copy">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/">RCLabs</a>
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">Privacy &amp; cookies</span>
+      </nav>
+      <p class="eyebrow">PRIVACY / PUBLIC PRODUCT SITE</p>
+      <h1>Privacy and cookies</h1>
+      <p class="lead">
+        This notice explains the browser storage and optional analytics used on
+        the RCLabs public product site.
+      </p>
+    </div>
+  </section>
+  <section class="section prose">
+    <h2>Who is responsible</h2>
+    <p>
+      RCLabs is responsible for this site. For privacy questions, email
+      <!--email_off-->
+      <a href={'mailto:' + email + '?subject=Privacy%20question'}>{email}</a>
+      <!--/email_off-->.
+    </p>
+
+    <h2>Display preferences</h2>
+    <p>
+      If you choose a display setting, the site can save your theme, text size,
+      line width, spacing, and movement preference in this browser so it can
+      restore them on a later visit. Open Reading &amp; display settings and
+      uncheck “Save these settings in this browser” to stop saving and clear the
+      saved choices. Your current choices continue to work until you leave.
+    </p>
+
+    <h2>Optional Google Analytics</h2>
+    <p>
+      On production builds where analytics is enabled, Google Analytics 4 runs
+      only after you choose “Accept analytics.” Before that choice, the Google
+      tag is not loaded and analytics cookies are not set. If you reject or
+      withdraw, analytics stays off and the site removes the Google Analytics
+      cookies it can access.
+    </p>
+    <p>
+      Analytics measures page visits, the referring site’s origin, approved
+      campaign tags, calls to action, and interactions with synthetic product
+      samples. It uses a pseudonymous browser identifier to connect visits in
+      that browser. The site does not send names, email addresses, sample-filter
+      text, or the full email link to Google Analytics. A click on an email link
+      is measured as a click; the site cannot tell whether you sent an email.
+    </p>
+    <p>
+      Google Analytics also collects standard session statistics and technical
+      details such as browser, device, operating system, language, screen size,
+      and approximate location. Google says it uses the IP address at collection
+      to derive location, then discards it before the data is logged. See
+      <a href="https://support.google.com/analytics/answer/11593727">
+        Google’s data collection summary
+      </a>
+      and
+      <a href="https://support.google.com/analytics/answer/11598602">
+        regional data collection details
+      </a>
+      .
+    </p>
+    <p>
+      The site does not use Google Analytics for advertising, remarketing,
+      cross-site tracking, or cross-device identity. Google Analytics user/event
+      detail is configured to expire after two months. Google may process
+      analytics data under its applicable terms and privacy practices. Read
+      <a href="https://policies.google.com/privacy">Google’s privacy policy</a>
+      and
+      <a href="https://support.google.com/analytics/answer/6366371">
+        Google’s guidance on avoiding personally identifiable information
+      </a>
+      .
+    </p>
+
+    <h2>Change or withdraw your choice</h2>
+    <p>
+      You can reopen Cookie preferences from the footer at any time. Your
+      preference is kept in this browser for up to six months, then the site
+      asks again. Changing your choice takes effect on the current page.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+      Email <!--email_off-->
+      <a href={'mailto:' + email + '?subject=Privacy%20question'}>{email}</a>
+      <!--/email_off--> if you have a question about this notice.
+    </p>
+  </section>
+</Layout>

@@ -15,6 +15,7 @@ const routes = [
   '/schema-migrator/',
   '/demo/',
   '/accessibility/',
+  '/privacy/',
 ];
 const tags = [
   'wcag2a',
@@ -25,6 +26,19 @@ const tags = [
   'wcag22aa',
   'best-practice',
 ];
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'rclabs-analytics-consent',
+      JSON.stringify({
+        version: 1,
+        analytics: false,
+        savedAt: Date.now(),
+      }),
+    );
+  });
+});
 
 test('header stays visible and product samples preserve the landing layout', async ({
   page,
@@ -429,6 +443,26 @@ test('skip link, reading persistence, reduced motion, forced colors, and 200% te
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
+test('display preferences stop persisting when the reader opts out', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.locator('#reading-controls > summary').click();
+  await page.locator('#setting-theme').selectOption('light');
+  expect(
+    await page.evaluate(() => localStorage.getItem('rclabs-reading')),
+  ).not.toBeNull();
+  await page.getByLabel('Save these settings in this browser').uncheck();
+  expect(
+    await page.evaluate(() => localStorage.getItem('rclabs-reading')),
+  ).toBeNull();
+  await page.locator('#setting-size').selectOption('large');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('#setting-size')).toHaveValue('standard');
+  await expect(page.locator('html')).not.toHaveAttribute('data-size');
+});
+
 test('metadata, sitemap, local indexing guard, self-hosted assets and no external requests', async ({
   page,
 }) => {
@@ -447,21 +481,31 @@ test('metadata, sitemap, local indexing guard, self-hosted assets and no externa
       'content',
       /social-preview/,
     );
+    const isPreview = await page.locator('meta[name="robots"]').count();
+    const expectedOrigin = isPreview
+      ? 'http://localhost:4321'
+      : 'https://rclabs.uk';
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
       'href',
-      `http://localhost:4321${route}`,
+      expectedOrigin + route,
     );
-    await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
-      'content',
-      'noindex, nofollow',
-    );
+    if (isPreview)
+      await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+        'content',
+        'noindex, nofollow',
+      );
+    else await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
   }
   expect(external).toEqual([]);
   const sitemap = await (await page.request.get('/sitemap.xml')).text();
-  for (const route of routes)
-    expect(sitemap).toContain(`http://localhost:4321${route}`);
-  expect(await (await page.request.get('/robots.txt')).text()).toContain(
-    'Disallow: /',
+  const sitemapOrigin =
+    (await page.locator('meta[name="robots"]').count()) > 0
+      ? 'http://localhost:4321'
+      : 'https://rclabs.uk';
+  for (const route of routes) expect(sitemap).toContain(sitemapOrigin + route);
+  const robots = await (await page.request.get('/robots.txt')).text();
+  expect(robots).toContain(
+    sitemapOrigin === 'http://localhost:4321' ? 'Disallow: /' : 'Allow: /',
   );
 });
 
@@ -844,7 +888,7 @@ test('every tabbable control shows a compliant focus ring and keeps tab order', 
   }
 });
 
-test('all five routes share one system of colours, header geometry, type and controls', async ({
+test('all six routes share one system of colours, header geometry, type and controls', async ({
   page,
 }) => {
   const snapshot = async (route: string, theme: string) => {
@@ -1099,12 +1143,15 @@ test('homepage metadata, identity markup and technical sections ship from the mo
     'WebSite',
   ]);
   expect(nodes[0].name).toBe('RCLabs');
-  expect(nodes[0].url).toBe('http://localhost:4321/');
+  const siteOrigin = new URL(
+    (await page.locator('link[rel="canonical"]').getAttribute('href'))!,
+  ).origin;
+  expect(nodes[0].url).toBe(siteOrigin + '/');
   expect(nodes[0].email).toBe(email);
   expect(nodes[0].logo).toBeUndefined();
   expect(nodes[0].sameAs).toBeUndefined();
   expect(nodes[1].publisher['@id']).toBe(nodes[0]['@id']);
-  expect(nodes[0]['@id']).toBe('http://localhost:4321/#organization');
+  expect(nodes[0]['@id']).toBe(siteOrigin + '/#organization');
 
   // Every modelled section is published once, with its own heading.
   for (const section of Object.values(homeSections)) {
@@ -1148,4 +1195,207 @@ test('homepage metadata, identity markup and technical sections ship from the mo
       route,
     ).toHaveCount(0);
   }
+});
+
+test('analytics markup matches the public-build measurement configuration', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const measurementId = await page.locator('html').getAttribute('data-ga4-id');
+  if (measurementId) {
+    expect(measurementId).toMatch(/^G-[A-Z0-9]{5,}$/);
+    await expect(page.locator('#privacy-consent')).toHaveCount(1);
+    await expect(page.locator('#privacy-consent')).toBeHidden();
+  } else {
+    await expect(page.locator('#privacy-consent')).toHaveCount(0);
+  }
+});
+
+test('GA4 waits for consent, tracks safe events, and stops on withdrawal', async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.route('https://www.googletagmanager.com/**', (route) =>
+    route.fulfill({ contentType: 'application/javascript', body: '' }),
+  );
+  const analyticsRequests: string[] = [];
+  page.on('request', (request) => {
+    if (/googletagmanager|google-analytics/.test(request.url()))
+      analyticsRequests.push(request.url());
+  });
+  await page.goto(
+    'http://127.0.0.1:4323/?person=visitor%40example.com&search=confidential&utm_source=linkedin&utm_campaign=fall-2026',
+  );
+  const panel = page.locator('#privacy-consent');
+  if (!(await panel.count())) test.skip();
+  await expect(panel).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute(
+    'data-ga4-id',
+    /^G-[A-Z0-9]{5,}$/,
+  );
+  expect(analyticsRequests).toEqual([]);
+  expect(
+    (await new AxeBuilder({ page }).withTags(tags).analyze()).violations,
+  ).toEqual([]);
+  for (const width of [375, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    for (const button of await panel
+      .locator('button[data-consent]:visible')
+      .all()) {
+      const bounds = await button.boundingBox();
+      expect(bounds!.width).toBeGreaterThanOrEqual(44);
+      expect(bounds!.height).toBeGreaterThanOrEqual(44);
+    }
+    await panel.getByRole('button', { name: 'Settings' }).click();
+    const saveChoice = panel.getByRole('button', { name: 'Save choice' });
+    const saveBounds = await saveChoice.boundingBox();
+    expect(saveBounds!.width).toBeGreaterThanOrEqual(44);
+    expect(saveBounds!.height).toBeGreaterThanOrEqual(44);
+    await panel.getByRole('button', { name: 'Settings' }).click();
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  await page.getByRole('button', { name: 'Accept analytics' }).click();
+  await expect.poll(() => analyticsRequests.length).toBe(1);
+  const measurementId = await page.locator('html').getAttribute('data-ga4-id');
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          Boolean(
+            (window as unknown as Record<string, boolean | undefined>)[
+              'ga-disable-' + id
+            ] === false,
+          ),
+        measurementId,
+      ),
+    )
+    .toBe(true);
+  await page
+    .getByLabel('Filter sample sites, indicators, and observations')
+    .fill('visitor@example.com');
+  await page
+    .locator('#playground')
+    .getByRole('button', { name: 'Schema Migrator', exact: true })
+    .click();
+  const inspectDataLayer = async () => {
+    const snapshot = await page.evaluate(() => {
+      const entries =
+        (window as unknown as { dataLayer?: IArguments[] }).dataLayer || [];
+      return {
+        entriesAreArguments: entries.every(
+          (entry) =>
+            Object.prototype.toString.call(entry) === '[object Arguments]',
+        ),
+        entries: entries.map((entry) => Array.from(entry)),
+      };
+    });
+    expect(snapshot.entriesAreArguments).toBe(true);
+    return snapshot.entries.map((entry) => JSON.stringify(entry)).join('\n');
+  };
+  const queued = await inspectDataLayer();
+  expect(queued).toContain('page_view');
+  expect(queued).toContain('sample_interaction');
+  expect(queued).toContain('linkedin');
+  expect(queued).toContain('fall-2026');
+  expect(queued).not.toContain('visitor@example.com');
+  expect(queued).not.toContain('person=');
+  expect(queued).not.toContain('search=');
+  expect(queued).not.toContain('mailto:');
+
+  await page.goto('http://127.0.0.1:4323/demo/');
+  await page.locator('a[href^="mailto:"]').first().click();
+  const mailtoEvent = await inspectDataLayer();
+  expect(mailtoEvent).toContain('mailto_click');
+  expect(mailtoEvent).not.toContain('rafael@rclabs.uk');
+  expect(mailtoEvent).not.toContain('subject=');
+
+  await context.addCookies([
+    {
+      name: '_ga',
+      value: 'test-browser-id',
+      url: 'http://127.0.0.1:4323',
+    },
+  ]);
+  await page.getByRole('button', { name: 'Cookie preferences' }).click();
+  await expect(panel).toBeVisible();
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(
+    panel.getByLabel('Allow Google Analytics to measure site use'),
+  ).toBeChecked();
+  await panel
+    .getByLabel('Allow Google Analytics to measure site use')
+    .uncheck();
+  await panel.getByRole('button', { name: 'Save choice' }).click();
+  await expect(panel).toBeHidden();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          Boolean(
+            (window as unknown as Record<string, boolean | undefined>)[
+              'ga-disable-' + id
+            ],
+          ),
+        measurementId,
+      ),
+    )
+    .toBe(true);
+  expect(
+    await context
+      .cookies()
+      .then((cookies) => cookies.some((cookie) => cookie.name === '_ga')),
+  ).toBe(false);
+  await context.close();
+});
+
+test('rejecting optional analytics keeps the tag and identifiers off', async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.route('https://www.googletagmanager.com/**', (route) =>
+    route.fulfill({ contentType: 'application/javascript', body: '' }),
+  );
+  const analyticsRequests: string[] = [];
+  page.on('request', (request) => {
+    if (/googletagmanager|google-analytics/.test(request.url()))
+      analyticsRequests.push(request.url());
+  });
+  await page.goto('http://127.0.0.1:4323/');
+  const measurementId = await page.locator('html').getAttribute('data-ga4-id');
+  if (!measurementId) test.skip();
+  await page.getByRole('button', { name: 'Reject optional' }).click();
+  await expect(page.locator('#privacy-consent')).toBeHidden();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          Boolean(
+            (window as unknown as Record<string, boolean | undefined>)[
+              'ga-disable-' + id
+            ],
+          ),
+        measurementId,
+      ),
+    )
+    .toBe(true);
+  expect(analyticsRequests).toEqual([]);
+  expect(
+    await context
+      .cookies()
+      .then((cookies) =>
+        cookies.some((cookie) => /^_(ga|gid)/.test(cookie.name)),
+      ),
+  ).toBe(false);
+  await page.reload();
+  await expect(page.locator('#privacy-consent')).toBeHidden();
+  expect(analyticsRequests).toEqual([]);
+  await context.close();
 });
