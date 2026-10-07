@@ -44,6 +44,15 @@ spec:
             runAsGroup: 1000
             readOnlyRootFilesystem: true
           env:
+            - name: WIRELESS_PROJECTION_MODE
+              value: "legacy"
+            - name: WIRELESS_RANGES_ENABLED
+              value: "false"
+            - name: WIRELESS_CALIBRATIONS_JSON
+              valueFrom:
+                configMapKeyRef:
+                  name: wireless-sensor-calibration
+                  key: WIRELESS_CALIBRATIONS_JSON
             - name: JAVA_TOOL_OPTIONS
               value: "-XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=40 -XX:MaxRAMPercentage=60"
             - name: POD_NAMESPACE
@@ -300,7 +309,7 @@ spec:
             - name: POSTGRES_ENABLED
               value: "true"
             - name: POSTGRES_SCHEMA_MANIFEST_SHA256
-              value: "82cee5ae93bf11031b1f9f960d3a5055b6f0ee6c6f27ccac9507ece7d383d140"
+              value: "65e28958a5ab00581b3d10547f03bd9e75e99ca05289de326658a4ef7e0a483b"
             - name: POSTGRES_HOST
               value: "postgres-pgbouncer"
             - name: POSTGRES_PORT

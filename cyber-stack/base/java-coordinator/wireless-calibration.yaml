@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wireless-sensor-calibration
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  # Reviewed measurements only. Populate through the environment overlay before
+  # enabling ranges. No fabricated reference RSSI or sensor locations.
+  WIRELESS_CALIBRATIONS_JSON: '[]'

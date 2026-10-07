@@ -40,6 +40,8 @@ spec:
           image: atheros-search:latest
           imagePullPolicy: IfNotPresent
           env:
+            - name: ATHSEARCH_WIRELESS_PROJECTION
+              value: "false"
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -59,7 +61,7 @@ spec:
             - name: ATHSEARCH_POSTGRES_TLS_SERVER_NAME
               value: "postgres-pgbouncer"
             - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
-              value: "3fbd5520284748ecabeca05d71517d3ec2eaf1b61c7a091bba1755fe7131884b"
+              value: "cf93e7e611ddfa897f36e68f454160ef9dfd57686fbbb262bb030ca050ba912f"
             - name: ATHSEARCH_EMBEDDING_MODEL
               value: "nomic-embed-text-v2-moe"
             - name: ATHSEARCH_EMBEDDING_DIMENSIONS

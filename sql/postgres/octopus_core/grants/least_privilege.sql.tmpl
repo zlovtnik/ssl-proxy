@@ -3,6 +3,8 @@
 
 REVOKE CREATE ON SCHEMA octopus_core FROM PUBLIC, {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT USAGE ON SCHEMA octopus_core TO {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.wireless_projection_receipts,
+  octopus_core.wireless_projection_hashes TO {{OCTOPUS_ACCOUNT}};
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.registered_devices TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.authorized_networks TO {{OCTOPUS_ACCOUNT}};
