@@ -1165,11 +1165,9 @@ test('homepage metadata, identity markup and technical sections ship from the mo
       section.id,
     ).toHaveCount(1);
   }
-  for (const product of products)
-    await expect(
-      page.getByRole('heading', { level: 2, name: product.homeTitle }),
-      product.name,
-    ).toHaveCount(1);
+  await expect(page.locator('#products .product-card h2')).toHaveText(
+    products.map((product) => product.homeTitle),
+  );
 
   // The four new calls to action keep their documented destinations.
   await expect(

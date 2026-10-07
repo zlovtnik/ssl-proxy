@@ -1,7 +1,8 @@
 # RCLabs public product site
 
-A standalone Astro + TypeScript frontend with SolidJS synthetic demonstrations.
-The existing Search and Migrator operator consoles are separate applications.
+A standalone Astro + TypeScript frontend with SolidJS synthetic demonstrations
+for Atheros Search, Schema Migrator, and RCLabs VPN / Proxy. The existing Search
+and Migrator operator consoles are separate applications.
 No application API, authentication, database, or migration execution is used here.
 
 ## Local development
@@ -14,8 +15,9 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:4321`. Routes are `/`, `/atheros-search/`,
-`/schema-migrator/`, `/demo/`, `/accessibility/`, and `/privacy/`.
+Open `http://localhost:4321`. Routes are `/`, `/products/`,
+`/atheros-search/`, `/schema-migrator/`, `/vpn-proxy/`, `/demo/`,
+`/accessibility/`, and `/privacy/`.
 
 ```sh
 npm run build
