@@ -1,0 +1,179 @@
+---
+import { ArrowUpRight } from '@lucide/astro';
+import Layout from '../layouts/Layout.astro';
+import Contact from './Contact.astro';
+import { getGuide, getProduct, guideIndex, guidePath } from '../data/products';
+import '../styles/guides.css';
+
+interface Props {
+  slug: string;
+}
+const guide = getGuide(Astro.props.slug);
+const product = getProduct(guide.productId);
+const breadcrumbs = [
+  { name: 'RCLabs', path: '/' },
+  { name: 'Guides', path: '/guides/' },
+  { name: guide.title, path: guidePath(guide.slug) },
+];
+---
+
+<Layout
+  title={guide.title}
+  description={guide.description}
+  product={guide.productId}
+  breadcrumbs={breadcrumbs}
+>
+  <article class="guide">
+    <header class="hero">
+      <div class="hero-copy">
+        <nav class="breadcrumb" aria-label="Breadcrumb">
+          {breadcrumbs.map((crumb, index) => (
+            <>
+              {index > 0 && <span aria-hidden="true">/</span>}
+              {index === breadcrumbs.length - 1 ? (
+                <span aria-current="page">{crumb.name}</span>
+              ) : (
+                <a href={crumb.path}>{crumb.name}</a>
+              )}
+            </>
+          ))}
+        </nav>
+        <p class="eyebrow">{guide.eyebrow}</p>
+        <h1>{guide.title}</h1>
+        <p class="lead">{guide.introduction}</p>
+        <div class="actions">
+          <a class="text-link" href={product.path}>
+            {product.name}
+            <ArrowUpRight size={18} aria-hidden="true" />
+          </a>
+        </div>
+      </div>
+    </header>
+    <nav
+      class="guide-contents evidence-panel"
+      aria-label={guideIndex.contentsLabel}
+    >
+      <h2>{guideIndex.contentsLabel}</h2>
+      <ol>
+        {guide.sections.map((section) => (
+          <li>
+            <a href={`#${section.id}`}>{section.title}</a>
+          </li>
+        ))}
+      </ol>
+    </nav>
+    {guide.sections.map((section) => (
+      <section
+        class="section"
+        id={section.id}
+        aria-labelledby={`${section.id}-title`}
+      >
+        <div class="section-heading">
+          <h2 id={`${section.id}-title`}>{section.title}</h2>
+          {section.paragraphs.map((paragraph) => (
+            <p>{paragraph}</p>
+          ))}
+        </div>
+        {section.examples && (
+          <div class="guide-examples">
+            {section.examples.map((example) => (
+              <figure class="guide-example">
+                <figcaption>{example.label}</figcaption>
+                <pre><code>{example.code}</code></pre>
+                <p class="fine-print">{example.note}</p>
+              </figure>
+            ))}
+          </div>
+        )}
+        {section.table && (
+          <div
+            class="guide-table"
+            role="region"
+            aria-label={section.table.caption}
+            tabindex="0"
+          >
+            <table>
+              <caption>{section.table.caption}</caption>
+              <thead>
+                <tr>
+                  {section.table.headers.map((header) => (
+                    <th scope="col">{header}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {section.table.rows.map((row) => (
+                  <tr>
+                    {row.map((cell, index) =>
+                      index === 0 ? (
+                        <th scope="row">{cell}</th>
+                      ) : (
+                        <td>{cell}</td>
+                      ),
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {section.points && (
+          <ul class="guide-points">
+            {section.points.map((point) => (
+              <li>{point}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+    ))}
+    <aside class="evidence-panel" aria-label={guideIndex.limitsLabel}>
+      <p class="eyebrow">{guideIndex.limitsLabel}</p>
+      <p class="caveat">{guide.caveat}</p>
+    </aside>
+    <section class="section" aria-labelledby="sources-title">
+      <div class="section-heading">
+        <h2 id="sources-title">{guideIndex.sourcesTitle}</h2>
+        <p>{guideIndex.sourcesNote}</p>
+      </div>
+      <ul class="guide-sources">
+        {guide.sources.map((source) => (
+          <li>
+            <a class="text-link" href={source.href}>
+              {source.label}
+              <ArrowUpRight size={18} aria-hidden="true" />
+            </a>
+            <p class="fine-print">{source.note}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
+    <section class="section" aria-labelledby="related-title">
+      <div class="section-heading">
+        <h2 id="related-title">{guideIndex.relatedTitle}</h2>
+      </div>
+      <ul class="guide-related">
+        {guide.related.map((slug) => (
+          <li>
+            <a class="text-link" href={guidePath(slug)}>
+              {getGuide(slug).title}
+              <ArrowUpRight size={18} aria-hidden="true" />
+            </a>
+          </li>
+        ))}
+        <li>
+          <a class="text-link" href={product.path}>
+            {guideIndex.productLinkLabel}: {product.name}
+            <ArrowUpRight size={18} aria-hidden="true" />
+          </a>
+        </li>
+        <li>
+          <a class="text-link" href="/guides/">
+            {guideIndex.indexLinkLabel}
+            <ArrowUpRight size={18} aria-hidden="true" />
+          </a>
+        </li>
+      </ul>
+    </section>
+  </article>
+  <Contact product={product.name} />
+</Layout>

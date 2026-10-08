@@ -42,6 +42,16 @@ evaluation hypothesis, and the rule that no numeric improvement appears here
 without a documented baseline, workload, environment, and measurement method.
 Appearance follows [the design system](design-system.md).
 
+The six [technical guides](../src/pages/guides/index.astro) render the `guides`
+model in [products.ts](../src/data/products.ts) through
+[GuidePage](../src/components/GuidePage.astro). Their migration ordering,
+validation, snapshots and drift explanations use the implementation sources
+above. Wireless investigation examples use the sensor's documented heuristics,
+site labels and observation caveats; hybrid search uses the search fusion and
+explanation contracts. Guide tables and sample records are illustrative unless
+explicitly identified as captured command output. They establish no measured
+performance, confirmed attack, or complete device identity.
+
 Visual research: [Linear](https://linear.app/), [Resend](https://resend.com/),
 and [Mintlify](https://www.mintlify.com/) inform hierarchy and progressive detail;
 their appearance is not accessibility evidence. The identity and SVG diagrams are

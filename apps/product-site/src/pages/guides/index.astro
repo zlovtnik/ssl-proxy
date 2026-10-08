@@ -1,0 +1,52 @@
+---
+import { ArrowUpRight } from '@lucide/astro';
+import Layout from '../../layouts/Layout.astro';
+import Contact from '../../components/Contact.astro';
+import { guideIndex, guides, guidePath } from '../../data/products';
+import '../../styles/guides.css';
+const breadcrumbs = [
+  { name: 'RCLabs', path: '/' },
+  { name: 'Guides', path: '/guides/' },
+];
+---
+
+<Layout
+  title={guideIndex.title}
+  description={guideIndex.description}
+  breadcrumbs={breadcrumbs}
+>
+  <section class="hero" aria-labelledby="guides-title">
+    <div class="hero-copy">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/">RCLabs</a>
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">Guides</span>
+      </nav>
+      <p class="eyebrow">{guideIndex.eyebrow}</p>
+      <h1 id="guides-title">{guideIndex.title}</h1>
+      <p class="lead">{guideIndex.introduction}</p>
+    </div>
+  </section>
+  <section class="section" aria-label={guideIndex.eyebrow}>
+    <div class="feature-grid guide-cards">
+      {guides.map((guide) => (
+        <article>
+          <p class="eyebrow">{guide.eyebrow}</p>
+          <h2>
+            <a href={guidePath(guide.slug)}>{guide.title}</a>
+          </h2>
+          <p>{guide.description}</p>
+          <a
+            class="text-link"
+            href={guidePath(guide.slug)}
+            aria-label={`${guideIndex.readLabel}: ${guide.title}`}
+          >
+            {guideIndex.readLabel}
+            <ArrowUpRight size={18} aria-hidden="true" />
+          </a>
+        </article>
+      ))}
+    </div>
+  </section>
+  <Contact />
+</Layout>

@@ -8,6 +8,8 @@ import {
   home,
   homeSections,
   products,
+  guides,
+  guidePath,
 } from '../src/data/products';
 
 const routes = [
@@ -19,6 +21,8 @@ const routes = [
   '/demo/',
   '/accessibility/',
   '/privacy/',
+  '/guides/',
+  ...guides.map((guide) => guidePath(guide.slug)),
 ];
 const tags = [
   'wcag2a',
@@ -269,7 +273,7 @@ test('Search reviews sample sites and indicators with a keyboard', async ({
   ).toBeVisible();
   await page.getByLabel('1. Choose a monitored sample site').selectOption('0');
   await expect(
-    page.getByRole('heading', { name: 'Suspected rogue access point' }),
+    page.getByRole('heading', { name: 'Suspected rogue access point', exact: true }),
   ).toBeVisible();
   for (const theme of ['dark']) {
     await page.evaluate(
@@ -940,6 +944,7 @@ test('every tabbable control shows a compliant focus ring and keeps tab order', 
       );
       const rings = await renderedPairs(page, 'rings');
       const [counted] = await renderedPairs(page, 'focusable');
+      const controlCount = counted!.count!;
       expect(rings.length, `${route} ${theme} focusable controls`).toBe(
         counted!.count,
       );
@@ -956,7 +961,7 @@ test('every tabbable control shows a compliant focus ring and keeps tab order', 
       // part-way through a traversal.
       let previous = -1;
       let stops = 0;
-      for (let step = 0; step < 60; step++) {
+      for (let step = 0; step < controlCount + 2; step++) {
         await page.keyboard.press('Tab');
         const [focused] = await renderedPairs(page, 'focus');
         if (!focused) continue;
@@ -969,7 +974,7 @@ test('every tabbable control shows a compliant focus ring and keeps tab order', 
   }
 });
 
-test('all eight routes share one system of colours, header geometry, type and controls', async ({
+test('all public routes share one system of colours, header geometry, type and controls', async ({
   page,
 }) => {
   const snapshot = async (route: string, theme: string) => {
@@ -1208,13 +1213,11 @@ test('homepage metadata, identity markup and technical sections ship from the mo
   await expect(page.locator('#search-benchmark')).toContainText(
     'No relevance, latency, or storage figures appear here yet',
   );
-  // The other four routes carry no structured data of their own.
+  // Other pages can describe their visible breadcrumbs without claiming identity.
   for (const route of routes.slice(1)) {
     await page.goto(route);
-    await expect(
-      page.locator('script[type="application/ld+json"]'),
-      route,
-    ).toHaveCount(0);
+    const schemas = await page.locator('script[type="application/ld+json"]').allTextContents();
+    for (const schema of schemas) expect(JSON.parse(schema)['@type'], route).toBe('BreadcrumbList');
   }
 });
 

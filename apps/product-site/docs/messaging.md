@@ -21,6 +21,11 @@ The catalogue at `/products/` compares all three. The homepage playground runs
 one synthetic sample at a time. Product pages place the full sample below the
 introductory hero so expanding a detail changes the page height naturally.
 
+The six technical guides under `/guides/` explain separate investigation and
+migration questions with repository-backed mechanisms and labelled examples.
+They link to the relevant product and sibling guides. Keep each guide distinct;
+the homepage introduces the topics and links to the complete guides.
+
 ## Evidence and language
 
 Use `interactive sample`, never `live sample`. Every demonstration uses

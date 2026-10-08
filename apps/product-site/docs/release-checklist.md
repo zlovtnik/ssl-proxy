@@ -1,13 +1,13 @@
 # Release checklist
 
-This checklist covers the eight-route, three-product redesign. Prior release
+This checklist covers the public products, technical guides, and search routing. Prior release
 evidence is retained in [validation results](validation-results.md). Copy and
 appearance follow [messaging](messaging.md) and [the design system](design-system.md).
 
 ## Local verification
 
 - [ ] Record the final build, type check, and browser-suite results for this revision.
-- [ ] Check all eight routes in the shared dark theme, including navigation and contact.
+- [ ] Check all public routes in the shared dark theme, including guides, navigation and contact.
 - [ ] Confirm saved light/system themes and system colour preferences cannot change the theme.
 - [ ] Check every sample, expanded disclosure, and card at 320-1440px.
 - [ ] Confirm the removed display-settings dock stays absent and browser zoom
@@ -32,10 +32,14 @@ appearance follow [messaging](messaging.md) and [the design system](design-syste
 
 ## Reviewed publication
 
-- [ ] Build with `PUBLIC_SITE_URL=https://rclabs.uk`; verify eight sitemap URLs,
+- [ ] Build with `PUBLIC_SITE_URL=https://rclabs.uk`; verify all public sitemap URLs,
       canonical URLs, robots response, and updated social preview.
 - [ ] Push reviewed Git changes and inspect the automatic Cloudflare Pages preview.
 - [ ] Merge reviewed changes to main, then verify the served revision and routes.
+- [ ] Verify image responses for the PNG/ICO favicons, real 404 responses for
+      unmatched addresses, and the contact permanent redirects.
+- [ ] Verify a preview branch remains `noindex` even when it inherits production variables.
+- [ ] Inspect the sitemap and indexing status in Search Console manually after publication.
 - [ ] Verify plain email contact without JavaScript on the live origin.
 - [ ] Check social preview compatibility on the sharing platforms in use.
 - [ ] Recheck analytics consent, rejection, and withdrawal on the production build.

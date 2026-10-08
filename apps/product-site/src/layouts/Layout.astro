@@ -13,11 +13,18 @@ interface Props {
   title: string;
   description: string;
   product?: string;
-  // Homepage-only identity markup. Routes that pass nothing emit nothing, so
-  // the other four pages keep byte-identical output.
   structuredData?: Record<string, unknown>;
+  breadcrumbs?: { name: string; path: string }[];
+  noindex?: boolean;
 }
-const { title, description, product, structuredData } = Astro.props;
+const {
+  title,
+  description,
+  product,
+  structuredData,
+  breadcrumbs = [],
+  noindex = false,
+} = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const publicBuild =
   canonical.hostname !== 'localhost' && canonical.hostname !== '127.0.0.1';
@@ -32,9 +39,23 @@ const analyticsMeasurementId =
     : '';
 const navigation = [
   ['/products/', 'Products'],
+  ['/guides/', 'Guides'],
   ['/#approach', 'How they work'],
   ['/#faq', 'FAQ'],
 ];
+const breadcrumbData =
+  breadcrumbs.length > 1
+    ? {
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: breadcrumbs.map((item, index) => ({
+          '@type': 'ListItem',
+          position: index + 1,
+          name: item.name,
+          item: new URL(item.path, Astro.site).href,
+        })),
+      }
+    : undefined;
 ---
 
 <!doctype html>
@@ -63,9 +84,12 @@ const navigation = [
       type="font/woff2"
       crossorigin
     />
-    {!publicBuild && <meta name="robots" content="noindex, nofollow" />}
-    <link rel="canonical" href={canonical} />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    {(!publicBuild || noindex) && (
+      <meta name="robots" content="noindex, nofollow" />
+    )}
+    {!noindex && <link rel="canonical" href={canonical} />}
+    <link rel="icon" type="image/png" sizes="96x96" href="/favicon.png" />
+    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="RCLabs" />
     <meta property="og:title" content={title} />
@@ -93,6 +117,13 @@ const navigation = [
         type="application/ld+json"
         is:inline
         set:html={JSON.stringify(structuredData)}
+      />
+    )}
+    {breadcrumbData && (
+      <script
+        type="application/ld+json"
+        is:inline
+        set:html={JSON.stringify(breadcrumbData)}
       />
     )}
     <script is:inline>

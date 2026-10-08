@@ -1,6 +1,6 @@
 # Design system
 
-All eight public routes share [site.css](../src/styles/site.css). It owns
+All public routes share [site.css](../src/styles/site.css). It owns
 colours, typography, spacing, surfaces, controls, product cards, and demo layouts.
 [landing.css](../src/styles/landing.css) composes homepage-specific patterns
 without redefining the shared system.

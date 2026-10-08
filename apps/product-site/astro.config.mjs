@@ -1,8 +1,12 @@
 import { defineConfig } from 'astro/config';
 import solid from '@astrojs/solid-js';
 
-// Local metadata uses the review origin until a public hostname is chosen.
-const site = process.env.PUBLIC_SITE_URL || 'http://localhost:4321';
+// Preview branches must stay excluded even if they inherit production variables.
+const pagesPreview =
+  process.env.CF_PAGES === '1' && process.env.CF_PAGES_BRANCH !== 'main';
+const site = pagesPreview
+  ? 'http://localhost:4321'
+  : process.env.PUBLIC_SITE_URL || 'http://localhost:4321';
 const origin = new URL(site);
 if (
   !['http:', 'https:'].includes(origin.protocol) ||

@@ -1,0 +1,20 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { notFound } from '../data/products';
+---
+
+<Layout title={notFound.title} description={notFound.description} noindex>
+  <section class="hero">
+    <p class="eyebrow">{notFound.eyebrow}</p>
+    <h1>{notFound.heading}</h1>
+    <p class="lead">{notFound.summary}</p>
+    <div class="actions">
+      <a class="button primary" href="/products/">
+        {notFound.productsLabel}
+      </a>
+      <a class="text-link" href="/guides/">
+        {notFound.guidesLabel}
+      </a>
+    </div>
+  </section>
+</Layout>

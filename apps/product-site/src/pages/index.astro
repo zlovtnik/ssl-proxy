@@ -12,6 +12,9 @@ import {
   home,
   homeSections,
   products,
+  guides,
+  guidePath,
+  guideIndex,
 } from '../data/products';
 import '../styles/landing.css';
 
@@ -542,6 +545,20 @@ const structuredData = {
           <a href="/demo/">{contact.cta}</a> to agree on the next step by email.
         </p>
       </details>
+    </div>
+  </section>
+  <section class="section" id="guides" aria-labelledby="guides-title">
+    <div class="section-heading">
+      <h2 id="guides-title"><a href="/guides/">{guideIndex.title}</a></h2>
+      <p>{guideIndex.summary}</p>
+    </div>
+    <div class="feature-grid">
+      {guides.map((item) => (
+        <article>
+          <h3><a href={guidePath(item.slug)}>{item.title}</a></h3>
+          <p>{item.description}</p>
+        </article>
+      ))}
     </div>
   </section>
   <div id="contact" class="section">

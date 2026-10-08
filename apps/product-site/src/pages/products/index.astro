@@ -4,7 +4,10 @@ import ProductCards from '../../components/ProductCards.astro';
 import Contact from '../../components/Contact.astro';
 import { catalogue, products } from '../../data/products';
 ---
-<Layout title={catalogue.title} description={catalogue.description}>
+<Layout title={catalogue.title} description={catalogue.description} breadcrumbs={[
+  { name: 'RCLabs', path: '/' },
+  { name: 'Products', path: '/products/' },
+]}>
   <section class="hero">
     <nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">RCLabs</a><span aria-hidden="true">/</span><span aria-current="page">Products</span></nav>
     <p class="eyebrow">RCLABS / PRODUCTS</p>

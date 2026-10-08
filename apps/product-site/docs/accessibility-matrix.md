@@ -1,6 +1,6 @@
 # WCAG 2.2 evidence matrix
 
-Scope: the eight public routes, the shared dark theme, product catalogue, and all three
+Scope: the public product and guide routes, the shared dark theme, product catalogue, and all three
 synthetic samples. The site targets
 applicable WCAG 2.2 A, AA, and AAA criteria. It makes no conformance claim.
 

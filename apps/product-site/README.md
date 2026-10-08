@@ -76,13 +76,40 @@ public-site build.
 
 The default local metadata origin is localhost and indexing is disabled.
 Cloudflare sets the production build's `PUBLIC_SITE_URL` to
-`https://rclabs.uk`; preview builds use the localhost default and remain
-`noindex`. The configuration validates that the value is an HTTP(S) origin.
+`https://rclabs.uk`; Pages branches other than `main` force the localhost
+metadata origin and remain `noindex`, even if they inherit `PUBLIC_SITE_URL`.
+The configuration validates that the value is an HTTP(S) origin.
 Set PUBLIC_GA4_MEASUREMENT_ID in the production Pages build environment after
 creating the GA4 web stream. It is a public measurement ID, not a credential.
 Leave it unset in local and preview builds.
 The sitemap, canonical URLs, social URLs, and robots response use that origin.
 Do not ship localhost metadata.
+
+## Search visibility
+
+The public product pages and six technical guides are indexable in production.
+The guide index, navigation, product links, and sitemap expose the guide routes
+without JavaScript. Visible product and guide breadcrumbs have matching
+BreadcrumbList markup. The separate authenticated Search and Migrator console
+shells use `noindex`; public product pages are the search destinations.
+
+The [404 route](src/pages/404.astro) creates the top-level `404.html` that
+disables Pages' default single-page application fallback. Unmatched retired
+addresses return a missing-page response instead of a successful homepage copy.
+The [redirect rules](public/_redirects) move the old contact address to the
+current contact page. Canonical metadata prefers the apex hostname over `www`.
+
+The existing SVG brand icon has PNG and ICO equivalents for search and browser
+compatibility. Recreate them after an intentional icon change with
+`node scripts/generate-favicons.mjs`; this uses the installed local Playwright
+browser and changes only those two public assets.
+
+Google Search Console remains manual: verify account access, submit the sitemap,
+inspect the homepage and product/guide URLs, and request indexing after reviewed
+publication. Check indexed HTML and crawl dates before treating old snippets as
+current site content. See the [search implementation plan](../../docs/compose/plans/2026-10-08-google-search-console.md).
+
+## Reviewed publication
 
 After reviewing the Git source and running local tests, push a branch touching
 `apps/product-site/` and inspect its automatic Pages preview. Merge the

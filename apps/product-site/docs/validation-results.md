@@ -1,30 +1,44 @@
 # Local validation results
 
-This record covers the three-product redesign: the shared RCLabs dark/green
-visual system, the `/products/` catalogue, RCLabs VPN / Proxy, and natural-height
-demos and disclosures. It replaces earlier two-product layout notes. No
-accessibility conformance claim is made.
+This record covers the three-product site and technical guides: the shared
+RCLabs dark/green visual system, product catalogue, natural-height demos and
+disclosures, and search routing. No accessibility conformance claim is made.
 
 ## Automated checks
 
 Last run: 2026-10-08. Re-run these after every theme or layout change and replace
 the dated entries with new evidence:
 
-- `npm run build`: passed; eight static routes, zero errors, warnings, or hints.
-- `npm test`: passed; 39 Chromium tests, with two production analytics tests
-  skipped because no production measurement ID is configured.
-- `npm run review`: completed all 16 desktop/mobile route captures with no page
-  errors. These are local single-run measurements, not field performance data.
+- `PUBLIC_SITE_URL=https://rclabs.uk npm run build`: passed; 16 HTML pages
+  (15 indexable pages and an excluded 404), zero errors, warnings, or hints.
+- `npm test -- --config=/tmp/rclabs-seo-playwright.config.ts`: passed; 50
+  Chromium tests, with two analytics tests skipped because no measurement ID
+  is configured. Temporary test settings reused the existing site preview on
+  port 4323 instead of stopping it. The repository test configuration is unchanged.
+- A Pages preview build with `CF_PAGES=1`, `CF_PAGES_BRANCH=seo-preview`, and an
+  inherited production `PUBLIC_SITE_URL` passed. Homepage and guide artifacts
+  retained `noindex`; robots excluded crawling. Final output was rebuilt with
+  the production origin afterward.
+- PNG and ICO response bytes, 15 unique sitemap URLs, production canonicals,
+  and the excluded 404 artifact passed dedicated checks.
+- Local Pages routing checks confirmed retired paths return 404, both old
+  contact forms redirect with 301 to `/demo/`, and favicons return image content.
+  The installed emulator used its supported compatibility date, `2026-06-24`,
+  for these local static-routing checks; production configuration was unchanged.
+- Desktop and mobile guide screenshots were inspected. Prior `npm run review`
+  captures cover the original eight routes, not the added guides. These are
+  local observations, not field performance data.
 - `python3 scripts/check-docs.py`: passed Markdown references and repository
   documentation checks.
-- `npm run format:check`: reports formatting warnings in 21 files, including
-  existing formatting in files touched for this update; no broad reformatting
-  was applied.
+- Targeted formatting checks passed for the new SEO tests, guide components,
+  guide routes/styles, 404, favicon generator, shared layout and configuration.
+  A repository-wide formatting cleanup was not performed.
 
 The browser suite covers the shared dark theme (including saved light/system
 values and system colour preferences being ignored), product switching, all
 three synthetic samples, focus, contrast, responsive reflow, and link
-destinations. It confirms the display-settings dock is absent while previously
+destinations across all 15 public content routes. It confirms the display-settings
+dock is absent while previously
 saved display choices still apply.
 
 - [Layout regressions](../tests/layout.spec.ts) expand each disclosure and card

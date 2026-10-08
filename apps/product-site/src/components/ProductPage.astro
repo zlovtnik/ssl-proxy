@@ -6,12 +6,16 @@ import MigratorDemo from './MigratorDemo';
 import VpnDemo from './VpnDemo';
 import Diagram from './Diagram.astro';
 import Contact from './Contact.astro';
-import { getProduct, type ProductId } from '../data/products';
+import { getProduct, guides, guidePath, guideIndex, type ProductId } from '../data/products';
 interface Props { id: ProductId }
 const product = getProduct(Astro.props.id);
 ---
 
-<Layout title={`${product.name} - ${product.headline.join(' ')}`} description={product.summary} product={product.id}>
+<Layout title={`${product.name} - ${product.headline.join(' ')}`} description={product.summary} product={product.id} breadcrumbs={[
+  { name: 'RCLabs', path: '/' },
+  { name: 'Products', path: '/products/' },
+  { name: product.name, path: product.path },
+]}>
   <section class="hero product-hero" aria-labelledby="hero-title">
     <div class="hero-copy">
       <nav class="breadcrumb" aria-label="Breadcrumb">
@@ -72,5 +76,21 @@ const product = getProduct(Astro.props.id);
     <p class="eyebrow">{product.sections.glossary.label}</p><h2 id="terms-title">{product.sections.glossary.title}</h2>
     <dl>{product.glossary.map(([term, definition]) => <div><dt>{term}</dt><dd>{definition}</dd></div>)}</dl>
   </section>
+  {guides.some((guide) => guide.productId === product.id) && (
+    <section class="section" aria-labelledby="guides-title">
+      <div class="section-heading">
+        <h2 id="guides-title"><a href="/guides/">{guideIndex.title}</a></h2>
+        <p>{guideIndex.summary}</p>
+      </div>
+      <div class="feature-grid">
+        {guides.filter((guide) => guide.productId === product.id).map((guide) => (
+          <article>
+            <h3><a href={guidePath(guide.slug)}>{guide.title}</a></h3>
+            <p>{guide.description}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  )}
   <Contact product={product.name} />
 </Layout>

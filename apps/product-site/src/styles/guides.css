@@ -1,0 +1,68 @@
+.guide-contents {
+  margin-bottom: var(--section-space);
+}
+.guide-contents h2 {
+  font-size: 1.25rem;
+}
+.guide-contents ol,
+.guide-points,
+.guide-sources,
+.guide-related {
+  max-width: var(--reading-width);
+  padding-left: 1.5rem;
+}
+.guide-contents a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+.guide-points li,
+.guide-sources li,
+.guide-related li {
+  margin-block: 0.75rem;
+}
+.guide-examples {
+  display: grid;
+  gap: 1.5rem;
+}
+.guide-example {
+  min-width: 0;
+  margin: 0;
+  max-width: min(100%, 88ch);
+}
+.guide-example figcaption {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.guide-example p {
+  max-width: var(--reading-width);
+}
+.guide-table {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-bottom: 2rem;
+}
+.guide-table table {
+  width: 100%;
+  min-width: 40rem;
+  border-collapse: collapse;
+}
+.guide-table caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 1rem;
+}
+.guide-table th,
+.guide-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 1rem;
+  border-bottom: 1px solid var(--divider);
+}
+.guide-table thead,
+.guide-table th[scope='row'] {
+  background: var(--surface);
+}
+.guide-cards h2 {
+  font-size: 1.5rem;
+}
