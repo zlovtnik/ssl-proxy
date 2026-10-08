@@ -309,9 +309,14 @@ func atherosSearchGrants() []tableGrant {
 		{table: "atheros_search.devices", privileges: []string{"SELECT"}},
 		{table: "atheros_search.graph_nodes", privileges: []string{"SELECT"}},
 		{table: "atheros_search.graph_edges", privileges: []string{"SELECT"}},
+		{table: "atheros_search.identity_clusters", privileges: []string{"SELECT"}},
+		{table: "atheros_search.identity_cluster_members", privileges: []string{"SELECT"}},
 		{table: "atheros_search.merge_candidates", privileges: []string{"SELECT", "UPDATE"}},
 		{table: "atheros_search.ap_catalog", privileges: []string{"SELECT"}},
 		{table: "atheros_search.wireless_signal_summaries", privileges: []string{"SELECT"}},
+		{table: "atheros_search.wireless_observation_summaries", privileges: []string{"SELECT"}},
+		{table: "atheros_search.wireless_topology_nodes", privileges: []string{"SELECT"}},
+		{table: "atheros_search.wireless_topology_edges", privileges: []string{"SELECT"}},
 		{table: "atheros_search.investigation_watermarks", privileges: []string{"SELECT"}},
 		{table: "atheros_search.asset_annotations", privileges: []string{"SELECT", "INSERT", "UPDATE"}},
 		{table: "atheros_search.asset_annotation_audit", privileges: []string{"SELECT", "INSERT"}},
@@ -350,6 +355,7 @@ func octopusCoreGrants() []tableGrant {
 		"wireless_clients", "wireless_shadow_alerts", "wireless_frames", "wireless_frame_radio",
 		"wireless_frame_qos", "wireless_frame_network", "wireless_frame_app_signals",
 		"wireless_frame_identity", "wireless_frame_security", "wireless_inventory_projection_inputs",
+		"wireless_projection_receipts", "wireless_projection_hashes",
 		"wireless_shadow_alert_inputs", "wireless_sensors", "wireless_audit_frames",
 		"wireless_bandwidth_windows", "wireless_client_inventory", "wireless_probe_requests",
 		"proxy_blocked_host_rollups", "proxy_payload_audit", "work_leases", "processor_state",
@@ -399,6 +405,7 @@ func octopusAtherosGrants() []tableGrant {
 		"sequence_transition_contributions", "sequence_previous_totals", "graph_nodes", "graph_edges",
 		"identity_clusters", "identity_cluster_members", "merge_candidates", "ap_catalog",
 		"wireless_signal_summaries", "investigation_watermarks",
+		"wireless_observation_summaries", "wireless_topology_nodes", "wireless_topology_edges",
 	} {
 		grants = append(grants, tableGrant{table: "atheros_search." + table, privileges: crud})
 	}

@@ -63,13 +63,22 @@ func TestAtherosSearchGrantMatricesMatchCanonicalSQL(t *testing.T) {
 	}
 }
 
-func TestAtherosSearchRuntimeExcludesCoordinatorAndUnknownTables(t *testing.T) {
+func TestAtherosSearchRuntimePreservesCoordinatorOwnership(t *testing.T) {
 	t.Parallel()
 
 	grants := tablePrivilegeMap(atherosSearchGrants())
 	for _, table := range []string{
 		"atheros_search.identity_clusters",
 		"atheros_search.identity_cluster_members",
+		"atheros_search.wireless_observation_summaries",
+		"atheros_search.wireless_topology_nodes",
+		"atheros_search.wireless_topology_edges",
+	} {
+		if !reflect.DeepEqual(grants[table], privilegeSet([]string{"SELECT"})) {
+			t.Errorf("Atheros Search runtime must only validate SELECT access to %s", table)
+		}
+	}
+	for _, table := range []string{
 		"atheros_search.search_query_results",
 		"atheros_search.search_feedback",
 		"atheros_search.search_filter_values",
