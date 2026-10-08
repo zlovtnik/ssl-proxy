@@ -16,7 +16,8 @@
   --success: #a3e6a3;
   --rule: #7d8278;
   --divider: #343632;
-  --focus: #f5f5f2;
+  --focus: #a3e6a3;
+  accent-color: var(--action);
   --panel-shadow: 0 2px 0 rgb(255 255 255 / 0.025) inset, 0 16px 40px rgb(0 0 0 / 0.12);
   --reading-width: 64ch;
   --shell-max: 1280px;
@@ -31,21 +32,9 @@
   background: var(--bg);
   color: var(--text);
 }
-:root[data-theme='light'] {
-  color-scheme: light;
-  --bg: #f8f9f6;
-  --surface: #ffffff;
-  --raised: #eff1ec;
-  --inset: #f3f5f0;
-  --text: #151713;
-  --muted: #474d42;
-  --action: #23532b;
-  --action-text: #ffffff;
-  --success: #23532b;
-  --rule: #747a6e;
-  --divider: #d4d9ce;
-  --focus: #151713;
-  --panel-shadow: 0 1px 2px rgb(24 32 20 / 0.04), 0 12px 32px rgb(24 32 20 / 0.035);
+::selection {
+  background: var(--action);
+  color: var(--action-text);
 }
 * {
   box-sizing: border-box;
@@ -1133,7 +1122,7 @@ code {
   line-height: 1.5;
   letter-spacing: normal;
 }
-/* Theme changes are immediate so text never crosses an intermediate contrast state. */
+/* Only control borders transition; reading preferences apply immediately. */
 @media (prefers-reduced-motion: no-preference) {
   a,
   button,

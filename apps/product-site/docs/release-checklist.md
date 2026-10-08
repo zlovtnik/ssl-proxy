@@ -7,16 +7,18 @@ appearance follow [messaging](messaging.md) and [the design system](design-syste
 ## Local verification
 
 - [ ] Record the final build, type check, and browser-suite results for this revision.
-- [ ] Check all eight routes in both themes, including navigation and contact.
+- [ ] Check all eight routes in the shared dark theme, including navigation and contact.
+- [ ] Confirm saved light/system themes and system colour preferences cannot change the theme.
 - [ ] Check every sample, expanded disclosure, and card at 320-1440px.
 - [ ] Check enlarged text, spacing overrides, focus, contrast, and hidden panels.
-- [ ] Inspect dark and light screenshots of the homepage, catalogue, and demos.
+- [ ] Inspect dark screenshots of the homepage, catalogue, and every demo state.
 - [ ] Confirm static stories, contact, and sample explanations without JavaScript.
 - [ ] Record browser coverage explicitly; previous browser runs are not evidence for this revision.
 
 ## Human evaluation
 
 - [ ] Inspect true 400% browser zoom; viewport simulation is a reflow proxy.
+- [ ] Inspect forced-colours rendering and system reduced-motion settings on supported devices.
 - [ ] Complete keyboard walkthroughs across all routes and demo states.
 - [ ] Evaluate VoiceOver/Safari and NVDA/Firefox, including live announcements,
       disclosure reading order, diagrams, and display preferences.

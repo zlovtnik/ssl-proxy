@@ -424,7 +424,7 @@ mock_kcadm() {
         stylesheet = (theme_root / "resources/css/custom-login.css").read_text()
         self.assertIn("parent=keycloak.v2", properties)
         self.assertIn(
-            "styles=css/styles.css css/custom-login.css?v=20260930-1",
+            "styles=css/styles.css css/custom-login.css?v=20261007-1",
             properties,
         )
         self.assertIn('<@layout.registrationLayout', login_template)

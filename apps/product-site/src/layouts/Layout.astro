@@ -103,11 +103,9 @@ const navigation = [
         const preferences = JSON.parse(
           localStorage.getItem('rclabs-reading') || '{}',
         );
-        for (const key of ['theme', 'size', 'width', 'spacing', 'motion']) {
+        for (const key of ['size', 'width', 'spacing', 'motion']) {
           if (
             [
-              'dark',
-              'light',
               'standard',
               'large',
               'extra',
@@ -205,13 +203,6 @@ const navigation = [
         <div class="reading-panel">
           <div class="reading-options">
             <label>
-              Theme
-              <select id="setting-theme">
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
-              </select>
-            </label>
-            <label>
               Text size
               <select id="setting-size">
                 <option value="standard">Standard</option>
@@ -266,7 +257,7 @@ const navigation = [
           menu.open = false;
         }),
       );
-      const keys = ['theme', 'size', 'width', 'spacing', 'motion'] as const;
+      const keys = ['size', 'width', 'spacing', 'motion'] as const;
       const rememberSettings = document.getElementById(
         'remember-display-settings',
       ) as HTMLInputElement | null;
@@ -293,9 +284,7 @@ const navigation = [
         const control = document.getElementById(
           `setting-${key}`,
         ) as HTMLSelectElement;
-        control.value =
-          document.documentElement.dataset[key] ||
-          (key === 'theme' ? 'dark' : 'standard');
+        control.value = document.documentElement.dataset[key] || 'standard';
         control.addEventListener('change', () => {
           document.documentElement.dataset[key] = control.value;
           save();
@@ -318,7 +307,7 @@ const navigation = [
         .getElementById('reset-settings')
         ?.addEventListener('click', () => {
           for (const key of keys) {
-            const value = key === 'theme' ? 'dark' : 'standard';
+            const value = 'standard';
             document.documentElement.dataset[key] = value;
             (
               document.getElementById(`setting-${key}`) as HTMLSelectElement

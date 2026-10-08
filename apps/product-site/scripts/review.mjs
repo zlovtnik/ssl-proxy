@@ -78,19 +78,13 @@ async function reviewPage(profile, route) {
       .getByLabel('1. Choose a monitored sample site')
       .waitFor({ state: 'visible' });
   const name = route === '/' ? 'hub' : route.replaceAll('/', '');
-  async function captureTheme(theme) {
-    await page.evaluate(
-      (value) => (document.documentElement.dataset.theme = value),
-      theme,
-    );
+  async function captureState(state) {
     await page.screenshot({
-      path: fileURLToPath(new URL(`${name}-${profile}-${theme}.png`, output)),
+      path: fileURLToPath(new URL(`${name}-${profile}-${state}.png`, output)),
       fullPage: true,
     });
   }
-  // Both captures mutate the same page, so the dark capture must finish first.
-  await captureTheme('dark');
-  await captureTheme('light');
+  await captureState('dark');
   if (route === '/schema-migrator/') {
     await page.getByRole('button', { name: '4. Inspect run record' }).click();
     await page.getByText('Read all steps as text', { exact: true }).click();
@@ -109,6 +103,47 @@ async function reviewPage(profile, route) {
     fullPage: true,
   });
   const metrics = await page.evaluate(() => window.reviewMetrics);
+  // Capture each synthetic state after collecting the initial lab sample.
+  // These screenshots are visual evidence, not additional performance runs.
+  await page.locator('#reading-controls').evaluate((element) => {
+    element.open = false;
+  });
+  if (route === '/' || route === '/atheros-search/') {
+    if (route === '/') {
+      const filter = page.getByLabel('Filter sample sites, indicators, and observations');
+      for (const [index, record] of (await page.locator('.preview-record').all()).entries()) {
+        await record.click();
+        await captureState(`search-${index}`);
+      }
+      await filter.fill('no-matching-record');
+      await captureState('search-empty');
+      await filter.fill('');
+    } else {
+      for (const sample of ['0', '1']) {
+        await page.getByLabel('1. Choose a monitored sample site').selectOption(sample);
+        await captureState(`search-${sample}`);
+      }
+    }
+  }
+  if (route === '/' || route === '/schema-migrator/') {
+    if (route === '/')
+      await page.getByRole('button', { name: 'Schema Migrator', exact: true }).click();
+    const steps = await page.locator(route === '/' ? '.preview-steps button' : '.step-controls button').all();
+    for (const [index, step] of steps.entries()) {
+      await step.click();
+      await captureState(`migrator-${index}`);
+    }
+  }
+  if (route === '/' || route === '/vpn-proxy/') {
+    if (route === '/')
+      await page.getByRole('button', { name: 'RCLabs VPN / Proxy', exact: true }).click();
+    const flow = page.getByLabel('Sample traffic flow', { exact: true });
+    for (const option of await flow.locator('option').all()) {
+      const value = await option.getAttribute('value');
+      await flow.selectOption(value);
+      await captureState(`vpn-${value}`);
+    }
+  }
   const result = {
     route,
     profile,

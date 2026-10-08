@@ -113,7 +113,7 @@ test('landing preview filters site-scoped wireless samples and reviews migration
   await preview
     .getByLabel('Filter sample sites, indicators, and observations')
     .fill('');
-  for (const theme of ['dark', 'light']) {
+  for (const theme of ['dark']) {
     await page.evaluate(
       (value) => (document.documentElement.dataset.theme = value),
       theme,
@@ -152,13 +152,12 @@ test('landing preview filters site-scoped wireless samples and reviews migration
 });
 
 for (const route of routes) {
-  for (const theme of ['dark', 'light']) {
+  for (const theme of ['dark']) {
     test(`${route}: ${theme} accessibility, reflow, and links`, async ({
       page,
     }) => {
       await page.goto(route);
       await page.locator('#reading-controls > summary').click();
-      await page.locator('#setting-theme').selectOption(theme);
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
       // Include every expandable explanation in the evaluation.
       await page
@@ -271,7 +270,7 @@ test('Search reviews sample sites and indicators with a keyboard', async ({
   await expect(
     page.getByRole('heading', { name: 'Suspected rogue access point' }),
   ).toBeVisible();
-  for (const theme of ['dark', 'light']) {
+  for (const theme of ['dark']) {
     await page.evaluate(
       (value) => (document.documentElement.dataset.theme = value),
       theme,
@@ -287,14 +286,14 @@ test('Search reviews sample sites and indicators with a keyboard', async ({
   }
 });
 
-test('Migrator steps are user controlled and accessible in both themes', async ({
+test('Migrator steps are user controlled and accessible in the dark theme', async ({
   page,
 }) => {
   await page.goto('/schema-migrator/');
   const buttons = page
     .getByRole('group', { name: 'Migration review steps' })
     .getByRole('button');
-  for (const theme of ['dark', 'light']) {
+  for (const theme of ['dark']) {
     await page.evaluate(
       (value) => (document.documentElement.dataset.theme = value),
       theme,
@@ -413,12 +412,11 @@ test('skip link, reading persistence, reduced motion, forced colors, and 200% te
   await page.keyboard.press('Enter');
   await expect(page.locator('main')).toBeFocused();
   await page.locator('#reading-controls > summary').click();
-  await page.locator('#setting-theme').selectOption('light');
   await page.locator('#setting-width').selectOption('narrow');
   await page.locator('#setting-spacing').selectOption('comfortable');
   await page.locator('#setting-motion').selectOption('reduced');
   await page.goto('/schema-migrator/');
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.locator('html')).toHaveAttribute('data-width', 'narrow');
   await expect(page.locator('html')).toHaveAttribute(
     'data-spacing',
@@ -447,7 +445,7 @@ test('display preferences stop persisting when the reader opts out', async ({
 }) => {
   await page.goto('/');
   await page.locator('#reading-controls > summary').click();
-  await page.locator('#setting-theme').selectOption('light');
+  await page.locator('#setting-width').selectOption('narrow');
   expect(
     await page.evaluate(() => localStorage.getItem('rclabs-reading')),
   ).not.toBeNull();
@@ -461,6 +459,35 @@ test('display preferences stop persisting when the reader opts out', async ({
   await expect(page.locator('#setting-size')).toHaveValue('standard');
   await expect(page.locator('html')).not.toHaveAttribute('data-size');
 });
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`dark theme ignores ${colorScheme} system preference and saved themes on every route`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    await page.goto('/');
+    for (const theme of ['light', 'system', 'dark']) {
+      await page.evaluate((savedTheme) => {
+        localStorage.setItem('rclabs-reading', JSON.stringify({
+          theme: savedTheme,
+          size: 'large',
+          width: 'narrow',
+          spacing: 'comfortable',
+          motion: 'reduced',
+        }));
+      }, theme);
+      for (const route of routes) {
+        await page.goto(route);
+        await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+        await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
+        await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(9, 9, 9)');
+        await expect(page.locator('#setting-theme')).toHaveCount(0);
+        await expect(page.locator('html')).toHaveAttribute('data-size', 'large');
+        await expect(page.locator('html')).toHaveAttribute('data-width', 'narrow');
+        await expect(page.locator('html')).toHaveAttribute('data-spacing', 'comfortable');
+        await expect(page.locator('html')).toHaveAttribute('data-motion', 'reduced');
+      }
+    }
+  });
+}
 
 test('metadata, sitemap, local indexing guard, self-hosted assets and no external requests', async ({
   page,
@@ -508,11 +535,11 @@ test('metadata, sitemap, local indexing guard, self-hosted assets and no externa
   );
 });
 
-test('enhanced text contrast and control boundaries meet thresholds in both themes', async ({
+test('enhanced text contrast and control boundaries meet thresholds in the dark theme', async ({
   page,
 }) => {
   await page.goto('/');
-  for (const theme of ['dark', 'light']) {
+  for (const theme of ['dark']) {
     await page.evaluate(
       (value) => (document.documentElement.dataset.theme = value),
       theme,
@@ -764,9 +791,19 @@ async function renderedPairs(
   }, mode);
 }
 
-test('rendered text and control boundaries meet the documented targets', async ({
+test('rendered text and control boundaries meet the documented targets in every demo state', async ({
   page,
 }) => {
+  test.setTimeout(120_000);
+  const audit = async (state: string) => {
+    const audited = [
+      ...(await renderedPairs(page, 'text')),
+      ...(await renderedPairs(page, 'control')),
+    ];
+    expect(audited.length, `${state} audited pairs`).toBeGreaterThan(40);
+    for (const result of audited)
+      expect(result.ratio, `${state} ${result.kind} ${result.label}`).toBeGreaterThanOrEqual(result.target);
+  };
   for (const route of routes) {
     await page.goto(route);
     // Read settled states; the 150ms border transition would otherwise be
@@ -783,33 +820,67 @@ test('rendered text and control boundaries meet the documented targets', async (
           (element) => ((element as HTMLDetailsElement).open = true),
         ),
       );
-    if (route === '/atheros-search/')
-      await page
-        .getByRole('button', { name: 'Try the next sample site' })
-        .click();
-    if (route === '/schema-migrator/')
-      await page.getByRole('button', { name: '4. Inspect run record' }).click();
-    await page
-      .locator('#reading-controls')
-      .evaluate((element) => ((element as HTMLDetailsElement).open = true));
-    for (const theme of ['dark', 'light']) {
-      await page.evaluate(
-        (value) => (document.documentElement.dataset.theme = value),
-        theme,
-      );
-      const audited = [
-        ...(await renderedPairs(page, 'text')),
-        ...(await renderedPairs(page, 'control')),
-      ];
-      // Guard against an audit that silently inspects nothing.
-      expect(audited.length, `${route} ${theme} audited pairs`).toBeGreaterThan(
-        40,
-      );
-      for (const result of audited)
-        expect(
-          result.ratio,
-          `${route} ${theme} ${result.kind} ${result.label}`,
-        ).toBeGreaterThanOrEqual(result.target);
+    for (const width of [1440, 768, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const state = `${route} ${width}px`;
+      await page.locator('#reading-controls').evaluate((element) => ((element as HTMLDetailsElement).open = true));
+      await audit(`${state} reading controls`);
+      await page.locator('#reading-controls').evaluate((element) => ((element as HTMLDetailsElement).open = false));
+      const choices = route === '/' ? products : products.filter((product) => product.path === route);
+      for (const product of choices) {
+        if (route === '/')
+          await page.locator('.preview-switch').getByRole('button', { name: product.name, exact: true }).click();
+        if (product.id === 'migrator') {
+          for (const step of await page.locator(route === '/' ? '.preview-steps button' : '.step-controls button').all()) {
+            await step.click();
+            await audit(`${state} ${await step.textContent()}`);
+          }
+        } else if (product.id === 'vpn') {
+          const flow = page.getByLabel('Sample traffic flow', { exact: true });
+          for (const option of await flow.locator('option').all()) {
+            await flow.selectOption((await option.getAttribute('value'))!);
+            await audit(`${state} ${await option.textContent()}`);
+          }
+        } else if (route === '/') {
+          const filter = page.getByLabel('Filter sample sites, indicators, and observations');
+          await filter.fill('no-results');
+          await audit(`${state} empty search`);
+          await filter.fill('');
+          for (const record of await page.locator('.preview-record').all()) {
+            await record.click();
+            await audit(`${state} ${await record.textContent()}`);
+          }
+        } else {
+          for (const sample of ['0', '1']) {
+            await page.getByLabel('1. Choose a monitored sample site').selectOption(sample);
+            await audit(`${state} search ${sample}`);
+          }
+        }
+      }
+    }
+  }
+});
+
+test('every route supports forced colours and reduced motion', async ({ page }) => {
+  await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
+  for (const route of routes) {
+    await page.goto(route);
+    for (const width of [1440, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const reading = page.locator('#reading-controls > summary');
+      await reading.focus();
+      await expect(reading).toBeFocused();
+      await expect(reading).toHaveCSS('outline-style', 'solid');
+      await expect(reading).toHaveCSS('outline-width', '3px');
+      await expect(page.locator('html')).toHaveCSS('scroll-behavior', 'auto');
+      const transitions = await page.locator('a, button, select').evaluateAll((elements) =>
+        elements.filter((element) => element.checkVisibility()).map((element) => getComputedStyle(element).transitionDuration));
+      expect(transitions.every((duration) => duration === '0s')).toBe(true);
+      await reading.press('Enter');
+      await expect(page.locator('#setting-size')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(reading).toBeFocused();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
   }
 });
@@ -852,7 +923,7 @@ test('every tabbable control shows a compliant focus ring and keeps tab order', 
   browserName,
 }) => {
   for (const route of routes) {
-    for (const theme of ['dark', 'light']) {
+    for (const theme of ['dark']) {
       await page.goto(route);
       await page.evaluate(
         (value) => (document.documentElement.dataset.theme = value),
@@ -941,7 +1012,7 @@ test('all eight routes share one system of colours, header geometry, type and co
       };
     });
   };
-  for (const theme of ['dark', 'light']) {
+  for (const theme of ['dark']) {
     const reference = await snapshot(routes[0], theme);
     // The reading controls are docked inside the viewport bottom, and every
     // route docks them identically.
@@ -996,7 +1067,7 @@ test('reading controls dock below the footer, open inside the viewport, and clos
   await expect(controls).toHaveJSProperty('open', true);
   expect(await bottomGap()).toBeLessThanOrEqual(24);
   expect((await bar.boundingBox())!.y).toBeGreaterThanOrEqual(0);
-  await page.locator('#setting-theme').focus();
+  await page.locator('#setting-size').focus();
   await page.keyboard.press('Escape');
   await expect(controls).toHaveJSProperty('open', false);
   await expect(summary).toBeFocused();

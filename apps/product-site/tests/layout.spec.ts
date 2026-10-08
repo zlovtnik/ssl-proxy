@@ -42,7 +42,7 @@ async function expectContainedLayout(page: Page) {
 }
 
 for (const route of ['/', '/products/', ...products.map((product) => product.path)]) {
-  for (const theme of ['dark', 'light']) {
+  for (const theme of ['dark']) {
     test(`${route} ${theme}: expansions and every sample stay in document flow`, async ({ page }) => {
       test.setTimeout(90_000);
       await page.goto(route);

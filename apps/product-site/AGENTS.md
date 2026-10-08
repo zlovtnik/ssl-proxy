@@ -16,6 +16,8 @@
   savings, latency, or market claims. The two caveats, the contact labels, and
   the audience statements belong to that model, not to a route or a component.
 - `npm test` measures rendered text, control boundaries, and focus rings on every
-  route in both themes. Keep new colours and controls inside those targets.
+  route in the shared dark theme. Keep new colours and controls inside those targets.
+- Dark is the only theme; ignore saved theme values and system colour preferences.
+  Preserve the other reading preferences and forced-colours support.
 - A public build needs `PUBLIC_SITE_URL`. Publication follows the reviewed Git
   deployment path; the local site does not provision hosting.

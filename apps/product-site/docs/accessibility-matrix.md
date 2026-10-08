@@ -1,6 +1,6 @@
 # WCAG 2.2 evidence matrix
 
-Scope: the eight public routes, both themes, product catalogue, all three
+Scope: the eight public routes, the shared dark theme, product catalogue, all three
 synthetic samples, and reading and display settings. The site targets
 applicable WCAG 2.2 A, AA, and AAA criteria. It makes no conformance claim.
 
@@ -11,16 +11,16 @@ substitute for assistive-technology or participant testing.
 | Area | Evidence | Remaining evaluation |
 | --- | --- | --- |
 | Structure and language | AUTO: one H1 per route, landmarks, labels, and rendered text checks. CODE: semantic headings, native controls, lists, tables, and `lang=en`. | MANUAL: screen-reader heading, table, and diagram review. |
-| Keyboard and focus | AUTO: interactive controls receive a visible focus ring in both themes; demo, disclosure, mobile navigation, and copy controls are exercised. CODE: native buttons, links, selects, and details stay in document order. | MANUAL: complete keyboard walkthrough at browser zoom. |
+| Keyboard and focus | AUTO: interactive controls receive a green focus ring at least 2px wide and 3:1 against its surrounding surface; demo, disclosure, mobile navigation, and copy controls are exercised. CODE: native buttons, links, selects, and details stay in document order. | MANUAL: complete keyboard walkthrough at browser zoom, including focus visibility and obstruction. |
 | Reflow and text spacing | AUTO: 320-1440px layouts, 200% text, spacing overrides, expansion, and panel containment. CODE: visible panels use normal document flow and inactive panels are hidden and inert. | MANUAL: true 400% zoom and platform text scaling. |
-| Colour and appearance | AUTO: token, rendered-text, boundary, and focus contrast checks in dark and light themes. CODE: labels, icons, and pressed state identify selections beyond colour. | MANUAL: forced-colours rendering and visual review on target displays. |
+| Colour and appearance | AUTO: 7:1 normal text, 4.5:1 large text, and 3:1 applicable boundary and focus checks in the shared dark theme; saved light/system values and both system colour preferences preserve dark. CODE: labels, icons, and pressed state identify selections beyond colour. | MANUAL: forced-colours rendering and visual review on target displays. |
 | Controls and motion | AUTO: target-size and state checks for visible controls. CODE: 44px controls, reduced-motion support, no time limits, no drag or path gestures. | MANUAL: touch, switch, voice, and motion-preference evaluation. |
 | Content and status | CODE: synthetic labels, visible caveats, glossary definitions, and polite status messages. | MANUAL: clarity and announcement timing with VoiceOver/Safari and NVDA/Firefox. |
 | Non-text content | CODE: labelled diagrams and decorative SVGs hidden from the accessibility tree. | MANUAL: equivalent-text usefulness. |
 
 ## Current automated coverage
 
-The browser suite covers all routes in both themes, all three sample states,
+The browser suite covers all routes in the shared dark theme, all three sample workflows,
 expanded disclosures, catalogue cards, and responsive widths. Layout regression
 tests specifically confirm that expanding cards and details preserves
 containment and keeps subsequent sections below the expanded content. See

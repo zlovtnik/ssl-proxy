@@ -47,7 +47,7 @@ Use `npm run format:check` to check source formatting and `npm run format`
 to apply the pinned Astro-aware formatter.
 
 With the preview running, `npm run review` captures screenshots of all routes
-in both themes at desktop/mobile sizes and writes single-run local performance
+in the shared dark theme at desktop/mobile sizes and writes single-run local performance
 measurements to the ignored `review-artifacts/` directory. The mobile profile
 uses 4x CPU slowdown, 150ms latency, and 1.6Mbps download. These measurements
 are lab evidence, not field Core Web Vitals. The committed PNG social preview

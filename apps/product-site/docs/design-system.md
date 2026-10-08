@@ -7,21 +7,24 @@ without redefining the shared system.
 
 ## Palette
 
-| Role | Dark | Light |
-| --- | --- | --- |
-| Page | `#090909` | `#F8F9F6` |
-| Panel | `#141414` | `#FFFFFF` |
-| Raised surface | `#1C1C1C` | `#EFF1EC` |
-| Inset surface | `#0E0E0E` | `#F3F5F0` |
-| Main text / focus | `#F5F5F2` | `#151713` |
-| Secondary text | `#BEC2B9` | `#474D42` |
-| Action / product accent | `#A3E6A3` | `#23532B` |
-| Action text | `#102010` | `#FFFFFF` |
-| Control boundary | `#7D8278` | `#747A6E` |
-| Decorative divider | `#343632` | `#D4D9CE` |
+| Role | Shared dark theme |
+| --- | --- |
+| Page | `#090909` |
+| Panel | `#141414` |
+| Raised surface | `#1C1C1C` |
+| Inset surface | `#0E0E0E` |
+| Main text | `#F5F5F2` |
+| Secondary text | `#BEC2B9` |
+| Action / product accent / focus | `#A3E6A3` |
+| Action text | `#102010` |
+| Control boundary | `#7D8278` |
+| Decorative divider | `#343632` |
 
-Dark mode uses neutral black and charcoal. Light mode uses soft white, white
-panels, and graphite type. Green identifies actions and selected states; labels,
+Dark is the only theme. The public site, Search, Migrator web and desktop, and
+custom Keycloak login share the six core RCLabs colours. The site renders dark
+before JavaScript and ignores saved theme values and system colour preferences.
+Forced colours may override the palette for accessibility.
+Green identifies actions, selected states, and focus; labels,
 icons, and pressed attributes identify the products and their state independently
 of colour. Depth comes from distinct surfaces, fine borders, and restrained
 shadows.
@@ -79,7 +82,8 @@ keyboard-accessible regions. Product comparisons use responsive definition lists
 Reading settings remain docked at the bottom right, inside reserved page space.
 The panel opens upward, closes on Escape or outside interaction, and restores
 focus on Escape. Preferences persist only while the reader enables saving.
-Theme changes are immediate.
+Text size, line width, spacing, and movement remain configurable; theme is not a
+reading preference. Existing saved reading choices remain supported.
 
 ## Verification and maintenance
 

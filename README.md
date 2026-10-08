@@ -13,6 +13,10 @@ The canonical runtime model and data ownership are documented in
 [System Architecture](docs/architecture.md). Kubernetes desired state lives
 only in [`cyber-stack/`](cyber-stack/). Production is reconciled by Argo CD.
 
+The public site, Search, Migrator and shared login use the
+[RCLabs dark theme](docs/rclabs-theme.md), with accessibility targets and
+manual evaluation tracked alongside the automated checks.
+
 ## Component ownership
 
 | Component | Responsibility | Documentation |
