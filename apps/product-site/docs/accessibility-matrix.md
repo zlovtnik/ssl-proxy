@@ -1,7 +1,7 @@
 # WCAG 2.2 evidence matrix
 
-Scope: the eight public routes, the shared dark theme, product catalogue, all three
-synthetic samples, and reading and display settings. The site targets
+Scope: the eight public routes, the shared dark theme, product catalogue, and all three
+synthetic samples. The site targets
 applicable WCAG 2.2 A, AA, and AAA criteria. It makes no conformance claim.
 
 **AUTO** is covered by the browser suite. **CODE** is implementation evidence.
@@ -23,7 +23,9 @@ substitute for assistive-technology or participant testing.
 The browser suite covers all routes in the shared dark theme, all three sample workflows,
 expanded disclosures, catalogue cards, and responsive widths. Layout regression
 tests specifically confirm that expanding cards and details preserves
-containment and keeps subsequent sections below the expanded content. See
+containment and keeps subsequent sections below the expanded content. It also
+confirms the display-settings dock is absent and previously saved display choices
+remain supported. See
 [browser tests](../tests/site.spec.ts) and
 [layout regressions](../tests/layout.spec.ts).
 

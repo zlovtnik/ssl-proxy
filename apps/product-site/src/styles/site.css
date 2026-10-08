@@ -18,15 +18,14 @@
   --divider: #343632;
   --focus: #a3e6a3;
   accent-color: var(--action);
-  --panel-shadow: 0 2px 0 rgb(255 255 255 / 0.025) inset, 0 16px 40px rgb(0 0 0 / 0.12);
+  --panel-shadow:
+    0 2px 0 rgb(255 255 255 / 0.025) inset, 0 16px 40px rgb(0 0 0 / 0.12);
   --reading-width: 64ch;
   --shell-max: 1280px;
   --shell-inset: 96px;
   --section-space: 6rem;
   --control-radius: 6px;
   --panel-radius: 12px;
-  /* Reserved by the docked reading controls at the bottom of the viewport. */
-  scroll-padding-bottom: 6rem;
   font-family: 'Inter Variable', sans-serif;
   font-size: 100%;
   background: var(--bg);
@@ -562,104 +561,17 @@ details > section {
 .skip-link:focus {
   top: 1rem;
 }
-/* The reading controls dock to the bottom right of the viewport: one compact
-   row when closed, a two-column card that grows upward when open. Page and
-   scroll padding keep the dock clear of the footer and of focused controls. */
-.reading-bar {
-  position: fixed;
-  right: max(1rem, env(safe-area-inset-right, 0px));
-  bottom: max(1rem, env(safe-area-inset-bottom, 0px));
-  z-index: 50;
-  width: min(24rem, calc(100% - 2rem));
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-.reading-bar > details {
-  border: 1px solid var(--rule);
-  border-radius: var(--panel-radius);
-  background: var(--surface);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.3);
-}
-.reading-bar summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  min-height: 44px;
-  padding: 0.65rem 0.9rem;
-  color: var(--text);
-  font-weight: 600;
-  list-style: none;
-}
-.reading-bar summary::-webkit-details-marker {
-  display: none;
-}
-.reading-summary-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.reading-bar summary > svg {
-  flex-shrink: 0;
-  color: var(--muted);
-}
-.reading-bar > details[open] summary {
-  border-bottom: 1px solid var(--divider);
-}
-.reading-bar > details[open] summary > svg:last-child {
-  transform: rotate(45deg);
-}
-.reading-panel {
-  max-height: calc(100vh - 9rem);
-  max-height: calc(100dvh - 9rem);
-  overflow-y: auto;
-  padding: 0.7rem 0.9rem 0.85rem;
-}
-.reading-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.6rem;
-  align-items: end;
-}
-.reading-options label {
-  display: grid;
-  gap: 0.25rem;
-  line-height: 1.3;
-  min-width: 0;
-}
-.reading-options .remember-settings {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  min-height: 44px;
-}
-.remember-settings input,
 .privacy-consent input {
   accent-color: var(--action);
   width: 1.2rem;
   height: 1.2rem;
   flex: 0 0 auto;
 }
-.reading-options select {
-  width: 100%;
-  font-size: 1rem;
-  padding: 0.5rem 1.9rem 0.5rem 0.6rem;
-}
-.reading-options button {
-  grid-column: 1 / -1;
-  width: 100%;
-}
-.reading-panel p {
-  max-width: none;
-  line-height: 1.5;
-  margin: 0.7rem 0 0;
-}
 .privacy-consent {
   position: fixed;
   z-index: 60;
   left: max(1rem, env(safe-area-inset-left, 0px));
-  bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+  bottom: max(1rem, env(safe-area-inset-bottom, 0px));
   width: min(40rem, calc(100% - 2rem));
   max-height: calc(100vh - 9rem);
   max-height: calc(100dvh - 9rem);
@@ -1209,16 +1121,13 @@ select:disabled {
   .site-header nav {
     gap: 0.4rem 1rem;
   }
-  .reading-options {
-    grid-template-columns: minmax(0, 1fr);
-  }
   .privacy-consent-actions {
     grid-template-columns: minmax(0, 1fr);
   }
   .privacy-consent {
     left: max(1rem, env(safe-area-inset-left, 0px));
     width: calc(100% - 2rem);
-    bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+    bottom: max(1rem, env(safe-area-inset-bottom, 0px));
   }
   h1 {
     font-size: 2.45rem;

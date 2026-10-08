@@ -96,7 +96,12 @@ async function reviewPage(profile, route) {
       .getByText('3. Review why the indicator was raised', { exact: true })
       .click();
   } else {
-    await page.locator('#reading-controls > summary').click();
+    const disclosure = page.locator('main details:visible').first();
+    if (await disclosure.count()) {
+      await disclosure.locator('summary').click();
+    } else {
+      await page.getByRole('link', { name: 'Skip to content' }).focus();
+    }
   }
   await page.screenshot({
     path: fileURLToPath(new URL(`${name}-${profile}-interaction.png`, output)),
@@ -105,9 +110,6 @@ async function reviewPage(profile, route) {
   const metrics = await page.evaluate(() => window.reviewMetrics);
   // Capture each synthetic state after collecting the initial lab sample.
   // These screenshots are visual evidence, not additional performance runs.
-  await page.locator('#reading-controls').evaluate((element) => {
-    element.open = false;
-  });
   if (route === '/' || route === '/atheros-search/') {
     if (route === '/') {
       const filter = page.getByLabel('Filter sample sites, indicators, and observations');

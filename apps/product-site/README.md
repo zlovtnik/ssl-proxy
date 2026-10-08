@@ -36,11 +36,11 @@ npm run test:all-browsers
 Generated dependency, build, and test outputs are ignored. The npm lockfile is
 committed. Fonts are bundled locally from Fontsource packages; no font CDN is
 used. The two Latin variable faces are preloaded from build-time asset URLs so
-the first paint already uses them. Display preferences can be stored in browser
-local storage when the reader leaves “Save these settings in this browser”
-enabled. Google Analytics 4 is loaded only on the production host, after
-analytics consent, and only when PUBLIC_GA4_MEASUREMENT_ID contains the GA4 web
-stream ID. Local and Pages preview builds do not include the analytics ID.
+the first paint already uses them. Previously saved display preferences may
+still be applied from browser local storage. Google Analytics 4 is loaded only
+on the production host, after analytics consent, and only when
+PUBLIC_GA4_MEASUREMENT_ID contains the GA4 web stream ID. Local and Pages
+preview builds do not include the analytics ID.
 Original font licenses are shipped in `public/font-licenses/`.
 
 Use `npm run format:check` to check source formatting and `npm run format`

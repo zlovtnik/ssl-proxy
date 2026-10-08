@@ -8,7 +8,7 @@ import monoLatin from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-
 import '../styles/site.css';
 import { contact } from '../data/products';
 import PrivacyConsent from '../components/PrivacyConsent.astro';
-import { ArrowUpRight, Menu, Plus, SlidersHorizontal } from '@lucide/astro';
+import { ArrowUpRight, Menu } from '@lucide/astro';
 interface Props {
   title: string;
   description: string;
@@ -191,65 +191,6 @@ const navigation = [
       </nav>
     </footer>
     <PrivacyConsent measurementId={analyticsMeasurementId} />
-    <aside class="reading-bar" aria-label="Reading and display preferences">
-      <details id="reading-controls">
-        <summary>
-          <span class="reading-summary-label">
-            <SlidersHorizontal size={16} aria-hidden="true" />
-            Reading &amp; display settings
-          </span>
-          <Plus size={16} aria-hidden="true" />
-        </summary>
-        <div class="reading-panel">
-          <div class="reading-options">
-            <label>
-              Text size
-              <select id="setting-size">
-                <option value="standard">Standard</option>
-                <option value="large">Large</option>
-                <option value="extra">Extra large</option>
-              </select>
-            </label>
-            <label>
-              Line width
-              <select id="setting-width">
-                <option value="standard">Standard</option>
-                <option value="narrow">Narrow</option>
-                <option value="wide">Wide</option>
-              </select>
-            </label>
-            <label>
-              Text spacing
-              <select id="setting-spacing">
-                <option value="standard">Standard</option>
-                <option value="comfortable">Comfortable</option>
-              </select>
-            </label>
-            <label>
-              Movement
-              <select id="setting-motion">
-                <option value="standard">Follow system</option>
-                <option value="reduced">Reduce movement</option>
-              </select>
-            </label>
-            <label class="remember-settings">
-              <input id="remember-display-settings" type="checkbox" />
-              Save these settings in this browser
-            </label>
-            <button id="reset-settings" type="button">
-              Reset settings
-            </button>
-          </div>
-          <p>Saved in this browser only while the option below is on.</p>
-          <noscript>
-            <p>
-              Display controls need JavaScript. Your browser's zoom, text
-              settings, and custom styles remain available.
-            </p>
-          </noscript>
-        </div>
-      </details>
-    </aside>
     <script>
       const menu = document.querySelector<HTMLDetailsElement>('.mobile-menu');
       menu?.querySelectorAll('a').forEach((link) =>
@@ -257,85 +198,6 @@ const navigation = [
           menu.open = false;
         }),
       );
-      const keys = ['size', 'width', 'spacing', 'motion'] as const;
-      const rememberSettings = document.getElementById(
-        'remember-display-settings',
-      ) as HTMLInputElement | null;
-      const persistenceDisabled = () => {
-        try {
-          return sessionStorage.getItem('rclabs-display-persistence') === 'off';
-        } catch {
-          return false;
-        }
-      };
-      if (rememberSettings) rememberSettings.checked = !persistenceDisabled();
-      function save() {
-        const values = Object.fromEntries(
-          keys.map((key) => [key, document.documentElement.dataset[key]]),
-        );
-        if (persistenceDisabled()) return;
-        try {
-          localStorage.setItem('rclabs-reading', JSON.stringify(values));
-        } catch {
-          /* Settings still apply in memory. */
-        }
-      }
-      for (const key of keys) {
-        const control = document.getElementById(
-          `setting-${key}`,
-        ) as HTMLSelectElement;
-        control.value = document.documentElement.dataset[key] || 'standard';
-        control.addEventListener('change', () => {
-          document.documentElement.dataset[key] = control.value;
-          save();
-        });
-      }
-      rememberSettings?.addEventListener('change', () => {
-        try {
-          if (rememberSettings.checked) {
-            sessionStorage.removeItem('rclabs-display-persistence');
-            save();
-          } else {
-            sessionStorage.setItem('rclabs-display-persistence', 'off');
-            localStorage.removeItem('rclabs-reading');
-          }
-        } catch {
-          /* Current-page display settings continue to work without storage. */
-        }
-      });
-      document
-        .getElementById('reset-settings')
-        ?.addEventListener('click', () => {
-          for (const key of keys) {
-            const value = 'standard';
-            document.documentElement.dataset[key] = value;
-            (
-              document.getElementById(`setting-${key}`) as HTMLSelectElement
-            ).value = value;
-          }
-          save();
-        });
-      // The panel is docked to the viewport, so it closes like a popover: a
-      // press outside dismisses it, and Escape dismisses it and puts focus
-      // back on the toggle.
-      const readingControls = document.getElementById(
-        'reading-controls',
-      ) as HTMLDetailsElement;
-      const readingToggle = readingControls.querySelector('summary');
-      document.addEventListener('keydown', (event) => {
-        if (event.key !== 'Escape' || !readingControls.open) return;
-        readingControls.open = false;
-        readingToggle?.focus();
-      });
-      document.addEventListener('pointerdown', (event) => {
-        if (!readingControls.open) return;
-        if (
-          event.target instanceof Node &&
-          readingControls.contains(event.target)
-        )
-          return;
-        readingControls.open = false;
-      });
     </script>
   </body>
 </html>

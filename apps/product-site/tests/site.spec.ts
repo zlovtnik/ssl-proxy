@@ -157,7 +157,6 @@ for (const route of routes) {
       page,
     }) => {
       await page.goto(route);
-      await page.locator('#reading-controls > summary').click();
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
       // Include every expandable explanation in the evaluation.
       await page
@@ -206,7 +205,9 @@ for (const route of routes) {
         content:
           '* { line-height: 1.5 !important; letter-spacing: .12em !important; word-spacing: .16em !important; } p { margin-bottom: 2em !important; }',
       });
-      await page.locator('#setting-size').selectOption('extra');
+      await page.addStyleTag({
+        content: ':root { font-size: 150% !important; }',
+      });
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -400,10 +401,20 @@ test('core story, navigation, contact and text demos work without JavaScript', a
   await context.close();
 });
 
-test('skip link, reading persistence, reduced motion, forced colors, and 200% text', async ({
+test('skip link, saved display choices, reduced motion, forced colors, and 200% text', async ({
   page,
   browserName,
 }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'rclabs-reading',
+      JSON.stringify({
+        width: 'narrow',
+        spacing: 'comfortable',
+        motion: 'reduced',
+      }),
+    );
+  });
   await page.goto('/');
   await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
   await expect(
@@ -411,10 +422,6 @@ test('skip link, reading persistence, reduced motion, forced colors, and 200% te
   ).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.locator('main')).toBeFocused();
-  await page.locator('#reading-controls > summary').click();
-  await page.locator('#setting-width').selectOption('narrow');
-  await page.locator('#setting-spacing').selectOption('comfortable');
-  await page.locator('#setting-motion').selectOption('reduced');
   await page.goto('/schema-migrator/');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.locator('html')).toHaveAttribute('data-width', 'narrow');
@@ -435,29 +442,38 @@ test('skip link, reading persistence, reduced motion, forced colors, and 200% te
   await expect(
     page.getByRole('button', { name: '4. Inspect run record' }),
   ).toHaveAttribute('aria-pressed', 'true');
-  await page.locator('#reading-controls > summary').click();
-  await page.getByRole('button', { name: 'Reset settings' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
-test('display preferences stop persisting when the reader opts out', async ({
+test('display settings controls are absent and previously saved choices still apply', async ({
   page,
 }) => {
-  await page.goto('/');
-  await page.locator('#reading-controls > summary').click();
-  await page.locator('#setting-width').selectOption('narrow');
-  expect(
-    await page.evaluate(() => localStorage.getItem('rclabs-reading')),
-  ).not.toBeNull();
-  await page.getByLabel('Save these settings in this browser').uncheck();
-  expect(
-    await page.evaluate(() => localStorage.getItem('rclabs-reading')),
-  ).toBeNull();
-  await page.locator('#setting-size').selectOption('large');
-  await page.reload();
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect(page.locator('#setting-size')).toHaveValue('standard');
-  await expect(page.locator('html')).not.toHaveAttribute('data-size');
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'rclabs-reading',
+      JSON.stringify({
+        size: 'large',
+        width: 'narrow',
+        spacing: 'comfortable',
+        motion: 'reduced',
+      }),
+    );
+  });
+  for (const route of routes) {
+    await page.goto(route);
+    await expect(page.locator('.reading-bar')).toHaveCount(0);
+    await expect(page.locator('#setting-size')).toHaveCount(0);
+    await expect(page.locator('html')).toHaveAttribute('data-size', 'large');
+    await expect(page.locator('html')).toHaveAttribute('data-width', 'narrow');
+    await expect(page.locator('html')).toHaveAttribute(
+      'data-spacing',
+      'comfortable',
+    );
+    await expect(page.locator('html')).toHaveAttribute(
+      'data-motion',
+      'reduced',
+    );
+  }
 });
 
 for (const colorScheme of ['light', 'dark'] as const) {
@@ -800,7 +816,7 @@ test('rendered text and control boundaries meet the documented targets in every 
       ...(await renderedPairs(page, 'text')),
       ...(await renderedPairs(page, 'control')),
     ];
-    expect(audited.length, `${state} audited pairs`).toBeGreaterThan(40);
+    expect(audited.length, `${state} audited pairs`).toBeGreaterThan(30);
     for (const result of audited)
       expect(result.ratio, `${state} ${result.kind} ${result.label}`).toBeGreaterThanOrEqual(result.target);
   };
@@ -811,10 +827,8 @@ test('rendered text and control boundaries meet the documented targets in every 
     await page.addStyleTag({
       content: '* { transition: none !important; animation: none !important; }',
     });
-    // The reading controls dock over the page, so they open last: the
-    // in-page interactions below must not sit underneath them.
     await page
-      .locator('details:not(#reading-controls)')
+      .locator('details')
       .evaluateAll((elements) =>
         elements.forEach(
           (element) => ((element as HTMLDetailsElement).open = true),
@@ -823,9 +837,7 @@ test('rendered text and control boundaries meet the documented targets in every 
     for (const width of [1440, 768, 320]) {
       await page.setViewportSize({ width, height: 1000 });
       const state = `${route} ${width}px`;
-      await page.locator('#reading-controls').evaluate((element) => ((element as HTMLDetailsElement).open = true));
-      await audit(`${state} reading controls`);
-      await page.locator('#reading-controls').evaluate((element) => ((element as HTMLDetailsElement).open = false));
+      await audit(`${state} page`);
       const choices = route === '/' ? products : products.filter((product) => product.path === route);
       for (const product of choices) {
         if (route === '/')
@@ -867,19 +879,16 @@ test('every route supports forced colours and reduced motion', async ({ page }) 
     await page.goto(route);
     for (const width of [1440, 320]) {
       await page.setViewportSize({ width, height: 1000 });
-      const reading = page.locator('#reading-controls > summary');
-      await reading.focus();
-      await expect(reading).toBeFocused();
-      await expect(reading).toHaveCSS('outline-style', 'solid');
-      await expect(reading).toHaveCSS('outline-width', '3px');
+      const skipLink = page.getByRole('link', { name: 'Skip to content' });
+      await skipLink.focus();
+      await expect(skipLink).toBeFocused();
+      await expect(skipLink).toHaveCSS('outline-style', 'solid');
+      await expect(skipLink).toHaveCSS('outline-width', '3px');
       await expect(page.locator('html')).toHaveCSS('scroll-behavior', 'auto');
+      await expect(page.locator('.reading-bar')).toHaveCount(0);
       const transitions = await page.locator('a, button, select').evaluateAll((elements) =>
         elements.filter((element) => element.checkVisibility()).map((element) => getComputedStyle(element).transitionDuration));
       expect(transitions.every((duration) => duration === '0s')).toBe(true);
-      await reading.press('Enter');
-      await expect(page.locator('#setting-size')).toBeVisible();
-      await page.keyboard.press('Escape');
-      await expect(reading).toBeFocused();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
   }
@@ -974,9 +983,6 @@ test('all eight routes share one system of colours, header geometry, type and co
       const header = document
         .querySelector('.site-header')!
         .getBoundingClientRect();
-      const reading = document
-        .querySelector('.reading-bar')!
-        .getBoundingClientRect();
       const h1 = getComputedStyle(document.querySelector('h1')!);
       const control = getComputedStyle(
         document.querySelector('.site-header .button')!,
@@ -998,79 +1004,21 @@ test('all eight routes share one system of colours, header geometry, type and co
           '--vpn',
         ].map((name) => `${name}:${root.getPropertyValue(name).trim()}`),
         header: `${Math.round(header.width)}x${Math.round(header.height)}`,
-        readingTop: Math.round(reading.top),
-        // Distance from the viewport bottom, so a docked bar reports one value.
-        readingBottomGap: Math.round(innerHeight - reading.bottom),
         h1: `${h1.fontSize}/${h1.fontWeight}/${h1.fontFamily}`,
         body: getComputedStyle(document.body).fontFamily,
         controlRadius: control.borderRadius,
         controlMinHeight: control.minHeight,
         controlBackground: control.backgroundColor,
-        readingSummary: document
-          .querySelector('#reading-controls > summary')!
-          .textContent!.trim(),
       };
     });
   };
   for (const theme of ['dark']) {
     const reference = await snapshot(routes[0], theme);
-    // The reading controls are docked inside the viewport bottom, and every
-    // route docks them identically.
-    expect(
-      reference.readingBottomGap,
-      `${theme} reading dock`,
-    ).toBeGreaterThanOrEqual(0);
-    expect(
-      reference.readingBottomGap,
-      `${theme} reading dock`,
-    ).toBeLessThanOrEqual(24);
     for (const route of routes.slice(1))
       expect(await snapshot(route, theme), `${route} ${theme}`).toEqual(
         reference,
       );
   }
-});
-
-test('reading controls dock below the footer, open inside the viewport, and close on Escape', async ({
-  page,
-}) => {
-  await page.goto('/');
-  const bar = page.locator('.reading-bar');
-  const summary = page.locator('#reading-controls > summary');
-  const controls = page.locator('#reading-controls');
-  const footer = page.locator('.site-footer');
-  const bottomGap = async () => {
-    const box = await bar.boundingBox();
-    return page.viewportSize()!.height - (box!.y + box!.height);
-  };
-  // Collapsed, the reserved page padding keeps the dock clear of the footer,
-  // at the reader's size as well as the default.
-  for (const size of ['standard', 'extra']) {
-    await summary.click();
-    await page.locator('#setting-size').selectOption(size);
-    await summary.click();
-    await expect(controls).toHaveJSProperty('open', false);
-    expect(await bottomGap(), `${size} dock bottom`).toBeLessThanOrEqual(24);
-    await page.evaluate(() =>
-      window.scrollTo(0, document.documentElement.scrollHeight),
-    );
-    await expect
-      .poll(async () => {
-        const dock = await bar.boundingBox();
-        const footerBox = await footer.boundingBox();
-        return dock!.y - (footerBox!.y + footerBox!.height);
-      }, `${size} dock below the footer`)
-      .toBeGreaterThanOrEqual(0);
-  }
-  // Open, the whole card stays inside the viewport and grows upward.
-  await summary.click();
-  await expect(controls).toHaveJSProperty('open', true);
-  expect(await bottomGap()).toBeLessThanOrEqual(24);
-  expect((await bar.boundingBox())!.y).toBeGreaterThanOrEqual(0);
-  await page.locator('#setting-size').focus();
-  await page.keyboard.press('Escape');
-  await expect(controls).toHaveJSProperty('open', false);
-  await expect(summary).toBeFocused();
 });
 
 test('hero calls to action keep their documented destinations', async ({

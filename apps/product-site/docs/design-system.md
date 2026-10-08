@@ -47,7 +47,7 @@ are not control boundaries.
   technical detail: 14px. Product category captions may use 12px with full
   normal-text contrast.
 - Shell: 1280px maximum. Gutters: 24px mobile, 32px tablet, 48px desktop.
-- Reading width: 64ch by default, adjustable with display preferences.
+- Reading width: 64ch by default.
 - Section spacing: 96px desktop, 56px mobile. Controls: 6px radius; panels: 12px.
 - Product cards: three columns at desktop, two below 1024px, one below 768px.
 - Heroes place introductory copy beside a short workflow outline and stack
@@ -78,17 +78,16 @@ without JavaScript.
 [ProductPage](../src/components/ProductPage.astro) renders the common product
 page structure. [ProductCards](../src/components/ProductCards.astro) serves the
 homepage and catalogue. [Layout](../src/layouts/Layout.astro) owns navigation,
-footer, display preferences, and consent.
+footer, and consent.
 
 The homepage technical sections retain captioned tables, scoped headers, native
 disclosures, and labelled diagrams. Wide tables scroll inside named,
 keyboard-accessible regions. Product comparisons use responsive definition lists.
 
-Reading settings remain docked at the bottom right, inside reserved page space.
-The panel opens upward, closes on Escape or outside interaction, and restores
-focus on Escape. Preferences persist only while the reader enables saving.
-Text size, line width, spacing, and movement remain configurable; theme is not a
-reading preference. Existing saved reading choices remain supported.
+Browser zoom, custom styles, forced colours, and system reduced-motion settings
+remain supported. Previously saved text size, line width, spacing, and movement
+choices are still applied when present in browser storage; the site no longer
+provides controls to change them.
 
 ## Verification and maintenance
 

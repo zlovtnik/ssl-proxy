@@ -7,14 +7,26 @@ accessibility conformance claim is made.
 
 ## Automated checks
 
-Re-run these after every theme or layout change and replace the dated entries
-with new evidence:
+Last run: 2026-10-08. Re-run these after every theme or layout change and replace
+the dated entries with new evidence:
 
-- `npm run build`: eight static routes and zero diagnostics.
-- `npm test`: Chromium checks covering rendered content, the shared dark theme
-  (including saved light/system values and system colour preferences being
-  ignored), product switching, all three synthetic samples, focus, contrast,
-  responsive reflow, and link destinations.
+- `npm run build`: passed; eight static routes, zero errors, warnings, or hints.
+- `npm test`: passed; 39 Chromium tests, with two production analytics tests
+  skipped because no production measurement ID is configured.
+- `npm run review`: completed all 16 desktop/mobile route captures with no page
+  errors. These are local single-run measurements, not field performance data.
+- `python3 scripts/check-docs.py`: passed Markdown references and repository
+  documentation checks.
+- `npm run format:check`: reports formatting warnings in 21 files, including
+  existing formatting in files touched for this update; no broad reformatting
+  was applied.
+
+The browser suite covers the shared dark theme (including saved light/system
+values and system colour preferences being ignored), product switching, all
+three synthetic samples, focus, contrast, responsive reflow, and link
+destinations. It confirms the display-settings dock is absent while previously
+saved display choices still apply.
+
 - [Layout regressions](../tests/layout.spec.ts) expand each disclosure and card
   individually and together at 320, 375, 768, 1024, and 1440px, with enlarged
   text and spacing overrides. They verify containment, no page overflow, and

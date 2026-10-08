@@ -10,6 +10,8 @@ appearance follow [messaging](messaging.md) and [the design system](design-syste
 - [ ] Check all eight routes in the shared dark theme, including navigation and contact.
 - [ ] Confirm saved light/system themes and system colour preferences cannot change the theme.
 - [ ] Check every sample, expanded disclosure, and card at 320-1440px.
+- [ ] Confirm the removed display-settings dock stays absent and browser zoom
+      and system motion preferences work.
 - [ ] Check enlarged text, spacing overrides, focus, contrast, and hidden panels.
 - [ ] Inspect dark screenshots of the homepage, catalogue, and every demo state.
 - [ ] Confirm static stories, contact, and sample explanations without JavaScript.
@@ -21,7 +23,7 @@ appearance follow [messaging](messaging.md) and [the design system](design-syste
 - [ ] Inspect forced-colours rendering and system reduced-motion settings on supported devices.
 - [ ] Complete keyboard walkthroughs across all routes and demo states.
 - [ ] Evaluate VoiceOver/Safari and NVDA/Firefox, including live announcements,
-      disclosure reading order, diagrams, and display preferences.
+      disclosure reading order, and diagrams.
 - [ ] Conduct usability sessions with disabled participants.
 - [ ] Review reading level, specialist terms, and all applicable criteria in the
       [accessibility matrix](accessibility-matrix.md).
