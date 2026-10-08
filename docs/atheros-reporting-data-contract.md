@@ -152,6 +152,50 @@ for deleting observation history.
     `total_registered_count` is global; label it separately. Do not substitute
     total devices when registration counts are unavailable.
 
+## Graph presentation contract
+
+The Go [reporting API](../apps/integration-console/atheros-search/internal/reporting/graph_types.go)
+returns flat `nodes[]` and `edges[]`. Every returned edge resolves both endpoints
+in the same response, including an individual overview page. Overview pages may
+repeat nodes to include an edge's endpoints; clients deduplicate by node ID.
+Page size bounds the primary node and edge pages, rather than the number of
+endpoint nodes included for closure.
+
+With `hierarchy=true`, the API returns an association neighborhood and
+presentation fields: node `parent_id`, `depth` and `role`; edge `tree_role`
+(`tree` or `secondary`); and `hierarchy` with `root_id`, `root_ids`, `truncated`
+and an optional `reason`. These fields do not change the canonical database
+schema or establish physical ownership or verified connectivity. Stored
+association edges run from device to AP; their source and target stay intact.
+The presentation parent can therefore be the edge's target.
+
+`root_node_id`, `root_bssid` and the existing `source_mac` select a root. Without
+an override, authorized APs rank before other APs, followed by latest catalog
+observation and a deterministic ID tie break. Association traversal is cycle
+safe and does not use the overview hop cap. A device observed at several APs
+keeps its relationships, while only one discovery edge supplies its tree
+parent. Other relationship kinds remain secondary and never establish tree
+parents. Returned nodes without a presentation parent remain forest roots;
+the UI displays unattached identifiers in an Unattached group.
+The default view includes scoped identifiers without association edges after
+the selected AP neighborhood. If no scoped AP exists, it still returns an
+unattached forest. Explicit root requests stay within that root's neighborhood.
+
+Hierarchy requests use an explicit node bound (default and maximum 1000),
+retain the selected root, and report any omitted neighborhood through
+`hierarchy.truncated` and `reason`. `page_cursor` is rejected in this mode;
+overview pagination remains available. Filter scope still applies, so a
+complete returned neighborhood is not a claim of complete sensor coverage.
+Association edges with absent projected endpoints are omitted to preserve
+closure and also set the hierarchy's partial-state reason.
+
+The SolidJS [graph hooks](../apps/integration-console/atheros-search-ui/src/hooks/)
+uses a deterministic horizontal tree with node spacing and fitted bounds.
+Secondary relationships can be shown without changing tree placement.
+Overview and grouped views use calibrated force layouts. The graph chrome
+reports truncation, incomplete overview loading and relationships hidden by
+client filters.
+
 ## Capability and freshness rules
 
 Octopus source preparation supports event, device, behaviour, sequence and
@@ -176,6 +220,24 @@ Search remains the query owner; keep the browser and sensor database-free.
 
 Use authorized read-only access and a captured `as_of` time. These checks are
 requirements; they were not run against production in this review.
+
+An implementation audit on Wiretrap at 2026-10-08 13:14:13 UTC used read-only
+database transactions. The legacy graph had 304 `observed_at` edges, all directed
+device to AP, and 71 absent device endpoints. The busiest AP had 67 projected
+relationships but only 21 resolvable graph device nodes; retained frames for
+that AP represented 5,593 distinct source identifiers. These are different
+grains and scopes, not equivalent client counts. The stream topology edge table
+was empty. Direct graph API verification returned HTTP 401 without an operator
+session. No deployment state was changed.
+
+Coordinator follow-up (same day, code only): `IdentityGraphSql.projectGraph`
+now requires both edge endpoints to exist before writing, deletes any edge
+still missing an endpoint, and prefers unprojected device/pair work before
+recency refresh. Device nodes remain inventory-sourced (`octopus_core.devices`);
+no placeholder nodes are synthesized. A `graph_projection` row in
+`investigation_watermarks` reports projected pair coverage. Stream topology
+enablement is a separate config change (`WIRELESS_PROJECTION_MODE=shadow`);
+live wiretrap re-check is still required before those numbers are trusted.
 
 | Check | Evidence | Required interpretation |
 |---|---|---|

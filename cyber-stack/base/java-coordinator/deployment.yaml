@@ -45,7 +45,7 @@ spec:
             readOnlyRootFilesystem: true
           env:
             - name: WIRELESS_PROJECTION_MODE
-              value: "legacy"
+              value: "shadow"
             - name: WIRELESS_RANGES_ENABLED
               value: "false"
             - name: WIRELESS_CALIBRATIONS_JSON
