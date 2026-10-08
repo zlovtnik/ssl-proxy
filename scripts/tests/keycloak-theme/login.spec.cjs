@@ -152,13 +152,13 @@ for (const width of [320, 360, 375, 768, 1024, 1440]) {
       expect(Math.abs((inputBox.y + inputBox.height / 2) - (iconBox.y + iconBox.height / 2))).toBeLessThanOrEqual(1);
       expect(iconBox.x + iconBox.width).toBeLessThanOrEqual(controlBox.x + controlBox.width);
       expect(errorBox.y).toBeGreaterThanOrEqual(controlBox.y + controlBox.height);
-      await expect(control).toHaveCSS('border-top-color', 'rgb(252, 165, 165)');
-      await expect(icon).toHaveCSS('color', 'rgb(252, 165, 165)');
+      await expect(control).toHaveCSS('border-top-color', 'rgb(244, 184, 174)');
+      await expect(icon).toHaveCSS('color', 'rgb(244, 184, 174)');
 
       // Autofocus after failed login must preserve the error border and a focus ring.
       await expect(control).not.toHaveCSS('box-shadow', 'none');
       await page.getByRole('button', { name: 'Show password' }).focus();
-      await expect(control).toHaveCSS('border-top-color', 'rgb(252, 165, 165)');
+      await expect(control).toHaveCSS('border-top-color', 'rgb(244, 184, 174)');
       const passwordBox = await box(page.locator('#password').locator('..'));
       const toggleBox = await box(page.getByRole('button', { name: 'Show password' }));
       expect(passwordBox.x + passwordBox.width).toBeLessThanOrEqual(toggleBox.x);

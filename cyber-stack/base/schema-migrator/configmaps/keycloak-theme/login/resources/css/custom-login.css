@@ -4,7 +4,7 @@
   --auth-card: #141414;
   --auth-control: #1c1c1c;
   --auth-control-focus: #1c1c1c;
-  --auth-border: #767c72;
+  --auth-border: #7D8278;
   --auth-border-strong: #bec2b9;
   --auth-border-active: #a3e6a3;
   --auth-ring: #a3e6a3;
@@ -12,11 +12,11 @@
   --auth-muted: #bec2b9;
   --auth-subtle: #bec2b9;
   --auth-accent: #a3e6a3;
-  --auth-accent-hover: #b7eeb7;
-  --auth-error: #fca5a5;
-  --auth-error-border: #fca5a5;
-  --auth-warning: #f2d28b;
-  --auth-info: #a8d4f5;
+  --auth-accent-hover: #B9EDB9;
+  --auth-error: #F4B8AE;
+  --auth-error-border: #F4B8AE;
+  --auth-warning: #F5D08A;
+  --auth-info: #B6D5FA;
   --auth-ease: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
@@ -933,7 +933,7 @@ html.login-pf,
   .auth-card .pf-v5-c-button,
   .auth-card .pf-v5-c-form-control,
   .auth-language select {
-    border: 1px solid ButtonText;
+    border: 1px solid ButtonText !important;
   }
 }
 
@@ -948,13 +948,13 @@ html.login-pf,
   .auth-trust li,
   .auth-brand-foot,
   .auth-card .pf-v5-c-alert {
-    animation: none;
+    animation: none !important;
   }
 
   *,
   *::before,
   *::after {
-    transition: none;
-    scroll-behavior: auto;
+    transition: none !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -8,9 +8,12 @@ may replace author colours with the user's system colours.
 
 ## Palette contract
 
-The [public design system](../apps/product-site/docs/design-system.md) is the
-palette reference. Each app keeps its existing token names and component
-structure.
+The machine-readable source of truth is
+[`theme/rclabs.tokens.json`](../theme/rclabs.tokens.json). The
+[public design system](../apps/product-site/docs/design-system.md) documents the
+same palette for humans. Each app keeps its existing token names and component
+structure; `python3 scripts/sync_theme_tokens.py` writes the shared values into
+each surface, and `make theme-check` fails on drift.
 
 | Role | Colour | Use |
 | --- | --- | --- |
@@ -63,6 +66,7 @@ and [enhanced target-size guidance](https://www.w3.org/WAI/WCAG22/Understanding/
 | Schema Migrator | In `apps/schema-migrator/schema-migrator-ui`, run `npm run build`, `npm test`, and `npm run electron:build-main`. See [design checks](../apps/schema-migrator/schema-migrator-ui/src/design/) and [UI quality guidance](../apps/schema-migrator/codex/skills/schema-migrator-ui-quality/SKILL.md). |
 | Keycloak | In `scripts/tests/keycloak-theme`, run `npm test`. The [login suite](../scripts/tests/keycloak-theme/login.spec.cjs) loads the actual theme CSS into representative normal and error fixtures; it does not run a Keycloak server. |
 | Documentation | Run `python3 scripts/check-docs.py` from the repository root. |
+| Theme drift | Run `make theme-check` from the repository root. After editing `theme/rclabs.tokens.json`, run `make theme-sync` and commit the regenerated surface values. |
 
 Builds and browser checks generate local output such as `dist`, test reports
 and screenshots. These are verification artifacts, not deployment changes.

@@ -15,7 +15,10 @@ only in [`cyber-stack/`](cyber-stack/). Production is reconciled by Argo CD.
 
 The public site, Search, Migrator and shared login use the
 [RCLabs dark theme](docs/rclabs-theme.md), with accessibility targets and
-manual evaluation tracked alongside the automated checks.
+manual evaluation tracked alongside the automated checks. The machine-readable
+palette source is [`theme/rclabs.tokens.json`](theme/rclabs.tokens.json); run
+`make theme-check` after token edits and `make theme-sync` to regenerate surface
+values.
 
 ## Component ownership
 

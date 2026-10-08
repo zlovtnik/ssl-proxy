@@ -5,6 +5,11 @@ colours, typography, spacing, surfaces, controls, product cards, and demo layout
 [landing.css](../src/styles/landing.css) composes homepage-specific patterns
 without redefining the shared system.
 
+The machine-readable palette source is
+[`theme/rclabs.tokens.json`](../../../theme/rclabs.tokens.json) at the repository
+root. Surface token values are generated from it (`make theme-sync`) and checked
+with `make theme-check`. Do not hand-edit colour hexes in `site.css`.
+
 ## Palette
 
 | Role | Shared dark theme |
