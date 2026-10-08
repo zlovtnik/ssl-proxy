@@ -3,6 +3,10 @@ kind: ConfigMap
 metadata:
   name: wireless-sensor-calibration
   namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: java-coordinator
+    app.kubernetes.io/managed-by: kustomize
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:

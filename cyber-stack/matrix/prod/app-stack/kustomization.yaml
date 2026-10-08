@@ -6,8 +6,7 @@ resources:
 - ../../../base/proxy/deployment.yaml
 - ../../../base/proxy/service.yaml
 - ../../../base/proxy/networkpolicy.yaml
-- ../../../base/java-coordinator/deployment.yaml
-- ../../../base/java-coordinator/networkpolicy.yaml
+- ../../../base/java-coordinator
 - ../../../base/schema-migrator
 - ../../../base/atheros-sensor/daemonset.yaml
 - ../../../base/atheros-sensor/networkpolicy.yaml
