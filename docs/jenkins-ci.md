@@ -209,10 +209,10 @@ The pipeline inventory contains five declarative definitions:
 | Definition | Agent scripts | Preserved behavior |
 | --- | --- | --- |
 | [Umbrella Jenkinsfile](../Jenkinsfile) | [scripts/ci](../scripts/ci/) | Change classification, pinned sources, parallel validation, selected publication and manual digest report |
-| [Integration Console Jenkinsfile](../apps/integration-console/Jenkinsfile) | [Console CI scripts](../apps/integration-console/scripts/ci/) | Parallel Go/UI checks and two full-SHA image tags |
-| [Schema Migrator Jenkinsfile](../apps/schema-migrator/Jenkinsfile) | [Migrator CI scripts](../apps/schema-migrator/scripts/ci/) | Parallel backend/UI checks and two full-SHA image tags |
-| [Octopus Jenkinsfile](../services/octopus/Jenkinsfile) | [Octopus CI scripts](../services/octopus/scripts/ci/) | Formatting, lint, Docker-required JaCoCo tests, coverage floor, assembly and report/JAR archive |
-| [Key Rotator Jenkinsfile](../apps/wg-key-rotator/Jenkinsfile) | [Rotator CI scripts](../apps/wg-key-rotator/scripts/ci/) | Elixir tests and main-only full-SHA image publication |
+| [Integration Console Jenkinsfile](../apps/integration-console/Jenkinsfile) | Its local `scripts/ci/` | Parallel Go/UI checks and two full-SHA image tags |
+| [Schema Migrator Jenkinsfile](../apps/schema-migrator/Jenkinsfile) | Its local `scripts/ci/` | Parallel backend/UI checks and two full-SHA image tags |
+| [Octopus Jenkinsfile](../services/octopus/Jenkinsfile) | Its local `scripts/ci/` | Formatting, lint, Docker-required JaCoCo tests, coverage floor, assembly and report/JAR archive |
+| [Key Rotator Jenkinsfile](../apps/wg-key-rotator/Jenkinsfile) | Its local `scripts/ci/` | Elixir tests and main-only full-SHA image publication |
 
 The job definitions embedded in
 [Configuration as Code](../docker/jenkins/casc/jenkins.yaml) continue to load
