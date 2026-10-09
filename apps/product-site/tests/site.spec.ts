@@ -48,7 +48,10 @@ test('Octopus never publishes saved metrics without JavaScript', async ({ browse
     await expect(page).toHaveURL('http://127.0.0.1:4323/octopus/#operational-evidence');
     const evidence = page.locator('#operational-evidence');
     await expect(evidence.getByRole('heading', { name: 'See the pipeline as it runs.' })).toBeVisible();
-    await expect(evidence).toContainText('Enable JavaScript to load current metrics.');
+    // noscript is present in the document; Playwright innerText drops it.
+    expect(await page.content()).toContain(
+      'Enable JavaScript to load current metrics.',
+    );
     await expect(evidence.locator('[data-metric]')).toHaveCount(6);
     for (const value of await evidence.locator('[data-metric]').all()) await expect(value).toHaveText('Unavailable');
     await expect(evidence.locator('time')).toHaveCount(0);

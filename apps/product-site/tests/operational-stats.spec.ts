@@ -20,24 +20,28 @@ const reading = (offset = 0, count = 123) => ({
   },
 });
 
-test('new responses update every displayed metric; failed polling clears them and recovers', async ({
+test('new responses update every displayed metric; a failed poll keeps the last reading then recovers', async ({
   page,
 }) => {
   await page.clock.install({ time: captured });
   let calls = 0;
+  // Route handlers run in Node; keep a mock-clock offset for asOf stamps.
+  let offset = 0;
   await page.route('**/api/octopus-stats', (route) => {
     calls++;
     return calls === 3
       ? route.fulfill({ status: 503, json: { error: 'unavailable' } })
-      : route.fulfill({ json: reading((calls - 1) * 30_000, calls * 123) });
+      : route.fulfill({ json: reading(offset, calls * 123) });
   });
   await page.goto('/octopus/');
   const widget = page.locator('[data-ux="ops-stats"]');
   await expect(widget).toHaveAttribute('data-live', 'true');
+  await expect(widget).toHaveAttribute('data-mode', 'live');
   await expect(page.locator('[data-metric="day"]')).toHaveText('123 records');
   await expect(page.locator('[data-metric="backpressure"]')).toHaveText(
     'Accepting work',
   );
+  offset = 30_000;
   await page.clock.runFor(30_000);
   await expect(page.locator('[data-metric="day"]')).toHaveText('246 records');
   await expect(page.locator('[data-metric="week"]')).toHaveText('492 records');
@@ -48,11 +52,17 @@ test('new responses update every displayed metric; failed polling clears them an
   await expect(page.locator('[data-metric="backpressure"]')).toHaveText(
     'Paused to drain backlog',
   );
+  // Failed poll: retain the last fresh reading, clearly not live.
+  offset = 65_000;
   await page.clock.runFor(30_000);
   await expect(widget).toHaveAttribute('data-live', 'false');
-  for (const value of await widget.locator('[data-metric]').all())
-    await expect(value).toHaveText('Unavailable');
-  await expect(widget.locator('time')).toHaveCount(0);
+  await expect(widget).toHaveAttribute('data-mode', 'delayed');
+  await expect(page.locator('[data-metric="day"]')).toHaveText('246 records');
+  await expect(page.locator('[data-metric="rate"]')).toHaveText(
+    '24.6 records/s',
+  );
+  await expect(page.getByRole('status')).toHaveText('Live metrics delayed');
+  // Faster retry recovers onto the next successful payload.
   await page.clock.runFor(30_000);
   await expect(widget).toHaveAttribute('data-live', 'true');
   await expect(page.locator('[data-metric="day"]')).toHaveText('492 records');
@@ -72,9 +82,13 @@ test('old peaks expire independently and missing readings never become zero', as
     }),
   );
   await page.goto('/octopus/');
-  await expect(page.getByRole('status')).toHaveText('Live metrics unavailable');
-  for (const value of await page.locator('[data-metric]').all())
-    await expect(value).toHaveText('Unavailable');
+  await expect(page.getByRole('status')).toHaveText(
+    'Production connected · warming up',
+  );
+  await expect(page.locator('[data-metric="day"]')).toHaveText('Unavailable');
+  await expect(page.locator('[data-metric="week"]')).toHaveText('Unavailable');
+  await expect(page.locator('[data-metric="rate"]')).toHaveText('Warming up');
+  await expect(page.locator('[data-metric="pending"]')).toHaveText('Warming up');
 });
 
 test('repeated cached responses lose live status when the source timestamp expires', async ({
@@ -93,6 +107,10 @@ test('repeated cached responses lose live status when the source timestamp expir
   await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
     'data-live',
     'false',
+  );
+  await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
+    'data-mode',
+    'unavailable',
   );
   await expect(page.locator('[data-metric="pending"]')).toHaveText(
     'Unavailable',
