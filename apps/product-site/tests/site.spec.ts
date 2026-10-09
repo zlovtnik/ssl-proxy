@@ -1207,12 +1207,8 @@ test('every route that offers a commercial action uses the shared contact patter
 test('the four product routes share the same section structure from the model', async ({
   page,
 }) => {
-  const labels: string[][] = [];
   for (const product of products) {
     await page.goto(product.path);
-    labels.push(
-      await page.locator('.section-heading .eyebrow').allTextContents(),
-    );
     for (const section of [
       'workflow',
       'value',
@@ -1226,12 +1222,19 @@ test('the four product routes share the same section structure from the model', 
         }),
         `${product.name} ${section}`,
       ).toHaveCount(1);
+    // Shared structure; each product keeps its own model labels.
+    for (const section of ['workflow', 'value', 'evidence'] as const)
+      await expect(
+        page.locator('.section-heading .eyebrow', {
+          hasText: product.sections[section].label,
+        }),
+        `${product.name} ${section} label`,
+      ).toHaveCount(1);
     await expect(page.locator('.workflow-step')).toHaveCount(3);
     await expect(page.locator('.audience-card')).toHaveCount(2);
     await expect(page.locator('.evidence-panel')).toHaveCount(1);
     await expect(page.locator('.contact-banner')).toHaveCount(1);
   }
-  for (const label of labels.slice(1)) expect(label).toEqual(labels[0]);
 });
 
 test('each product demo appears once below its introduction', async ({

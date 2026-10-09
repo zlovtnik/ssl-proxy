@@ -170,21 +170,25 @@ export default function OctopusOperationalStats() {
         <h3>Pipeline now</h3>
         <dl class="ops-metrics">
           <div>
-            <dt>Ledger processing / second</dt>
+            <dt>
+              Ledger processing / second
+              <span class="fine-print">Average over the last 5 minutes</span>
+            </dt>
             <dd data-metric="rate">
               {liveCell(
                 () =>
                   `${rate.format(liveStrip()!.ingestProcessedRatePerSec)} records/s`,
               )}
             </dd>
-            <p class="fine-print">Average over the last 5 minutes</p>
           </div>
           <div>
-            <dt>Records waiting</dt>
+            <dt>
+              Records waiting
+              <span class="fine-print">Pending or being processed</span>
+            </dt>
             <dd data-metric="pending">
               {liveCell(() => number.format(liveStrip()!.pendingLedgerCount))}
             </dd>
-            <p class="fine-print">Pending or being processed</p>
           </div>
           <div>
             <dt>Last successful processing check</dt>

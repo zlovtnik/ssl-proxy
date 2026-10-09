@@ -15,7 +15,8 @@ export interface Stats {
 }
 
 export const maxStatsAgeMs = 90_000;
-export const maxPeaksAgeMs = 120_000;
+// Must cover Octopus peaks-refresh-seconds (300) plus fetch and clock slack.
+export const maxPeaksAgeMs = 360_000;
 const object = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null;
 const count = (v: unknown): v is number =>

@@ -65,7 +65,7 @@ There is no build-time metrics configuration or saved measurement fallback.
 
 - Verify two real responses at least 30 seconds apart have advancing `asOf`
   values. Counts can legitimately remain unchanged.
-- Check `peaksComputedAt` advances after the 60-second cache period.
+- Check `peaksComputedAt` advances after the 300-second cache period.
 - Verify the public gateway targets Service port 8080, which forwards to
   container port 8081. NetworkPolicy still allows Traefik to container port 8081.
 - Confirm `OCTOPUS_PUBLIC_STATS_ENABLED` and the allowed origins in the rendered

@@ -76,7 +76,7 @@ test('old peaks expire independently and missing readings never become zero', as
     route.fulfill({
       json: {
         ...reading(),
-        peaksComputedAt: new Date(captured.getTime() - 121_000).toISOString(),
+        peaksComputedAt: new Date(captured.getTime() - 361_000).toISOString(),
         liveStrip: null,
       },
     }),
