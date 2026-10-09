@@ -11,6 +11,7 @@ Thumbs.db
 .scala-build/
 # Local agent/workspace state
 .omx/
+.mimocode/
 /wallet/
 .wrangler/
 # Logs and temp files
