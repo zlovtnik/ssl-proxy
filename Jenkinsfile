@@ -91,6 +91,9 @@ pipeline {
                 case 'SHOULD_RUN_PLATFORM_SYNC':
                   env.SHOULD_RUN_PLATFORM_SYNC = fields[1]
                   break
+                case 'SHOULD_RUN_STATS_READER':
+                  env.SHOULD_RUN_STATS_READER = fields[1]
+                  break
                 case 'SHOULD_RUN_ATHEROS_SEARCH':
                   env.SHOULD_RUN_ATHEROS_SEARCH = fields[1]
                   break
@@ -108,6 +111,9 @@ pipeline {
                   break
                 case 'SHOULD_PUBLISH_REDPANDA_MAINT':
                   env.SHOULD_PUBLISH_REDPANDA_MAINT = fields[1]
+                  break
+                case 'SHOULD_PUBLISH_STATS_READER':
+                  env.SHOULD_PUBLISH_STATS_READER = fields[1]
                   break
               }
             }
@@ -226,6 +232,22 @@ pipeline {
             '''
           }
         }
+        stage('Stats reader') {
+          options { timeout(time: 30, unit: 'MINUTES') }
+          steps {
+            sh '''
+              set -eu
+              if [ "$SHOULD_RUN_STATS_READER" != true ]; then echo 'skipped: no stats-reader changes'; exit 0; fi
+              docker_cmd() {
+                env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+                  DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"
+              }
+              tar -cf - services/stats-reader | docker_cmd run --rm -i -w /workspace \
+                golang:1.26-bookworm \
+                sh -c 'tar --no-same-owner -xf - && cd services/stats-reader && go test ./...'
+            '''
+          }
+        }
         stage('Atheros search') {
           options { timeout(time: 30, unit: 'MINUTES') }
           steps {
@@ -330,7 +352,7 @@ pipeline {
 
     stage('Registry and Buildx preflight') {
       when {
-        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' }
+        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' || env.SHOULD_PUBLISH_STATS_READER == 'true' }
       }
       options { timeout(time: 10, unit: 'MINUTES') }
       steps {
@@ -367,7 +389,7 @@ pipeline {
 
     stage('Publish immutable images') {
       when {
-        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' }
+        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' || env.SHOULD_PUBLISH_STATS_READER == 'true' }
       }
       options { timeout(time: 75, unit: 'MINUTES') }
       steps {
@@ -401,8 +423,21 @@ pipeline {
           else
             echo 'skipped: no redpanda-maintenance changes'
           fi
+          if [ "$SHOULD_PUBLISH_STATS_READER" = true ]; then
+            env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+              DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make --no-print-directory publish-stats-reader \
+              TAG="$build_tag" BUILD_DATE="$build_date" BUILDER="$BUILDER" PLATFORM=linux/amd64 \
+              REGISTRY="$REGISTRY" REGISTRY_PLAIN_HTTP="$REGISTRY_PLAIN_HTTP" \
+              PUBLISH_REPOSITORY="$REGISTRY/stats-reader" \
+              PUBLISH_METADATA_FILE=artifacts/stats-reader-buildx.json
+            stats_reader_digest="$(python3 scripts/image_contract.py buildx-digest artifacts/stats-reader-buildx.json)"
+            echo "stats-reader pushed digest: $stats_reader_digest"
+            echo 'Pin that digest in the reviewed app-stack overlays before adding the stats-reader resource and public route.'
+          else
+            echo 'skipped: no stats-reader changes'
+          fi
         '''
-        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt,artifacts/redpanda-maint-buildx.json', fingerprint: true
+        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt,artifacts/redpanda-maint-buildx.json,artifacts/stats-reader-buildx.json', fingerprint: true
       }
     }
   }

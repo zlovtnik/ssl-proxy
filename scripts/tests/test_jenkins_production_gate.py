@@ -137,6 +137,14 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn("SUBMODULE_CI_READY = 'false'", pipeline)
         self.assertIn('"$SUBMODULE_CI_READY" = true ] || [ "$SHOULD_RUN_OCTOPUS" != true', pipeline)
         self.assertIn('"$SHOULD_PUBLISH_REDPANDA_MAINT" = true', pipeline)
+        self.assertIn('"$SHOULD_PUBLISH_STATS_READER" = true', pipeline)
+
+    def test_stats_reader_is_tested_before_bootstrap_publication(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        self.assertLess(pipeline.index("stage('Stats reader')"), pipeline.index("stage('Publish immutable images')"))
+        self.assertIn("cd services/stats-reader && go test ./...", pipeline)
+        self.assertIn("publish-stats-reader", pipeline)
+        self.assertIn("stats-reader-buildx.json", pipeline)
 
     def test_external_multibranch_jobs_are_declared(self) -> None:
         config = (REPOSITORY_ROOT / "docker/jenkins/casc/jenkins.yaml").read_text(encoding="utf-8")

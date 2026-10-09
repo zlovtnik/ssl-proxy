@@ -30,7 +30,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: stats-reader
-          image: stats-reader:latest
+          image: stats-reader
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

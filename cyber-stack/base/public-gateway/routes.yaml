@@ -124,7 +124,7 @@ spec:
         - name: ssl-proxy-public-rate-limit
       services:
         - kind: Service
-          name: ssl-proxy-stats-reader
+          name: ssl-proxy-java-coordinator
           port: 8080
           scheme: http
   tls:

@@ -72,6 +72,7 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
     )
     tests = {
         "platform_sync": changed("services/platform-sync/"),
+        "stats_reader": changed("services/stats-reader/", "Makefile"),
         "atheros_search": search_contracts,
         "atheros_search_contracts": search_contracts,
         "schema_migrator": bumped["apps/schema-migrator"],
@@ -84,6 +85,7 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         "submoduleBumped": bumped,
         "changedServices": [service for service in FIRST_PARTY_SERVICES if service in services],
         "publishRedpandaMaint": changed("cyber-stack/base/redpanda-maintenance/"),
+        "publishStatsReader": changed("services/stats-reader/", "Makefile"),
         "tests": tests,
     }
 
@@ -119,6 +121,7 @@ def env_lines(result: dict) -> str:
     for name, value in result["tests"].items():
         lines.append(f"SHOULD_RUN_{name.upper()}={str(value).lower()}")
     lines.append(f"SHOULD_PUBLISH_REDPANDA_MAINT={str(result['publishRedpandaMaint']).lower()}")
+    lines.append(f"SHOULD_PUBLISH_STATS_READER={str(result['publishStatsReader']).lower()}")
     for path, bumped in result["submoduleBumped"].items():
         key = path.upper().replace("/", "_").replace("-", "_")
         lines.append(f"SUBMODULE_BUMPED_{key}={str(bumped).lower()}")
