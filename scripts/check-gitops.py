@@ -1368,6 +1368,11 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
             "ssl-proxy-atheros-search",
             8080,
         ),
+        (
+            f"Host(`{hostname}`) && Path(`/public/stats`)",
+            "ssl-proxy-java-coordinator",
+            8081,
+        ),
     ]
     actual_routes: list[tuple[str, str, Any]] = []
     seen_matches: set[str] = set()
@@ -1388,7 +1393,7 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
             errors.append(f"{relative}: public gateway must not use wildcard hosts")
     if actual_routes != expected_routes:
         errors.append(
-            f"{relative}: public gateway routes must expose only OIDC, Schema API, and Atheros v1"
+            f"{relative}: public gateway routes must expose only OIDC, Schema API, Atheros v1, and public stats"
         )
 
     forbidden_fragments = ("/grafana", "/admin", "/metrics", "/readyz")
