@@ -6,15 +6,20 @@ disclosures, and search routing. No accessibility conformance claim is made.
 
 ## Automated checks
 
-Last run: 2026-10-08. Re-run these after every theme or layout change and replace
-the dated entries with new evidence:
+Last run: 2026-10-08 (Octopus landing redesign). Re-run these after every theme
+or layout change and replace the dated entries with new evidence:
 
-- `PUBLIC_SITE_URL=https://rclabs.uk npm run build`: passed; 16 HTML pages
-  (15 indexable pages and an excluded 404), zero errors, warnings, or hints.
-- `npm test -- --config=/tmp/rclabs-seo-playwright.config.ts`: passed; 50
-  Chromium tests, with two analytics tests skipped because no measurement ID
-  is configured. Temporary test settings reused the existing site preview on
-  port 4323 instead of stopping it. The repository test configuration is unchanged.
+- `npm run build`: passed; `astro check` clean and 17 pages built, including the
+  dedicated `OctopusPage` composition at `/octopus/`.
+- `npm test`: passed; 55 Chromium tests green (2 analytics tests skipped with no
+  measurement ID). Coverage includes no-JS Octopus evidence, UX-island allowlist
+  (`data-ux=pipeline|audience-toggle|count-up`), pipeline/toggle layout at
+  320–1440 and 200% text, forced colours, reduced motion, contrast, and the three
+  synthetic demos still intact. Solid hydration keys are stripped before the
+  privacy raw-HTML scan so island ids cannot match internal-port patterns.
+- `PUBLIC_SITE_URL=https://rclabs.uk npm run build` and the prior SEO/Pages
+  evidence below remain from the previous run and should be re-checked before
+  publication.
 - A Pages preview build with `CF_PAGES=1`, `CF_PAGES_BRANCH=seo-preview`, and an
   inherited production `PUBLIC_SITE_URL` passed. Homepage and guide artifacts
   retained `noindex`; robots excluded crawling. Final output was rebuilt with

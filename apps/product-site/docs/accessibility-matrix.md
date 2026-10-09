@@ -18,6 +18,7 @@ substitute for assistive-technology or participant testing.
 | Content and status | CODE: synthetic labels, visible caveats, glossary definitions, and polite status messages. | MANUAL: clarity and announcement timing with VoiceOver/Safari and NVDA/Firefox. |
 | Non-text content | CODE: labelled diagrams and decorative SVGs hidden from the accessibility tree. | MANUAL: equivalent-text usefulness. |
 | Operational evidence | CODE: static headings, labelled peak cards, a snapshot definition list, UTC time elements, and pending/omitted states. AUTO: no-JavaScript rendering, provenance, caveat, privacy, responsive layout, axe, and contrast checks include Octopus. | MANUAL: screen-reader interpretation of periods, partial weeks, and capture time. |
+| Octopus UX islands | CODE: pipeline selector is a labelled `role="group"` of `aria-pressed` buttons with all three steps retained; audience toggle is progressive enhancement with `hidden` + `inert` + `aria-hidden` on the inactive card; count-up SSR emits final text and skips animation under reduced motion; motif, track, packet, and status dot are `aria-hidden`; native glossary disclosures work without JS. AUTO: layout containment for toggle and pipeline at 320–1440 and 200% text; no synthetic demo classes on `/octopus/`. | MANUAL: keyboard order through pipeline → toggle → glossary; forced-colours and switch access; count-up announcement timing. |
 
 ## Current automated coverage
 

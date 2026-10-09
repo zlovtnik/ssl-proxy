@@ -21,8 +21,13 @@ statements, workflow steps, caveats, or contact labels.
 
 The catalogue at `/products/` compares all four. The homepage playground runs
 one of three synthetic samples at a time. Their product pages place the full
-sample below the introductory hero. Octopus has no demo island; its static
-operational evidence section follows capability evidence and precedes the glossary.
+sample below the introductory hero. Octopus has no demo island. Its page uses
+UX islands only for stage emphasis, audience framing, and optional count-up
+presentation; measured evidence stays static HTML from `octopus-stats.json`.
+The operator snapshot section follows capability evidence and precedes the
+glossary. Pipeline short labels (`Discovery`, `Dispatch`, `Evidence`) are
+model-owned `stageLabel` values. Toggle labels (`I am an Engineer`,
+`I am an Operator`) are UI chrome; the card audience statements stay in the model.
 
 The six technical guides under `/guides/` explain separate investigation and
 migration questions with repository-backed mechanisms and labelled examples.

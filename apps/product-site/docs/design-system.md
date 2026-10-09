@@ -3,6 +3,7 @@
 All public routes share [site.css](../src/styles/site.css). It owns
 colours, typography, spacing, surfaces, controls, product cards, and demo layouts.
 [landing.css](../src/styles/landing.css) composes homepage-specific patterns
+and [octopus.css](../src/styles/octopus.css) composes the Octopus product route
 without redefining the shared system.
 
 The machine-readable palette source is
@@ -63,6 +64,14 @@ The playground keeps each product's state mounted. Inactive panels use
 panels grow naturally. No overlapping grid placement or fixed preview height
 is used.
 
+Octopus UX islands follow the same progressive-enhancement rules. Pipeline
+emphasis highlights the active stage without hiding the other two
+`.workflow-step` cards. The audience segmented control is hidden until
+hydration so both `.audience-card` blocks stack without JavaScript; with
+JavaScript the inactive card is `hidden` + `inert` + `aria-hidden`. Named
+`data-ux` wrappers (`pipeline`, `audience-toggle`, `count-up`) identify these
+islands for tests. Synthetic product demos stay forbidden on `/octopus/`.
+
 Native disclosures stay in document flow. Long SQL, identifiers, and explanations
 wrap within their panel. [Layout regressions](../tests/layout.spec.ts) open
 disclosures separately and together, cycle every sample, and check containment,
@@ -77,11 +86,18 @@ without JavaScript.
 ## Shared patterns
 
 [ProductPage](../src/components/ProductPage.astro) renders the common product
-page structure. [ProductCards](../src/components/ProductCards.astro) serves the
+page structure for Search, Migrator, and VPN / Proxy. [OctopusPage](../src/components/OctopusPage.astro)
+is the dedicated Octopus composition: hero motif and solid accent glow, pipeline
+emphasis island, audience toggle island, operator snapshot widget, and glossary
+disclosures. [ProductCards](../src/components/ProductCards.astro) serves the
 homepage and catalogue. [Layout](../src/layouts/Layout.astro) owns navigation,
 footer, and consent. [OperationalEvidence](../src/components/OperationalEvidence.astro)
-uses two static peak cards and a wrapping definition list for an optional manual
-snapshot. It uses existing surface, accent, and text tokens and stacks below 768px.
+wraps peak cards and the optional manual snapshot in an inset operator widget
+with mono metrics, tabular numerals, and a decorative backpressure status dot.
+Peak counts SSR as final `en-GB` text; [OctopusCountUp](../src/components/OctopusCountUp.tsx)
+only animates that text when motion is allowed. [octopus.css](../src/styles/octopus.css)
+composes the same tokens for motif, pipeline, toggle, ops chrome, glossary, and
+motion gates.
 
 The homepage technical sections retain captioned tables, scoped headers, native
 disclosures, and labelled diagrams. Wide tables scroll inside named,
