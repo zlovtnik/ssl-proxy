@@ -4,6 +4,7 @@ The prod/staging `cloudflare-edge` patches replace the public IngressRoute
 wholesale. A path added only to `base/public-gateway/routes.yaml` silently
 disappears from production. This test keeps base and overlay routes in sync and
 requires Traefik ingress to java-coordinator for `/public/stats`.
+The IngressRoute targets the Service port; NetworkPolicy targets the pod port.
 """
 
 from __future__ import annotations
@@ -19,6 +20,9 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 BASE_ROUTES = REPOSITORY_ROOT / "cyber-stack/base/public-gateway/routes.yaml"
 PROD_EDGE = REPOSITORY_ROOT / "cyber-stack/matrix/prod/patches/cloudflare-edge.yaml"
 STAGING_EDGE = REPOSITORY_ROOT / "cyber-stack/matrix/staging/patches/cloudflare-edge.yaml"
+COORDINATOR_DEPLOYMENT = (
+    REPOSITORY_ROOT / "cyber-stack/base/java-coordinator/deployment.yaml"
+)
 COORDINATOR_NETPOL = (
     REPOSITORY_ROOT / "cyber-stack/base/java-coordinator/networkpolicy.yaml"
 )
@@ -87,6 +91,23 @@ class PublicStatsRouteTest(unittest.TestCase):
         self.assertEqual([], failures)
 
     def test_public_stats_routes_to_java_coordinator(self) -> None:
+        coordinator_services = [
+            document
+            for document in load_documents(COORDINATOR_DEPLOYMENT)
+            if document.get("kind") == "Service"
+            and document.get("metadata", {}).get("name") == "ssl-proxy-java-coordinator"
+        ]
+        self.assertEqual(1, len(coordinator_services))
+        http_ports = [
+            port
+            for port in coordinator_services[0].get("spec", {}).get("ports", [])
+            if port.get("name") == "http"
+        ]
+        self.assertEqual(1, len(http_ports))
+        service_port = http_ports[0].get("port")
+        self.assertIsInstance(service_port, int)
+        self.assertEqual(8081, http_ports[0].get("targetPort"))
+
         failures: list[str] = []
         for label, path in (("base", BASE_ROUTES), ("prod", PROD_EDGE), ("staging", STAGING_EDGE)):
             hits = [
@@ -102,13 +123,13 @@ class PublicStatsRouteTest(unittest.TestCase):
             services = hits[0].get("services") or []
             names = {service.get("name") for service in services if isinstance(service, dict)}
             ports = {service.get("port") for service in services if isinstance(service, dict)}
-            if "ssl-proxy-java-coordinator" not in names:
+            if names != {"ssl-proxy-java-coordinator"}:
                 failures.append(
                     f"{label} {path.name}: /public/stats must target ssl-proxy-java-coordinator, got {names}"
                 )
-            if 8081 not in ports:
+            if ports != {service_port}:
                 failures.append(
-                    f"{label} {path.name}: /public/stats must target port 8081, got {ports}"
+                    f"{label} {path.name}: /public/stats must target Service port {service_port}, got {ports}"
                 )
         self.assertEqual([], failures)
 
