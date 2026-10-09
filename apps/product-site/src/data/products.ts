@@ -9,7 +9,7 @@ export const migratorCaveat =
 export const vpnCaveat =
   'Traffic categories are heuristics. Routing, inspection, and policy outcomes depend on deployment configuration. This synthetic sample establishes no VPN connection and sends no traffic.';
 export const octopusCaveat =
-  'Peaks are historical ingest-ledger counts, not a throughput limit, capacity forecast, savings, or latency claim. The metrics strip is a manual snapshot, not a live feed.';
+  'Peaks are historical ingest-ledger counts, not a throughput limit, capacity forecast, savings, or latency claim. The metrics strip reflects live production data when the feed is configured.';
 
 export const home = {
   // Google rewrites and truncates titles; this is an editorial target, not a
@@ -890,7 +890,7 @@ export const products = [
         ...evidenceSection,
         caveatLabel: 'MEASUREMENT / OPERATING BOUNDARY',
         footnote:
-          'Published measurements come from the production ingest ledger and an operator metrics snapshot. They describe recorded activity under that deployment configuration.',
+          'Published measurements come from the production ingest ledger and coordinator pipeline metrics. They describe recorded activity under that deployment configuration.',
       },
       glossary: glossarySection,
     },
@@ -909,8 +909,8 @@ export const products = [
         title: 'For buyers and operators',
         proposition: 'Evaluate operations with a defined count.',
         points: [
-          'Review historical peak day and week counts with their source, UTC boundaries, and capture time.',
-          'Read the pending ledger, ingest rate, and last ingest success as a dated operator snapshot.',
+          'Review historical peak day and week counts with their source and UTC boundaries.',
+          'Read the pending ledger, ingest rate, and last ingest success from live production metrics.',
         ],
       },
     ],

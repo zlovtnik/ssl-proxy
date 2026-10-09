@@ -366,6 +366,10 @@ spec:
               value: "true"
             - name: OCTOPUS_ENVIRONMENT
               value: "production"
+            - name: OCTOPUS_PUBLIC_STATS_ENABLED
+              value: "true"
+            - name: OCTOPUS_PUBLIC_STATS_ALLOWED_ORIGINS
+              value: "https://rclabs.uk"
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: "0.05"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

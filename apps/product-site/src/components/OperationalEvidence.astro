@@ -1,6 +1,6 @@
 ---
 import snapshot from '../data/octopus-stats.json';
-import OctopusCountUp from './OctopusCountUp';
+import OctopusOperationalStats from './OctopusOperationalStats';
 
 interface Stats {
   asOf: string | null;
@@ -26,29 +26,13 @@ interface Props {
   stats?: Stats;
 }
 const { stats = snapshot } = Astro.props;
-const number = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
-const day = new Intl.DateTimeFormat('en-GB', {
-  day: 'numeric',
-  month: 'short',
-  year: 'numeric',
-  timeZone: 'UTC',
-});
-const date = (value: string) => day.format(new Date(value));
-const timestamp = (value: string) =>
-  `${value.replace('T', ' ').replace('Z', '')} UTC`;
+const statsUrl = import.meta.env.PUBLIC_OCTOPUS_STATS_URL as string | undefined;
 const hasDay =
   stats.peakRecordsDay !== null && stats.peakRecordsDayDate !== null;
 const hasWeek =
   stats.peakRecordsWeek !== null &&
   stats.peakRecordsWeekStart !== null &&
   stats.peakRecordsWeekEnd !== null;
-const asOfDay = stats.asOf?.slice(0, 10);
-const weekInProgress =
-  asOfDay &&
-  stats.peakRecordsWeekStart &&
-  stats.peakRecordsWeekEnd &&
-  asOfDay >= stats.peakRecordsWeekStart &&
-  asOfDay <= stats.peakRecordsWeekEnd;
 ---
 
 <section
@@ -59,109 +43,26 @@ const weekInProgress =
   <div class="section-heading">
     <h2 id="ops-title">Measured operational evidence</h2>
     <p>
-      All-time peak ledger counts across ingest paths, captured manually from
-      production records.
+      All-time peak ledger counts across ingest paths from production records.
     </p>
   </div>
   {(!hasDay || !hasWeek) && (
     <p class="fine-print">Numbers pending first measured refresh.</p>
   )}
-  <div class="ops-widget">
-    <div class="ops-peaks">
-      <article class="ops-card" aria-labelledby="ops-day-title">
-        <h3 id="ops-day-title">Peak day</h3>
-        {hasDay ? (
-          <>
-            <p class="ops-count">
-              <OctopusCountUp client:visible value={stats.peakRecordsDay!} />
-            </p>
-            <p>
-              <time datetime={stats.peakRecordsDayDate!}>
-                {date(stats.peakRecordsDayDate!)}
-              </time>{' '}
-              (UTC)
-            </p>
-          </>
-        ) : (
-          <p>Pending first measured refresh</p>
-        )}
-      </article>
-      <article class="ops-card" aria-labelledby="ops-week-title">
-        <h3 id="ops-week-title">Peak week</h3>
-        {hasWeek ? (
-          <>
-            <p class="ops-count">
-              <OctopusCountUp client:visible value={stats.peakRecordsWeek!} />
-            </p>
-            <p>
-              <time datetime={stats.peakRecordsWeekStart!}>
-                {date(stats.peakRecordsWeekStart!)}
-              </time>{' '}
-              to{' '}
-              <time datetime={stats.peakRecordsWeekEnd!}>
-                {date(stats.peakRecordsWeekEnd!)}
-              </time>{' '}
-              (UTC)
-            </p>
-            {weekInProgress && (
-              <p class="fine-print">
-                Week in progress at capture; counted so far.
-              </p>
-            )}
-          </>
-        ) : (
-          <p>Pending first measured refresh</p>
-        )}
-      </article>
-    </div>
-    {stats.liveStrip && (
-      <div class="ops-snapshot">
-        <h3>Manual metrics snapshot</h3>
-        <dl class="ops-metrics">
-          <div>
-            <dt>Ingest rate (5-minute average)</dt>
-            <dd>
-              {number.format(stats.liveStrip.ingestProcessedRatePerSec)}{' '}
-              records/s
-            </dd>
-          </div>
-          <div>
-            <dt>Pending ledger</dt>
-            <dd>{number.format(stats.liveStrip.pendingLedgerCount)} records</dd>
-          </div>
-          <div>
-            <dt>Last ingest success</dt>
-            <dd>
-              {stats.liveStrip.lastIngestSuccessAt ? (
-                <time datetime={stats.liveStrip.lastIngestSuccessAt}>
-                  {timestamp(stats.liveStrip.lastIngestSuccessAt)}
-                </time>
-              ) : (
-                'Unavailable in this snapshot'
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt>Backpressure</dt>
-            <dd>
-              <span
-                class="ops-status"
-                data-active={
-                  stats.liveStrip.backpressureActive ? 'true' : 'false'
-                }
-              >
-                <span class="ops-status-dot" aria-hidden="true"></span>
-                {stats.liveStrip.backpressureActive ? 'Active' : 'Inactive'}
-              </span>
-            </dd>
-          </div>
-        </dl>
-        <p class="fine-print">
-          {stats.source.liveStrip}. Manual snapshot, not a live feed.
-        </p>
-      </div>
-    )}
-  </div>
+  <OctopusOperationalStats
+    client:visible
+    initial={{
+      asOf: stats.asOf ?? '',
+      peaksComputedAt: null,
+      peakRecordsDay: stats.peakRecordsDay,
+      peakRecordsDayDate: stats.peakRecordsDayDate,
+      peakRecordsWeek: stats.peakRecordsWeek,
+      peakRecordsWeekStart: stats.peakRecordsWeekStart,
+      peakRecordsWeekEnd: stats.peakRecordsWeekEnd,
+      liveStrip: stats.liveStrip,
+    }}
+    statsUrl={statsUrl}
+  />
   <p class="fine-print">Source: {stats.source.peaks}.</p>
   <p class="fine-print">
     {stats.source.definition} Timezone: {stats.source.timezone}.
@@ -169,7 +70,11 @@ const weekInProgress =
   <p class="fine-print">
     {stats.asOf ? (
       <>
-        As of <time datetime={stats.asOf}>{timestamp(stats.asOf)}</time>.
+        As of{' '}
+        <time datetime={stats.asOf}>
+          {stats.asOf.replace('T', ' ').replace('Z', '')} UTC
+        </time>
+        .
       </>
     ) : (
       'As of: pending first measured refresh.'

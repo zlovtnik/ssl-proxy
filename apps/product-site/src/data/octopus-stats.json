@@ -1,9 +1,9 @@
 {
-  "$comment": "Manual operator refresh only. Never invent numbers or include internal hosts, dashboard URLs, credentials, or topology.",
+  "$comment": "Build-time fallback snapshot for no-JS and fetch failures. Never invent numbers or include internal hosts, dashboard URLs, credentials, or topology.",
   "asOf": "2026-10-08T23:54:52Z",
   "source": {
     "peaks": "Production coordinator ingest ledger (octopus_core.ingestion_evidence)",
-    "liveStrip": "Operator pipeline metrics snapshot",
+    "liveStrip": "Production coordinator pipeline metrics",
     "definition": "Peak day/week = highest count of ingest-ledger rows bucketed by first_seen_at (UTC calendar day / ISO week Monday-Sunday). All ingest paths share this ledger. Counts include all dispositions, not unique business events; the current day/week is counted so far.",
     "timezone": "UTC"
   },

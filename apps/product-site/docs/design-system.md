@@ -92,10 +92,12 @@ emphasis island, audience toggle island, operator snapshot widget, and glossary
 disclosures. [ProductCards](../src/components/ProductCards.astro) serves the
 homepage and catalogue. [Layout](../src/layouts/Layout.astro) owns navigation,
 footer, and consent. [OperationalEvidence](../src/components/OperationalEvidence.astro)
-wraps peak cards and the optional manual snapshot in an inset operator widget
+wraps peak cards and the live pipeline metrics strip in an inset operator widget
 with mono metrics, tabular numerals, and a decorative backpressure status dot.
-Peak counts SSR as final `en-GB` text; [OctopusCountUp](../src/components/OctopusCountUp.tsx)
-only animates that text when motion is allowed. [octopus.css](../src/styles/octopus.css)
+[OctopusOperationalStats](../src/components/OctopusOperationalStats.tsx) is a
+SolidJS island that polls `PUBLIC_OCTOPUS_STATS_URL` every 30s and updates peaks
+and the live strip in place; the committed `octopus-stats.json` serves as the
+no-JS / fetch-failure SSR fallback. [octopus.css](../src/styles/octopus.css)
 composes the same tokens for motif, pipeline, toggle, ops chrome, glossary, and
 motion gates.
 

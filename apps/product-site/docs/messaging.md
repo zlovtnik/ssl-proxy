@@ -45,7 +45,9 @@ boundaries, and visible as-of time. Octopus peaks count rows in
 `octopus_core.ingestion_evidence` by `first_seen_at`, across all ingest paths
 and dispositions. They are ledger counts, not unique business events or a
 throughput benchmark. A current day or week is counted only so far. Describe
-the metrics strip as a manual snapshot, never a live or real-time feed.
+the metrics strip as live production data when the feed is configured;
+otherwise label it as a dated published snapshot. Never present the snapshot
+as live when the feed is not updating.
 Never link internal dashboards or publish their addresses or topology in
 page content, rendered JSON fields, or bundled assets. Never fabricate numbers;
 null peaks show a pending-refresh note and a null strip is omitted.
@@ -67,8 +69,9 @@ Keep these statements in the model, product page, and relevant sample:
 - **VPN / Proxy:** Classification is an operator review aid. It does not prove
   intent, prevent a connection, or cover traffic outside the configured path.
 - **Octopus:** Peaks are historical ledger counts, not a throughput limit,
-  capacity forecast, savings, or latency claim. The strip is a manual snapshot,
-  not a live feed. Keep this caveat beside the measured evidence.
+  capacity forecast, savings, or latency claim. The metrics strip reflects live
+  production data when the feed is configured. Keep this caveat beside the
+  measured evidence.
 
 ## Contact
 
