@@ -1,0 +1,129 @@
+---
+import { ArrowDown, ArrowUpRight } from '@lucide/astro';
+import Layout from '../layouts/Layout.astro';
+import Diagram from './Diagram.astro';
+import Contact from './Contact.astro';
+import OperationalEvidence from './OperationalEvidence.astro';
+import OctopusHeroMotif from './OctopusHeroMotif.astro';
+import OctopusPipeline from './OctopusPipeline';
+import OctopusAudienceToggle from './OctopusAudienceToggle';
+import { getProduct } from '../data/products';
+import '../styles/octopus.css';
+
+const product = getProduct('octopus');
+---
+
+<Layout
+  title={`${product.name} - ${product.headline.join(' ')}`}
+  description={product.summary}
+  product={product.id}
+  breadcrumbs={[
+    { name: 'RCLabs', path: '/' },
+    { name: 'Products', path: '/products/' },
+    { name: product.name, path: product.path },
+  ]}
+>
+  <section class="hero product-hero octopus-hero" aria-labelledby="hero-title">
+    <OctopusHeroMotif />
+    <div class="hero-copy">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/">RCLabs</a>
+        <span aria-hidden="true">/</span>
+        <a href="/products/">Products</a>
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">{product.name}</span>
+      </nav>
+      <p class="eyebrow">{product.label}</p>
+      <h1 id="hero-title">
+        {product.headline[0]}
+        <span class="accent">{product.headline[1]}</span>
+      </h1>
+      <p class="lead">{product.summary}</p>
+      <div class="actions">
+        <a class="button primary" href={product.primaryCta.href}>
+          {product.primaryCta.label}
+          <ArrowDown size={18} aria-hidden="true" />
+        </a>
+        <a class="text-link" href={product.secondaryCta.href}>
+          {product.secondaryCta.label}
+          <ArrowUpRight size={18} aria-hidden="true" />
+        </a>
+      </div>
+    </div>
+    <div class="hero-outline" aria-label={`${product.name} workflow summary`}>
+      {product.highlights.map(([title, text], index) => (
+        <div>
+          <span class="eyebrow">0{index + 1}</span>
+          <div>
+            <strong class="outline-title">{title}</strong>
+            <p>{text}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="workflow-title">
+    <div class="section-heading">
+      <p class="eyebrow">{product.sections.workflow.label}</p>
+      <h2 id="workflow-title">{product.sections.workflow.title}</h2>
+      <p>{product.sections.workflow.note}</p>
+    </div>
+    <OctopusPipeline client:load />
+  </section>
+
+  <section class="section" aria-labelledby="value-title">
+    <div class="section-heading">
+      <p class="eyebrow">{product.sections.value.label}</p>
+      <h2 id="value-title">{product.sections.value.title}</h2>
+      <p class="lead">{product.problem}</p>
+      <p>{product.sections.value.note}</p>
+    </div>
+    <OctopusAudienceToggle client:load />
+  </section>
+
+  <section class="section" aria-labelledby="evidence-title">
+    <div class="section-heading">
+      <p class="eyebrow">{product.sections.evidence.label}</p>
+      <h2 id="evidence-title">{product.sections.evidence.title}</h2>
+      <p>{product.sections.evidence.note}</p>
+    </div>
+    <div class="feature-grid">
+      {product.features.map(([title, text], index) => (
+        <article>
+          <p class="feature-number">0{index + 1}</p>
+          <h3>{title}</h3>
+          <p>{text}</p>
+        </article>
+      ))}
+    </div>
+    <div class="two-column product-evidence">
+      <Diagram kind={product.id} />
+      <div class="evidence-panel">
+        <p class="eyebrow">{product.sections.evidence.caveatLabel}</p>
+        <p class="caveat">{product.caveat}</p>
+        <p class="fine-print">{product.sections.evidence.footnote}</p>
+      </div>
+    </div>
+  </section>
+
+  <OperationalEvidence />
+
+  <section
+    class="section glossary octopus-glossary"
+    aria-labelledby="terms-title"
+  >
+    <p class="eyebrow">{product.sections.glossary.label}</p>
+    <h2 id="terms-title">{product.sections.glossary.title}</h2>
+    <div class="octopus-glossary-list">
+      {product.glossary.map(([term, definition]) => (
+        <details>
+          <summary>{term}</summary>
+          <p>{definition}</p>
+        </details>
+      ))}
+    </div>
+  </section>
+
+  <Contact product={product.name} />
+</Layout>

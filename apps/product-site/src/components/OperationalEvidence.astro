@@ -1,5 +1,6 @@
 ---
 import snapshot from '../data/octopus-stats.json';
+import OctopusCountUp from './OctopusCountUp';
 
 interface Stats {
   asOf: string | null;
@@ -65,89 +66,102 @@ const weekInProgress =
   {(!hasDay || !hasWeek) && (
     <p class="fine-print">Numbers pending first measured refresh.</p>
   )}
-  <div class="ops-peaks">
-    <article class="ops-card" aria-labelledby="ops-day-title">
-      <h3 id="ops-day-title">Peak day</h3>
-      {hasDay ? (
-        <>
-          <p class="ops-count">
-            {number.format(stats.peakRecordsDay!)} records
-          </p>
-          <p>
-            <time datetime={stats.peakRecordsDayDate!}>
-              {date(stats.peakRecordsDayDate!)}
-            </time>{' '}
-            (UTC)
-          </p>
-        </>
-      ) : (
-        <p>Pending first measured refresh</p>
-      )}
-    </article>
-    <article class="ops-card" aria-labelledby="ops-week-title">
-      <h3 id="ops-week-title">Peak week</h3>
-      {hasWeek ? (
-        <>
-          <p class="ops-count">
-            {number.format(stats.peakRecordsWeek!)} records
-          </p>
-          <p>
-            <time datetime={stats.peakRecordsWeekStart!}>
-              {date(stats.peakRecordsWeekStart!)}
-            </time>{' '}
-            to{' '}
-            <time datetime={stats.peakRecordsWeekEnd!}>
-              {date(stats.peakRecordsWeekEnd!)}
-            </time>{' '}
-            (UTC)
-          </p>
-          {weekInProgress && (
-            <p class="fine-print">
-              Week in progress at capture; counted so far.
+  <div class="ops-widget">
+    <div class="ops-peaks">
+      <article class="ops-card" aria-labelledby="ops-day-title">
+        <h3 id="ops-day-title">Peak day</h3>
+        {hasDay ? (
+          <>
+            <p class="ops-count">
+              <OctopusCountUp client:visible value={stats.peakRecordsDay!} />
             </p>
-          )}
-        </>
-      ) : (
-        <p>Pending first measured refresh</p>
-      )}
-    </article>
-  </div>
-  {stats.liveStrip && (
-    <div class="ops-snapshot">
-      <h3>Manual metrics snapshot</h3>
-      <dl class="ops-metrics">
-        <div>
-          <dt>Ingest rate (5-minute average)</dt>
-          <dd>
-            {number.format(stats.liveStrip.ingestProcessedRatePerSec)} records/s
-          </dd>
-        </div>
-        <div>
-          <dt>Pending ledger</dt>
-          <dd>{number.format(stats.liveStrip.pendingLedgerCount)} records</dd>
-        </div>
-        <div>
-          <dt>Last ingest success</dt>
-          <dd>
-            {stats.liveStrip.lastIngestSuccessAt ? (
-              <time datetime={stats.liveStrip.lastIngestSuccessAt}>
-                {timestamp(stats.liveStrip.lastIngestSuccessAt)}
-              </time>
-            ) : (
-              'Unavailable in this snapshot'
+            <p>
+              <time datetime={stats.peakRecordsDayDate!}>
+                {date(stats.peakRecordsDayDate!)}
+              </time>{' '}
+              (UTC)
+            </p>
+          </>
+        ) : (
+          <p>Pending first measured refresh</p>
+        )}
+      </article>
+      <article class="ops-card" aria-labelledby="ops-week-title">
+        <h3 id="ops-week-title">Peak week</h3>
+        {hasWeek ? (
+          <>
+            <p class="ops-count">
+              <OctopusCountUp client:visible value={stats.peakRecordsWeek!} />
+            </p>
+            <p>
+              <time datetime={stats.peakRecordsWeekStart!}>
+                {date(stats.peakRecordsWeekStart!)}
+              </time>{' '}
+              to{' '}
+              <time datetime={stats.peakRecordsWeekEnd!}>
+                {date(stats.peakRecordsWeekEnd!)}
+              </time>{' '}
+              (UTC)
+            </p>
+            {weekInProgress && (
+              <p class="fine-print">
+                Week in progress at capture; counted so far.
+              </p>
             )}
-          </dd>
-        </div>
-        <div>
-          <dt>Backpressure</dt>
-          <dd>{stats.liveStrip.backpressureActive ? 'Active' : 'Inactive'}</dd>
-        </div>
-      </dl>
-      <p class="fine-print">
-        {stats.source.liveStrip}. Manual snapshot, not a live feed.
-      </p>
+          </>
+        ) : (
+          <p>Pending first measured refresh</p>
+        )}
+      </article>
     </div>
-  )}
+    {stats.liveStrip && (
+      <div class="ops-snapshot">
+        <h3>Manual metrics snapshot</h3>
+        <dl class="ops-metrics">
+          <div>
+            <dt>Ingest rate (5-minute average)</dt>
+            <dd>
+              {number.format(stats.liveStrip.ingestProcessedRatePerSec)}{' '}
+              records/s
+            </dd>
+          </div>
+          <div>
+            <dt>Pending ledger</dt>
+            <dd>{number.format(stats.liveStrip.pendingLedgerCount)} records</dd>
+          </div>
+          <div>
+            <dt>Last ingest success</dt>
+            <dd>
+              {stats.liveStrip.lastIngestSuccessAt ? (
+                <time datetime={stats.liveStrip.lastIngestSuccessAt}>
+                  {timestamp(stats.liveStrip.lastIngestSuccessAt)}
+                </time>
+              ) : (
+                'Unavailable in this snapshot'
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt>Backpressure</dt>
+            <dd>
+              <span
+                class="ops-status"
+                data-active={
+                  stats.liveStrip.backpressureActive ? 'true' : 'false'
+                }
+              >
+                <span class="ops-status-dot" aria-hidden="true"></span>
+                {stats.liveStrip.backpressureActive ? 'Active' : 'Inactive'}
+              </span>
+            </dd>
+          </div>
+        </dl>
+        <p class="fine-print">
+          {stats.source.liveStrip}. Manual snapshot, not a live feed.
+        </p>
+      </div>
+    )}
+  </div>
   <p class="fine-print">Source: {stats.source.peaks}.</p>
   <p class="fine-print">
     {stats.source.definition} Timezone: {stats.source.timezone}.
