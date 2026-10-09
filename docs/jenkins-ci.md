@@ -104,8 +104,10 @@ Each run:
 
 1. checks out the superproject, compares the last successful Jenkins commit
    to `HEAD` with `scripts/classify_changes.py`, and archives
-   `artifacts/changed-paths.json`; a first build or an unavailable base selects
-   all checks and images;
+   `artifacts/changed-paths.json`. If that base is missing from a shallow
+   clone, Jenkins deepens the fetch; if it is still unavailable, classification
+   falls back to `HEAD^` rather than selecting every suite. Only a true first
+   commit (no parent) selects all checks and images;
 2. checks out pinned submodules and requires the Octopus checkout to match its
    pin with both worktrees clean. Delivery documentation validation still
    inspects every pinned submodule, so this checkout remains necessary;

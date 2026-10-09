@@ -120,6 +120,26 @@ def main() -> int:
     }.items():
         if re.search(pattern, sql, re.I):
             failures.append(f"forbidden {label}")
+    # PostgreSQL rejects STABLE/IMMUTABLE-mismatched expressions in index keys.
+    # date_trunc/to_char/AT TIME ZONE are STABLE, so they cannot appear there.
+    # Scope each check to one CREATE INDEX statement so later tables cannot
+    # false-positive on DEFAULT CURRENT_TIMESTAMP or CHECK date_trunc(...).
+    for statement in re.finditer(
+        r"CREATE\s+(?:UNIQUE\s+)?INDEX\b[^;]*;", sql, re.I | re.S
+    ):
+        text = statement.group(0)
+        if not re.search(r"\(\s*\(", text):
+            continue
+        if re.search(
+            r"\b(?:date_trunc|to_char|to_timestamp|now|current_timestamp)\b"
+            r"|\bAT\s+TIME\s+ZONE\b",
+            text,
+            re.I,
+        ):
+            failures.append(
+                "index expression uses STABLE functions (date_trunc/to_char/AT TIME ZONE); "
+                "PostgreSQL requires IMMUTABLE index keys — index the base column instead"
+            )
     for required in (
         "PARTITION BY RANGE",
         "FOR UPDATE SKIP LOCKED",
