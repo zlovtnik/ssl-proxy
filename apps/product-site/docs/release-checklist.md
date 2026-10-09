@@ -69,6 +69,11 @@ serves as the no-JS / fetch-failure fallback.
   and `OCTOPUS_PUBLIC_STATS_ALLOWED_ORIGINS` (CORS allowlist).
 - The Kubernetes ingress path-allowlists `/public/stats` only; `/metrics` and
   `/actuator/prometheus` stay internal.
+- The **prod and staging** `cloudflare-edge` overlays must each include the
+  `/public/stats` rule on their real hostname. The base overlay alone is not
+  enough: those overlays replace the public `IngressRoute` wholesale.
+- `java-coordinator` NetworkPolicy must allow Traefik → 8081 (same pattern as
+  atheros-search / schema-migrator). Default-deny otherwise blocks the route.
 
 ## Fallback snapshot hygiene
 

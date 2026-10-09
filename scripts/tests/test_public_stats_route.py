@@ -1,0 +1,149 @@
+"""Guardrail: public-gateway allowlisted paths must exist on real host overlays.
+
+The prod/staging `cloudflare-edge` patches replace the public IngressRoute
+wholesale. A path added only to `base/public-gateway/routes.yaml` silently
+disappears from production. This test keeps base and overlay routes in sync and
+requires Traefik ingress to java-coordinator for `/public/stats`.
+"""
+
+from __future__ import annotations
+
+import re
+import unittest
+from pathlib import Path
+
+import yaml
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+BASE_ROUTES = REPOSITORY_ROOT / "cyber-stack/base/public-gateway/routes.yaml"
+PROD_EDGE = REPOSITORY_ROOT / "cyber-stack/matrix/prod/patches/cloudflare-edge.yaml"
+STAGING_EDGE = REPOSITORY_ROOT / "cyber-stack/matrix/staging/patches/cloudflare-edge.yaml"
+COORDINATOR_NETPOL = (
+    REPOSITORY_ROOT / "cyber-stack/base/java-coordinator/networkpolicy.yaml"
+)
+
+# Match Path(`/x`) and PathPrefix(`/x`) literals in Traefik match expressions.
+PATH_LITERAL = re.compile(r"Path(?:Prefix)?\(`([^`]+)`\)")
+HOST_LITERAL = re.compile(r"Host\(`([^`]+)`\)")
+
+
+def load_documents(path: Path) -> list[dict]:
+    return [
+        document
+        for document in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+        if isinstance(document, dict)
+    ]
+
+
+def public_gateway_routes(path: Path) -> list[dict]:
+    for document in load_documents(path):
+        if (
+            document.get("kind") == "IngressRoute"
+            and document.get("metadata", {}).get("name") == "ssl-proxy-public-gateway"
+        ):
+            routes = document.get("spec", {}).get("routes")
+            if isinstance(routes, list):
+                return routes
+    raise AssertionError(f"no ssl-proxy-public-gateway IngressRoute in {path}")
+
+
+def match_paths(match: str) -> set[str]:
+    return set(PATH_LITERAL.findall(match))
+
+
+def match_hosts(match: str) -> set[str]:
+    return set(HOST_LITERAL.findall(match))
+
+
+class PublicStatsRouteTest(unittest.TestCase):
+    def test_base_public_paths_appear_on_prod_and_staging_hosts(self) -> None:
+        base_paths: set[str] = set()
+        for route in public_gateway_routes(BASE_ROUTES):
+            match = route.get("match", "")
+            base_paths |= match_paths(match)
+        self.assertIn("/public/stats", base_paths)
+
+        failures: list[str] = []
+        for label, path in (("prod", PROD_EDGE), ("staging", STAGING_EDGE)):
+            overlay_paths: set[str] = set()
+            overlay_hosts: set[str] = set()
+            for route in public_gateway_routes(path):
+                match = route.get("match", "")
+                overlay_paths |= match_paths(match)
+                overlay_hosts |= match_hosts(match)
+            missing = sorted(base_paths - overlay_paths)
+            if missing:
+                failures.append(
+                    f"{label} overlay {path.name} is missing base public paths: {missing}"
+                )
+            if not overlay_hosts:
+                failures.append(f"{label} overlay {path.name} has no Host() match")
+            for host in overlay_hosts:
+                if host.endswith(".internal"):
+                    failures.append(
+                        f"{label} overlay {path.name} still matches placeholder host {host}"
+                    )
+        self.assertEqual([], failures)
+
+    def test_public_stats_routes_to_java_coordinator(self) -> None:
+        failures: list[str] = []
+        for label, path in (("base", BASE_ROUTES), ("prod", PROD_EDGE), ("staging", STAGING_EDGE)):
+            hits = [
+                route
+                for route in public_gateway_routes(path)
+                if "/public/stats" in match_paths(route.get("match", ""))
+            ]
+            if len(hits) != 1:
+                failures.append(
+                    f"{label} {path.name}: expected exactly one /public/stats route, found {len(hits)}"
+                )
+                continue
+            services = hits[0].get("services") or []
+            names = {service.get("name") for service in services if isinstance(service, dict)}
+            ports = {service.get("port") for service in services if isinstance(service, dict)}
+            if "ssl-proxy-java-coordinator" not in names:
+                failures.append(
+                    f"{label} {path.name}: /public/stats must target ssl-proxy-java-coordinator, got {names}"
+                )
+            if 8081 not in ports:
+                failures.append(
+                    f"{label} {path.name}: /public/stats must target port 8081, got {ports}"
+                )
+        self.assertEqual([], failures)
+
+    def test_coordinator_networkpolicy_allows_traefik_on_8081(self) -> None:
+        documents = load_documents(COORDINATOR_NETPOL)
+        policy = next(
+            (d for d in documents if d.get("kind") == "NetworkPolicy"),
+            None,
+        )
+        self.assertIsNotNone(policy, f"no NetworkPolicy in {COORDINATOR_NETPOL}")
+        ingress = policy.get("spec", {}).get("ingress") or []
+        allowed = False
+        for rule in ingress:
+            ports = {
+                port.get("port")
+                for port in rule.get("ports") or []
+                if isinstance(port, dict)
+            }
+            if 8081 not in ports:
+                continue
+            for source in rule.get("from") or []:
+                if not isinstance(source, dict):
+                    continue
+                pod = source.get("podSelector", {}).get("matchLabels", {})
+                namespace = source.get("namespaceSelector", {}).get("matchLabels", {})
+                if (
+                    pod.get("app.kubernetes.io/name") == "traefik"
+                    and namespace.get("kubernetes.io/metadata.name") == "kube-system"
+                ):
+                    allowed = True
+        self.assertTrue(
+            allowed,
+            "java-coordinator NetworkPolicy must allow Traefik (kube-system) to TCP 8081",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

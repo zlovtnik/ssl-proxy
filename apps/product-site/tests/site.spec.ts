@@ -120,10 +120,9 @@ test('Octopus evidence is static, dated, and linked without a synthetic demo', a
       await expect(evidence.locator('.ops-snapshot')).toHaveCount(0);
     }
     if (octopusStats.asOf) {
-      await expect(evidence.locator('time').last()).toHaveAttribute(
-        'datetime',
-        octopusStats.asOf,
-      );
+      await expect(
+        evidence.locator('[data-ux="ops-stats"] time').last(),
+      ).toHaveAttribute('datetime', octopusStats.asOf);
       expect(Number.isNaN(Date.parse(octopusStats.asOf))).toBe(false);
       if (octopusStats.peakRecordsDay !== null) {
         await expect(

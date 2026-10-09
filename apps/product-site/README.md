@@ -83,6 +83,12 @@ The configuration validates that the value is an HTTP(S) origin.
 Set PUBLIC_GA4_MEASUREMENT_ID in the production Pages build environment after
 creating the GA4 web stream. It is a public measurement ID, not a credential.
 Leave it unset in local and preview builds.
+Set `PUBLIC_OCTOPUS_STATS_URL=https://gateway.rclabs.uk/public/stats` in the
+production Pages build environment so the Octopus operational-evidence island
+polls live coordinator stats. The value is inlined at build time; changing it
+requires a Pages rebuild. Leave it unset in local and preview builds so
+previews never fetch production stats. When unset, the page keeps the committed
+`src/data/octopus-stats.json` snapshot and labels it as the fallback.
 The sitemap, canonical URLs, social URLs, and robots response use that origin.
 Do not ship localhost metadata.
 

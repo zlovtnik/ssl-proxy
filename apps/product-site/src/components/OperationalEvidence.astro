@@ -67,17 +67,4 @@ const hasWeek =
   <p class="fine-print">
     {stats.source.definition} Timezone: {stats.source.timezone}.
   </p>
-  <p class="fine-print">
-    {stats.asOf ? (
-      <>
-        As of{' '}
-        <time datetime={stats.asOf}>
-          {stats.asOf.replace('T', ' ').replace('Z', '')} UTC
-        </time>
-        .
-      </>
-    ) : (
-      'As of: pending first measured refresh.'
-    )}
-  </p>
 </section>

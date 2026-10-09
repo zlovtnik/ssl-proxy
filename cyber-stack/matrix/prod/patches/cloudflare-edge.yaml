@@ -65,3 +65,14 @@ spec:
           scheme: http
           responseForwarding:
             flushInterval: 100ms
+    - kind: Rule
+      match: Host(`gateway.rclabs.uk`) && Path(`/public/stats`)
+      priority: 150
+      middlewares:
+        - name: ssl-proxy-public-security-headers
+        - name: ssl-proxy-public-rate-limit
+      services:
+        - kind: Service
+          name: ssl-proxy-java-coordinator
+          port: 8081
+          scheme: http

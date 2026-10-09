@@ -179,6 +179,19 @@ export default function OctopusOperationalStats(props: {
           </p>
         </div>
       </Show>
+      <p class="fine-print">
+        {s.asOf ? (
+          <>
+            As of{' '}
+            <time datetime={s.asOf}>
+              {timestamp(s.asOf)}
+            </time>
+            .
+          </>
+        ) : (
+          'As of: pending first measured refresh.'
+        )}
+      </p>
     </div>
   );
 }

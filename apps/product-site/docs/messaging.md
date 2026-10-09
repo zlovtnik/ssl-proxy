@@ -22,8 +22,11 @@ statements, workflow steps, caveats, or contact labels.
 The catalogue at `/products/` compares all four. The homepage playground runs
 one of three synthetic samples at a time. Their product pages place the full
 sample below the introductory hero. Octopus has no demo island. Its page uses
-UX islands only for stage emphasis, audience framing, and optional count-up
-presentation; measured evidence stays static HTML from `octopus-stats.json`.
+UX islands only for stage emphasis, audience framing, optional count-up
+presentation, and the operational-evidence widget. That widget polls live
+production metrics when `PUBLIC_OCTOPUS_STATS_URL` is set at build time;
+otherwise it shows the dated `octopus-stats.json` snapshot and must label it as
+the build-time fallback, never as live.
 The operator snapshot section follows capability evidence and precedes the
 glossary. Pipeline short labels (`Discovery`, `Dispatch`, `Evidence`) are
 model-owned `stageLabel` values. Toggle labels (`I am an Engineer`,
