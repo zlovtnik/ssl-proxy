@@ -24,6 +24,7 @@ const trackedPaths = new Set([
   '/vpn-proxy/',
   '/atheros-search/',
   '/schema-migrator/',
+  '/octopus/',
   '/demo/',
   '/accessibility/',
   '/privacy/',

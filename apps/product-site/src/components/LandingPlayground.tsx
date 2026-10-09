@@ -7,7 +7,7 @@ import {
   onCleanup,
 } from 'solid-js';
 import { investigations, migrationSteps } from '../data/fixtures';
-import { getProduct, products, type ProductId } from '../data/products';
+import { getProduct, sampleProducts } from '../data/products';
 import VpnDemo from './VpnDemo';
 import { ArrowRight, ArrowUpRight, Diamond, Search } from 'lucide-solid';
 
@@ -15,7 +15,7 @@ const search = getProduct('search');
 const migrator = getProduct('migrator');
 
 export default function LandingPlayground() {
-  const [product, setProduct] = createSignal<ProductId>('search');
+  const [product, setProduct] = createSignal<(typeof sampleProducts)[number]['id']>('search');
   const [query, setQuery] = createSignal('');
   const [selected, setSelected] = createSignal(0);
   const [step, setStep] = createSignal(0);
@@ -29,7 +29,7 @@ export default function LandingPlayground() {
         return;
       event.preventDefault();
       const value = (event.currentTarget as HTMLAnchorElement).dataset.preview;
-      const target = products.find((item) => item.id === value);
+      const target = sampleProducts.find((item) => item.id === value);
       if (!target) return;
       setProduct(target.id);
       document
@@ -73,7 +73,7 @@ export default function LandingPlayground() {
         role="group"
         aria-label="Choose a product preview"
       >
-        <For each={products}>{(item) => (
+        <For each={sampleProducts}>{(item) => (
           <button
             data-product={item.id}
             data-analytics-product="landing"

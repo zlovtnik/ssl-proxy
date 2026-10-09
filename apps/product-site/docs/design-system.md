@@ -49,7 +49,8 @@ are not control boundaries.
 - Shell: 1280px maximum. Gutters: 24px mobile, 32px tablet, 48px desktop.
 - Reading width: 64ch by default.
 - Section spacing: 96px desktop, 56px mobile. Controls: 6px radius; panels: 12px.
-- Product cards: three columns at desktop, two below 1024px, one below 768px.
+- Product cards: two columns at desktop and tablet, one below 768px, so four
+  products form balanced rows without narrowing the reading width.
 - Heroes place introductory copy beside a short workflow outline and stack
   below 1024px. Demos always occupy a separate full-width section below.
 - Demo inputs and results use two columns at desktop and stack below 768px.
@@ -78,7 +79,9 @@ without JavaScript.
 [ProductPage](../src/components/ProductPage.astro) renders the common product
 page structure. [ProductCards](../src/components/ProductCards.astro) serves the
 homepage and catalogue. [Layout](../src/layouts/Layout.astro) owns navigation,
-footer, and consent.
+footer, and consent. [OperationalEvidence](../src/components/OperationalEvidence.astro)
+uses two static peak cards and a wrapping definition list for an optional manual
+snapshot. It uses existing surface, accent, and text tokens and stacks below 768px.
 
 The homepage technical sections retain captioned tables, scoped headers, native
 disclosures, and labelled diagrams. Wide tables scroll inside named,

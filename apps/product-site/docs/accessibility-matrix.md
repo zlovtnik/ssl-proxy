@@ -1,6 +1,6 @@
 # WCAG 2.2 evidence matrix
 
-Scope: the public product and guide routes, the shared dark theme, product catalogue, and all three
+Scope: the four public product stories and guide routes, the shared dark theme, product catalogue, and all three
 synthetic samples. The site targets
 applicable WCAG 2.2 A, AA, and AAA criteria. It makes no conformance claim.
 
@@ -17,6 +17,7 @@ substitute for assistive-technology or participant testing.
 | Controls and motion | AUTO: target-size and state checks for visible controls. CODE: 44px controls, reduced-motion support, no time limits, no drag or path gestures. | MANUAL: touch, switch, voice, and motion-preference evaluation. |
 | Content and status | CODE: synthetic labels, visible caveats, glossary definitions, and polite status messages. | MANUAL: clarity and announcement timing with VoiceOver/Safari and NVDA/Firefox. |
 | Non-text content | CODE: labelled diagrams and decorative SVGs hidden from the accessibility tree. | MANUAL: equivalent-text usefulness. |
+| Operational evidence | CODE: static headings, labelled peak cards, a snapshot definition list, UTC time elements, and pending/omitted states. AUTO: no-JavaScript rendering, provenance, caveat, privacy, responsive layout, axe, and contrast checks include Octopus. | MANUAL: screen-reader interpretation of periods, partial weeks, and capture time. |
 
 ## Current automated coverage
 

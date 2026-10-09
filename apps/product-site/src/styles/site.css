@@ -340,6 +340,9 @@ h4 {
 .vpn {
   --accent: var(--vpn);
 }
+.octopus {
+  --accent: var(--action);
+}
 .accent {
   color: var(--accent, var(--action));
 }
@@ -823,7 +826,7 @@ code {
 .product-grid,
 .comparison-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1.25rem;
   align-items: stretch;
 }
@@ -916,6 +919,37 @@ code {
   margin-top: 3rem;
   align-items: start;
 }
+.ops-peaks,
+.ops-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+}
+.ops-card {
+  padding: 1.5rem;
+  border: 1px solid var(--divider);
+  border-radius: var(--panel-radius);
+  background: var(--surface);
+  min-width: 0;
+}
+.ops-count {
+  color: var(--accent);
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ops-snapshot {
+  margin-block: 2rem;
+  padding-block: 1.5rem;
+  border-block: 1px solid var(--divider);
+}
+.ops-metrics dt {
+  color: var(--muted);
+}
+.ops-metrics dd {
+  margin: 0.5rem 0 0;
+  font-variant-numeric: tabular-nums;
+}
 .demo-workspace {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
@@ -992,6 +1026,8 @@ code {
 @media (max-width: 767px) {
   .product-grid,
   .comparison-grid,
+  .ops-peaks,
+  .ops-metrics,
   .demo-workspace {
     grid-template-columns: minmax(0, 1fr);
   }

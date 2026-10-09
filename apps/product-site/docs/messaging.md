@@ -1,9 +1,10 @@
 # Messaging framework
 
-RCLabs presents three separate product stories: Atheros Search, Schema
-Migrator, and RCLabs VPN / Proxy. Each story has its own audience, workflow,
-sample, and caveat. The public site describes mechanisms and review workflows;
-it does not make savings, latency, market, coverage, or outcome claims.
+RCLabs presents four separate product stories: Atheros Search, Schema
+Migrator, RCLabs VPN / Proxy, and Octopus. Each story has its own audience,
+workflow, and caveat. The public site describes mechanisms, review workflows,
+and measured operational evidence; it does not make savings, latency, market,
+capacity, coverage, or outcome claims.
 
 Copy lives in [`src/data/products.ts`](../src/data/products.ts). Route files
 and components render that model instead of restating product copy, audience
@@ -16,10 +17,12 @@ statements, workflow steps, caveats, or contact labels.
 | Atheros Search | Review wireless indicators with monitored-site context and supporting observations. | Explore the synthetic site review. |
 | Schema Migrator | Inspect ordered SQL changes, validation, and run records before execution. | Explore the synthetic change review. |
 | RCLabs VPN / Proxy | Inspect WireGuard ingress, transparent-proxy classification, and audit publishing. | Explore the synthetic traffic review. |
+| Octopus | Coordinate durable ingestion and inspect historical ledger counts with provenance. | Review measured throughput. |
 
-The catalogue at `/products/` compares all three. The homepage playground runs
-one synthetic sample at a time. Product pages place the full sample below the
-introductory hero so expanding a detail changes the page height naturally.
+The catalogue at `/products/` compares all four. The homepage playground runs
+one of three synthetic samples at a time. Their product pages place the full
+sample below the introductory hero. Octopus has no demo island; its static
+operational evidence section follows capability evidence and precedes the glossary.
 
 The six technical guides under `/guides/` explain separate investigation and
 migration questions with repository-backed mechanisms and labelled examples.
@@ -31,6 +34,16 @@ the homepage introduces the topics and links to the complete guides.
 Use `interactive sample`, never `live sample`. Every demonstration uses
 synthetic fixtures in the browser. There is no production connection, account,
 or credential on this site.
+
+Measured operational evidence needs a documented source, definition, UTC
+boundaries, and visible as-of time. Octopus peaks count rows in
+`octopus_core.ingestion_evidence` by `first_seen_at`, across all ingest paths
+and dispositions. They are ledger counts, not unique business events or a
+throughput benchmark. A current day or week is counted only so far. Describe
+the metrics strip as a manual snapshot, never a live or real-time feed.
+Never link internal dashboards or publish their addresses or topology in
+page content, rendered JSON fields, or bundled assets. Never fabricate numbers;
+null peaks show a pending-refresh note and a null strip is omitted.
 
 Describe Search heuristics as indicators for analyst review. Atheros Sensor
 uses monitor-mode capture on configured Wi-Fi channels; say `monitored site`,
@@ -48,6 +61,9 @@ Keep these statements in the model, product page, and relevant sample:
   not back up database data. The public demonstration executes no SQL.
 - **VPN / Proxy:** Classification is an operator review aid. It does not prove
   intent, prevent a connection, or cover traffic outside the configured path.
+- **Octopus:** Peaks are historical ledger counts, not a throughput limit,
+  capacity forecast, savings, or latency claim. The strip is a manual snapshot,
+  not a live feed. Keep this caveat beside the measured evidence.
 
 ## Contact
 

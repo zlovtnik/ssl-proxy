@@ -7,6 +7,7 @@ export const GET: APIRoute = ({ site }) => {
     '/vpn-proxy/',
     '/atheros-search/',
     '/schema-migrator/',
+    '/octopus/',
     '/demo/',
     '/accessibility/',
     '/privacy/',

@@ -1,9 +1,9 @@
 ---
-import { ArrowRight, ArrowUpRight, Database, Network, Radio } from '@lucide/astro';
+import { ArrowRight, ArrowUpRight, Database, Network, Radio, Workflow } from '@lucide/astro';
 import { products } from '../data/products';
 interface Props { preview?: boolean }
 const { preview = false } = Astro.props;
-const icons = { search: Radio, migrator: Database, vpn: Network };
+const icons = { search: Radio, migrator: Database, vpn: Network, octopus: Workflow };
 ---
 
 <div class="product-grid">
@@ -30,9 +30,11 @@ const icons = { search: Radio, migrator: Database, vpn: Network };
           <a class="text-link" href={product.path}>
             {product.name} product details <ArrowUpRight size={18} aria-hidden="true" />
           </a>
-          <a class="text-link sample-link" href={`${product.path}#demo`} data-preview={preview ? product.id : undefined}>
+          {product.id === 'octopus' ? <a class="text-link" href={`${product.path}${product.primaryCta.href}`}>
+            {product.primaryCta.label} <ArrowRight size={18} aria-hidden="true" />
+          </a> : <a class="text-link sample-link" href={`${product.path}#demo`} data-preview={preview ? product.id : undefined}>
             Try the {product.name} sample <ArrowRight size={18} aria-hidden="true" />
-          </a>
+          </a>}
         </div>
       </article>
     );

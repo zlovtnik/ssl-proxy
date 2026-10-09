@@ -8,9 +8,12 @@ import {
   home,
   homeSections,
   products,
+  sampleProducts,
+  octopusCaveat,
   guides,
   guidePath,
 } from '../src/data/products';
+import octopusStats from '../src/data/octopus-stats.json' with { type: 'json' };
 
 const routes = [
   '/',
@@ -18,6 +21,7 @@ const routes = [
   '/vpn-proxy/',
   '/atheros-search/',
   '/schema-migrator/',
+  '/octopus/',
   '/demo/',
   '/accessibility/',
   '/privacy/',
@@ -33,6 +37,87 @@ const tags = [
   'wcag22aa',
   'best-practice',
 ];
+
+test('Octopus evidence is static, dated, and linked without a synthetic demo', async ({ browser }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  try {
+    const page = await context.newPage();
+    await page.goto('http://127.0.0.1:4323/');
+    await expect(page.locator('.product-card')).toHaveCount(4);
+    await expect(page.locator('.preview-switch button')).toHaveCount(3);
+    await page.getByRole('link', { name: 'Review measured throughput', exact: true }).click();
+    await expect(page).toHaveURL(/\/octopus\/#operational-evidence$/);
+    const evidence = page.locator('#operational-evidence');
+    await expect(evidence.getByRole('heading', { name: 'Measured operational evidence' })).toBeVisible();
+    await expect(page.locator('#demo, .product-demo, astro-island')).toHaveCount(0);
+    await expect(page.locator('.caveat')).toHaveText(octopusCaveat);
+    await expect(page.locator('.product-hero').getByRole('link', { name: 'Discuss your use case', exact: true })).toHaveAttribute('href', '/demo/#octopus');
+    await expect(evidence).toContainText(octopusStats.source.definition);
+    await expect(evidence).toContainText(octopusStats.source.peaks);
+    await expect(evidence).toContainText('Timezone: UTC');
+    const format = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
+    for (const [heading, count] of [['Peak day', octopusStats.peakRecordsDay], ['Peak week', octopusStats.peakRecordsWeek]] as const) {
+      const card = evidence.getByRole('article', { name: heading, exact: true });
+      if (count === null) {
+        await expect(card).toContainText('Pending first measured refresh');
+        await expect(card.locator('.ops-count')).toHaveCount(0);
+      } else {
+        expect(Number.isSafeInteger(count) && count >= 0).toBe(true);
+        await expect(card.locator('.ops-count')).toHaveText(`${format.format(count)} records`);
+      }
+    }
+    const live: { ingestProcessedRatePerSec: number; pendingLedgerCount: number; lastIngestSuccessAt: string | null; backpressureActive: boolean } | null = octopusStats.liveStrip;
+    if (live) {
+      await expect(evidence.locator('.ops-snapshot')).toContainText(`${format.format(live.ingestProcessedRatePerSec)} records/s`);
+      await expect(evidence.locator('.ops-snapshot')).toContainText(`${format.format(live.pendingLedgerCount)} records`);
+      await expect(evidence.locator('.ops-snapshot')).toContainText(live.backpressureActive ? 'Active' : 'Inactive');
+      if (live.lastIngestSuccessAt) await expect(evidence.locator('.ops-snapshot time')).toHaveAttribute('datetime', live.lastIngestSuccessAt);
+    } else {
+      await expect(evidence.locator('.ops-snapshot')).toHaveCount(0);
+    }
+    if (octopusStats.asOf) {
+      await expect(evidence.locator('time').last()).toHaveAttribute('datetime', octopusStats.asOf);
+      expect(Number.isNaN(Date.parse(octopusStats.asOf))).toBe(false);
+      if (octopusStats.peakRecordsDay !== null) {
+        await expect(evidence.getByRole('article', { name: 'Peak day', exact: true }).locator('time')).toHaveAttribute('datetime', octopusStats.peakRecordsDayDate!);
+      }
+      if (octopusStats.peakRecordsWeek !== null) {
+        const week = evidence.getByRole('article', { name: 'Peak week', exact: true });
+        await expect(week.locator('time').first()).toHaveAttribute('datetime', octopusStats.peakRecordsWeekStart!);
+        await expect(week.locator('time').last()).toHaveAttribute('datetime', octopusStats.peakRecordsWeekEnd!);
+        const start = Date.parse(octopusStats.peakRecordsWeekStart!);
+        const end = Date.parse(octopusStats.peakRecordsWeekEnd!);
+        expect(new Date(start).getUTCDay()).toBe(1);
+        expect(end - start).toBe(6 * 24 * 60 * 60 * 1000);
+        const asOfDay = octopusStats.asOf.slice(0, 10);
+        if (asOfDay >= octopusStats.peakRecordsWeekStart! && asOfDay <= octopusStats.peakRecordsWeekEnd!) await expect(week).toContainText('Week in progress at capture');
+      }
+    } else {
+      await expect(evidence).toContainText('As of: pending first measured refresh.');
+      expect(octopusStats.peakRecordsDay).toBeNull();
+      expect(octopusStats.peakRecordsWeek).toBeNull();
+      expect(octopusStats.liveStrip).toBeNull();
+    }
+    expect(await page.locator('main > section').evaluateAll((sections) => sections.map((section) => section.getAttribute('aria-labelledby')))).toEqual([
+      'hero-title', 'workflow-title', 'value-title', 'evidence-title', 'ops-title', 'terms-title', 'contact-title',
+    ]);
+    await page.goto('http://127.0.0.1:4323/demo/#octopus');
+    await expect(page.locator('#octopus')).toContainText('Octopus');
+  } finally {
+    await context.close();
+  }
+});
+
+test('public routes and committed evidence expose no internal dashboard addresses', async ({ page }) => {
+  const privateText = /grafana|192\.168\.1|30000|gateway\.rclabs\.uk|wiretrap/i;
+  expect(JSON.stringify(octopusStats)).not.toMatch(privateText);
+  for (const route of routes) {
+    await page.goto(route);
+    expect(await page.locator('body').innerText(), route).not.toMatch(privateText);
+    expect(await page.locator('[href]').evaluateAll((elements) => elements.map((element) => element.getAttribute('href')).join('\n')), route).not.toMatch(privateText);
+    expect(await (await page.request.get(route)).text(), route).not.toMatch(privateText);
+  }
+});
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -55,7 +140,7 @@ test('header stays visible and product samples preserve the landing layout', asy
   await expect(
     preview.getByRole('button', { name: 'Schema Migrator', exact: true }),
   ).toBeEnabled();
-  for (const product of products) {
+  for (const product of sampleProducts) {
     await page.getByRole('link', { name: `Try the ${product.name} sample` }).click();
     await expect(
       preview.getByRole('button', { name: product.name, exact: true }),
@@ -82,7 +167,7 @@ test('header stays visible and product samples preserve the landing layout', asy
     .click();
   await expect(page).toHaveURL(/\/products\/$/);
   await expect(page.locator('.mobile-menu')).not.toHaveAttribute('open');
-  await expect(page.locator('.product-card')).toHaveCount(3);
+  await expect(page.locator('.product-card')).toHaveCount(4);
 });
 
 test('landing preview filters site-scoped wireless samples and reviews migration steps', async ({
@@ -842,7 +927,7 @@ test('rendered text and control boundaries meet the documented targets in every 
       await page.setViewportSize({ width, height: 1000 });
       const state = `${route} ${width}px`;
       await audit(`${state} page`);
-      const choices = route === '/' ? products : products.filter((product) => product.path === route);
+      const choices = route === '/' ? sampleProducts : sampleProducts.filter((product) => product.path === route);
       for (const product of choices) {
         if (route === '/')
           await page.locator('.preview-switch').getByRole('button', { name: product.name, exact: true }).click();
@@ -898,10 +983,10 @@ test('every route supports forced colours and reduced motion', async ({ page }) 
   }
 });
 
-test('both caveats ship from the content model beside the content they qualify', async ({
+test('sample caveats ship from the content model beside the content they qualify', async ({
   page,
 }) => {
-  for (const product of products) {
+  for (const product of sampleProducts) {
     await page.goto(product.path);
     const html = await page.content();
     // The page copy and the demonstration both carry the same statement.
@@ -912,7 +997,7 @@ test('both caveats ship from the content model beside the content they qualify',
   }
   await page.goto('/');
   const home = await page.content();
-  for (const product of products)
+  for (const product of sampleProducts)
     expect(
       home.includes(product.caveat),
       `${product.name} caveat in the playground`,
@@ -1087,7 +1172,7 @@ test('every route that offers a commercial action uses the shared contact patter
   }
 });
 
-test('the three product routes share the same section structure from the model', async ({
+test('the four product routes share the same section structure from the model', async ({
   page,
 }) => {
   const labels: string[][] = [];

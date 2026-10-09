@@ -8,42 +8,45 @@ export const migratorCaveat =
   'SQL-file snapshots preserve source files and checksums. They do not back up database data.';
 export const vpnCaveat =
   'Traffic categories are heuristics. Routing, inspection, and policy outcomes depend on deployment configuration. This synthetic sample establishes no VPN connection and sends no traffic.';
+export const octopusCaveat =
+  'Peaks are historical ingest-ledger counts, not a throughput limit, capacity forecast, savings, or latency claim. The metrics strip is a manual snapshot, not a live feed.';
 
 export const home = {
   // Google rewrites and truncates titles; this is an editorial target, not a
   // ranking rule. The homepage shares one title and description with Layout.
   title: 'Wi-Fi Investigation & PostgreSQL Migration Software',
   description:
-    'Explore RCLabs software: Atheros Search for Wi-Fi investigation, Schema Migrator for PostgreSQL change review, and VPN / Proxy for WireGuard traffic handling.',
+    'Explore four RCLabs products for Wi-Fi investigation, PostgreSQL change review, WireGuard traffic handling, and durable sync coordination with Octopus.',
   headline: ['Understand the evidence.', 'Control the next step.'],
   subheadline:
-    'Investigate wireless indicators, review database changes, and follow traffic through a WireGuard VPN and transparent proxy. Three focused products, with workflows you can inspect.',
+    'Investigate wireless indicators, review database changes, follow network traffic, and coordinate durable ingestion. Four focused products, with workflows you can inspect.',
   primaryCta: { label: 'Explore the samples', href: '#playground' },
   secondaryCta: { label: 'Discuss your use case', href: '/demo/' },
-  supporting: 'Three products. Synthetic browser samples. No account required.',
+  supporting:
+    'Four products. Product samples and operational evidence. No account required.',
   eyebrow: 'RCLABS / INFRASTRUCTURE TOOLS',
-  productsEyebrow: 'THREE PRODUCTS / THREE WORKFLOWS',
+  productsEyebrow: 'FOUR PRODUCTS / FOUR WORKFLOWS',
   playground: {
     eyebrow: 'THE PLAYGROUND',
     title: 'Take a closer look.',
     summary:
-      'Choose a product and follow a sample workflow. Every interaction stays in your browser.',
+      'Explore Search, Migrator, and VPN / Proxy product samples. Every interaction stays in your browser. Octopus has a separate operational evidence page.',
   },
   relationship:
     'Search can review proxy observations through the configured backend. Schema Migrator has its own change-review workflow. The public samples run independently in your browser.',
   approach:
     'Each product makes a different part of your infrastructure inspectable.',
   explore:
-    'Try all three workflows with synthetic records in your browser. No account or production connection required.',
+    'Try product samples with synthetic records in your browser, or review Octopus operational evidence. No account or production connection required.',
 } as const;
 
 export const catalogue = {
   title: 'Products',
   description:
-    'Compare Atheros Search, Schema Migrator, and RCLabs VPN / Proxy by audience, inputs, workflow, and output.',
+    'Compare Atheros Search, Schema Migrator, RCLabs VPN / Proxy, and Octopus by audience, inputs, workflow, and output.',
   headline: ['Find the tool', 'for the work ahead.'],
   summary:
-    'Start with the question you need to answer. Each product has a focused workflow, an interactive sample, and a clear operating boundary.',
+    'Start with the question you need to answer. Four products offer focused workflows and clear operating boundaries, with browser samples or measured operational evidence to review.',
   comparisonTitle: 'A different job for each tool.',
   comparisonSummary:
     'Compare what goes in, what happens, and what you can review afterward.',
@@ -856,6 +859,129 @@ export const products = [
       ],
     ],
   },
+  {
+    id: 'octopus',
+    name: 'Octopus',
+    path: '/octopus/',
+    homeTitle: 'Octopus',
+    label: 'DURABLE SYNC COORDINATOR',
+    headline: ['Coordinate the work.', 'Count the evidence.'],
+    summary:
+      'Octopus is a Scala coordinator on the JVM for durable ingestion and sync work. It discovers records, leases and dispatches work, and records ingestion evidence in PostgreSQL.',
+    problem:
+      'Platform and data teams who need to follow work from incoming streams through durable job state to recorded ingestion evidence.',
+    promise: 'Every processed record leaves a ledger row you can count.',
+    primaryCta: {
+      label: 'Review measured throughput',
+      href: '#operational-evidence',
+    },
+    secondaryCta: { label: 'Discuss your use case', href: '/demo/#octopus' },
+    sections: {
+      workflow: {
+        ...workflowSection,
+        title: 'From incoming streams to durable evidence.',
+        note: 'Follow discovery, coordinated work, and the ledger that records ingestion across paths.',
+      },
+      value: {
+        ...audienceSection,
+        title: 'Two ways to assess Octopus.',
+      },
+      evidence: {
+        ...evidenceSection,
+        caveatLabel: 'MEASUREMENT / OPERATING BOUNDARY',
+        footnote:
+          'Published measurements come from the production ingest ledger and an operator metrics snapshot. They describe recorded activity under that deployment configuration.',
+      },
+      glossary: glossarySection,
+    },
+    audiences: [
+      {
+        id: 'technical',
+        title: 'For technical users',
+        proposition: 'Trace ingestion through durable state.',
+        points: [
+          'Inspect committed consumer offsets and ingestion evidence by consumer group, topic, partition, and offset.',
+          'Coordinate deduplication, leases, batching, and load outcomes through PostgreSQL-backed state.',
+        ],
+      },
+      {
+        id: 'buyers',
+        title: 'For buyers and operators',
+        proposition: 'Evaluate operations with a defined count.',
+        points: [
+          'Review historical peak day and week counts with their source, UTC boundaries, and capture time.',
+          'Read the pending ledger, ingest rate, and last ingest success as a dated operator snapshot.',
+        ],
+      },
+    ],
+    workflow: [
+      {
+        step: 'Discover work',
+        input: 'Incoming records and sync discovery requests',
+        processing:
+          'Consume streams with committed group offsets and durable deduplication',
+        output: 'Recorded work available for coordination',
+      },
+      {
+        step: 'Lease and dispatch',
+        input: 'Durable jobs and pending work',
+        processing:
+          'Acquire leases, form batches, and dispatch configured loads',
+        output: 'Tracked jobs and load outcomes',
+      },
+      {
+        step: 'Record evidence',
+        input: 'Consumed records and their broker coordinates',
+        processing:
+          'Persist ingestion evidence and maintain configured projections',
+        output: 'Durable ledger rows for operational review and counting',
+      },
+    ],
+    caveat: octopusCaveat,
+    highlights: [
+      ['Discover work', 'Bring incoming streams into durable coordination.'],
+      ['Coordinate dispatch', 'Track leases, batches, and load outcomes.'],
+      ['Count evidence', 'Review historical ledger counts with provenance.'],
+    ],
+    features: [
+      [
+        'Durable ingestion',
+        'PostgreSQL stores ingestion evidence keyed by consumer group, topic, partition, and offset. Repeated delivery preserves the original first-seen time.',
+      ],
+      [
+        'At-least-once delivery',
+        'Consumers resume from committed group offsets. Durable deduplication accounts for repeated delivery; new groups start from the earliest retained records.',
+      ],
+      [
+        'Leases and dispatch',
+        'Coordinator-owned job state, leases, batches, and outbox records track work and its load outcomes.',
+      ],
+      [
+        'Maintained projections',
+        'Octopus maintains PostgreSQL projections and derives alerts. Atheros Search owns embedding job processing through its worker pool.',
+      ],
+      [
+        'Measured ledger history',
+        'Peak day and week counts use durable ingestion evidence across ingest paths. Process restarts do not reset these ledger rows.',
+      ],
+    ],
+    glossary: [
+      [
+        'Ingest ledger',
+        'Durable evidence of consumed records, identified by consumer group, topic, partition, and offset. Counts include all recorded dispositions and are not a count of unique business events.',
+      ],
+      ['Lease', 'A time-bounded claim on work used to coordinate processing.'],
+      ['Outbox', 'Durable records of messages waiting for dispatch.'],
+      [
+        'At-least-once',
+        'A delivery model in which records may be delivered again. Durable deduplication handles repeated work.',
+      ],
+      [
+        'Peak day / week',
+        'The highest historical ledger-row count in a UTC calendar day or Monday-to-Sunday ISO week, including the current period so far.',
+      ],
+    ],
+  },
 ] as const;
 
 export type Product = (typeof products)[number];
@@ -864,10 +990,15 @@ export function getProduct(id: ProductId): Product {
   return products.find((product) => product.id === id)!;
 }
 
+// Octopus publishes measured evidence; it has no synthetic demo.
+export const sampleProducts = products.filter(
+  (product) => product.id !== 'octopus',
+);
+
 export const contact = {
   headline: ['Discuss your', 'use case.'],
   supporting:
-    "Tell us what you need to investigate, change, or route, your environment, and the constraints that matter. We'll agree on the next step by email.",
+    "Tell us what you need to investigate, change, route, or ingest, your environment, and the constraints that matter. We'll agree on the next step by email.",
   cta: 'Discuss your use case',
   // Short form for a mailto link that already sits under the headline, so the
   // same words never appear twice in one block.
@@ -896,10 +1027,16 @@ export const contactOptions = [
     text: 'Review WireGuard ingress, transparent proxy handling, and audit evidence.',
   },
   {
+    id: 'octopus',
+    label: 'Octopus',
+    subject: 'Octopus',
+    text: 'Review durable ingestion, work leases, and measured ledger evidence.',
+  },
+  {
     id: 'all',
     label: 'All products',
     subject: allProducts,
-    text: 'Discuss all three products in one conversation.',
+    text: 'Discuss all four products in one conversation.',
   },
 ] as const;
 

@@ -4,26 +4,70 @@ interface Props {
   kind: ProductId;
 }
 const { kind } = Astro.props;
-const search = kind === 'search';
-const vpn = kind === 'vpn';
-const stages = search
-  ? [
+const diagrams = {
+  search: {
+    stages: [
       ['Monitored site', 'sensor observations'],
       ['Wireless indicator', 'for analyst review'],
       ['Supporting', 'observations'],
-    ]
-  : vpn ? [
+    ],
+    labels: ['MONITORED SITE', 'INDICATOR', 'OBSERVATION'],
+    title:
+      'Illustrative site, wireless indicator, and supporting observation path',
+    description:
+      'Illustrative sample only: a monitored site, a configured wireless indicator for analyst review, and supporting wireless observations. It does not represent an end-to-end site overview in the current production console. An observation does not confirm a current connection or physical device identity.',
+    caption: `Illustrative synthetic path from a monitored site to an indicator and its supporting observations. The current production console does not show this complete overview end to end. ${getProduct('search').caveat}`,
+  },
+  vpn: {
+    stages: [
       ['WireGuard peer', 'configured ingress'],
       ['Proxy handling', 'category / policy'],
       ['Audit events', 'backend pipeline'],
-    ] : [
+    ],
+    labels: ['INPUT', 'PROCESSING', 'OUTPUT'],
+    title: 'WireGuard ingress, proxy handling, and audit publishing',
+    description:
+      'Illustrative flow from a configured WireGuard peer through transparent proxy handling to audit publishing. Outcomes depend on configuration.',
+    caption:
+      'Configured WireGuard ingress, proxy handling, and audit publishing. The public demonstration sends no traffic.',
+  },
+  migrator: {
+    stages: [
       ['SQL files', 'and ordering'],
       ['Validate,', 'then dry-run'],
       ['Execution plan', 'and run record'],
-    ];
-const labels = search
-  ? ['MONITORED SITE', 'INDICATOR', 'OBSERVATION']
-  : ['INPUT', 'PROCESSING', 'OUTPUT'];
+    ],
+    labels: ['INPUT', 'PROCESSING', 'OUTPUT'],
+    title: 'Schema Migrator input, processing, and output',
+    description:
+      'Input: SQL files and ordering configuration. Processing: offline validation followed by a dry-run plan. Output: a proposed execution order and a run record. This is a review sequence, not an automatic execution.',
+    caption:
+      'Input, processing, and output for a change review. The public demonstration executes no SQL.',
+  },
+  octopus: {
+    stages: [
+      ['Incoming streams', 'work discovery'],
+      ['Leases / batches', 'tracked dispatch'],
+      ['Ingest ledger', 'historical counts'],
+    ],
+    labels: ['INPUT', 'COORDINATION', 'EVIDENCE'],
+    title: 'Octopus streams, leases and batches, and ledger counts',
+    description:
+      'Incoming streams become durable work. Leases and batches coordinate dispatch. Ingestion evidence records consumed broker coordinates and first-seen times for historical counting.',
+    caption:
+      'Coordination mechanisms and ledger evidence. Published counts describe recorded activity in the deployment.',
+  },
+} satisfies Record<
+  ProductId,
+  {
+    stages: string[][];
+    labels: string[];
+    title: string;
+    description: string;
+    caption: string;
+  }
+>;
+const { stages, labels, title, description, caption } = diagrams[kind];
 const centers = [100, 320, 540];
 ---
 
@@ -34,15 +78,9 @@ const centers = [100, 320, 540];
     aria-labelledby={`${kind}-diagram-title ${kind}-diagram-desc`}
   >
     <title id={`${kind}-diagram-title`}>
-      {search
-        ? 'Illustrative site, wireless indicator, and supporting observation path'
-        : vpn ? 'WireGuard ingress, proxy handling, and audit publishing' : 'Schema Migrator input, processing, and output'}
+      {title}
     </title>
-    <desc id={`${kind}-diagram-desc`}>
-      {search
-        ? 'Illustrative sample only: a monitored site, a configured wireless indicator for analyst review, and supporting wireless observations. It does not represent an end-to-end site overview in the current production console. An observation does not confirm a current connection or physical device identity.'
-        : vpn ? 'Illustrative flow from a configured WireGuard peer through transparent proxy handling to audit publishing. Outcomes depend on configuration.' : 'Input: SQL files and ordering configuration. Processing: offline validation followed by a dry-run plan. Output: a proposed execution order and a run record. This is a review sequence, not an automatic execution.'}
-    </desc>
+    <desc id={`${kind}-diagram-desc`}>{description}</desc>
     {[0, 1].map((index) => (
       <g class="diagram-arrow">
         <path
@@ -79,9 +117,5 @@ const centers = [100, 320, 540];
       </g>
     ))}
   </svg>
-  <figcaption>
-    {search
-      ? `Illustrative synthetic path from a monitored site to an indicator and its supporting observations. The current production console does not show this complete overview end to end. ${getProduct('search').caveat}`
-      : vpn ? 'Configured WireGuard ingress, proxy handling, and audit publishing. The public demonstration sends no traffic.' : 'Input, processing, and output for a change review. The public demonstration executes no SQL.'}
-  </figcaption>
+  <figcaption>{caption}</figcaption>
 </figure>

@@ -6,6 +6,7 @@ import MigratorDemo from './MigratorDemo';
 import VpnDemo from './VpnDemo';
 import Diagram from './Diagram.astro';
 import Contact from './Contact.astro';
+import OperationalEvidence from './OperationalEvidence.astro';
 import { getProduct, guides, guidePath, guideIndex, type ProductId } from '../data/products';
 interface Props { id: ProductId }
 const product = getProduct(Astro.props.id);
@@ -37,12 +38,12 @@ const product = getProduct(Astro.props.id);
       ))}
     </div>
   </section>
-  <section class="product-demo" id="demo" aria-label={`${product.name} interactive sample`}>
+  {product.id !== 'octopus' && <section class="product-demo" id="demo" aria-label={`${product.name} interactive sample`}>
     {product.id === 'search' && <SearchDemo client:load />}
     {product.id === 'migrator' && <MigratorDemo client:load />}
     {product.id === 'vpn' && <VpnDemo client:load />}
     <noscript><p class="fine-print">JavaScript is off. Read the initial sample and expand its explanations as text. Choosing another sample needs JavaScript.</p></noscript>
-  </section>
+  </section>}
   <section class="section" aria-labelledby="workflow-title">
     <div class="section-heading"><p class="eyebrow">{product.sections.workflow.label}</p><h2 id="workflow-title">{product.sections.workflow.title}</h2><p>{product.sections.workflow.note}</p></div>
     <ol class="workflow-steps">
@@ -72,6 +73,7 @@ const product = getProduct(Astro.props.id);
       <div class="evidence-panel"><p class="eyebrow">{product.sections.evidence.caveatLabel}</p><p class="caveat">{product.caveat}</p><p class="fine-print">{product.sections.evidence.footnote}</p></div>
     </div>
   </section>
+  {product.id === 'octopus' && <OperationalEvidence />}
   <section class="section glossary" aria-labelledby="terms-title">
     <p class="eyebrow">{product.sections.glossary.label}</p><h2 id="terms-title">{product.sections.glossary.title}</h2>
     <dl>{product.glossary.map(([term, definition]) => <div><dt>{term}</dt><dd>{definition}</dd></div>)}</dl>

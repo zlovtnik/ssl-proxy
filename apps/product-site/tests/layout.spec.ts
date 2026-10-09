@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { products } from '../src/data/products';
+import { products, sampleProducts } from '../src/data/products';
 import { trafficFlows } from '../src/data/fixtures';
 
 test.beforeEach(async ({ page }) => {
@@ -60,7 +60,7 @@ for (const route of ['/', '/products/', ...products.map((product) => product.pat
       for (const width of [1440, 1024, 768, 375, 320]) {
         await page.setViewportSize({ width, height: 1000 });
         await expectContainedLayout(page);
-        const choices = route === '/' ? products : products.filter((product) => product.path === route);
+        const choices = route === '/' ? sampleProducts : sampleProducts.filter((product) => product.path === route);
         for (const product of choices) {
           if (route === '/') {
             await page.locator('.preview-switch').getByRole('button', { name: product.name, exact: true }).click();
