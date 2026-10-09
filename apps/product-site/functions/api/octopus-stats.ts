@@ -10,7 +10,7 @@ export async function onRequestGet({ request }: { request: Request }) {
   try {
     const response = await fetch('https://gateway.rclabs.uk/public/stats', {
       headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
-      signal: AbortSignal.timeout(8_000),
+      signal: AbortSignal.timeout(12_000),
       redirect: 'error',
     });
     if (
