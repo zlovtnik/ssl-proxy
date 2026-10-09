@@ -73,9 +73,11 @@ The `Dockerfile` is multi-stage and runs as nonroot on
 images use version tags (same pattern as
 `apps/integration-console/atheros-search`). Jenkins publishes the
 bootstrap image and records its digest in `artifacts/stats-reader-buildx.json`.
-After reviewing that digest, add a `stats-reader` image mapping in the
-production and staging app-stack Kustomizations, add the base resource to
-each app-stack slice, and switch `/public/stats` to `ssl-proxy-stats-reader`.
+The gateway continues to serve `/public/stats` from Java Coordinator during
+bootstrap. After reviewing the published digest, add `stats-reader` to the
+deployable image contract and both app-stack Kustomizations, add the base
+resource to each app-stack slice, and switch the public gateway route and
+its GitOps check to `ssl-proxy-stats-reader`.
 Production images are pinned by digest at the Kubernetes layer, not in
 this Dockerfile.
 

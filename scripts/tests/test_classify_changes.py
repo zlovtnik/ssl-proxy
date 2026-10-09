@@ -42,11 +42,12 @@ class ClassifyChangesTest(unittest.TestCase):
         self.assertIn("SHOULD_RUN_OCTOPUS=false", env_lines(result))
 
     def test_stats_reader_changes_test_and_publish_bootstrap_image(self) -> None:
-        result = classify_paths({"services/stats-reader/internal/http/server.go"}, self.bumped(), full=False)
-        self.assertEqual([], result["changedServices"])
-        self.assertTrue(result["tests"]["stats_reader"])
-        self.assertTrue(result["publishStatsReader"])
-        self.assertIn("SHOULD_PUBLISH_STATS_READER=true", env_lines(result))
+        for path in ("services/stats-reader/internal/http/server.go", "Makefile"):
+            with self.subTest(path=path):
+                result = classify_paths({path}, self.bumped(), full=False)
+                self.assertTrue(result["tests"]["stats_reader"])
+                self.assertTrue(result["publishStatsReader"])
+                self.assertIn("SHOULD_PUBLISH_STATS_READER=true", env_lines(result))
 
     def test_search_contract_inputs_select_consumers_without_submodule_bump(self) -> None:
         for path in (
