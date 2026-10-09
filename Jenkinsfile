@@ -57,7 +57,7 @@ pipeline {
             if (line) {
               def fields = line.split('=', 2)
               if (fields.size() == 2 && allowedKeys.contains(fields[0])) {
-                env[fields[0]] = fields[1]
+                env."${fields[0]}" = fields[1]
               }
             }
           }

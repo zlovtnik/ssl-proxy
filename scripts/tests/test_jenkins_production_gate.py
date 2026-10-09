@@ -12,8 +12,6 @@ def pipeline_source() -> str:
     pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
 
     def expand(match: re.Match) -> str:
-        if match.group(1).endswith("install-sbt.sh"):
-            return match.group(0)
         script = (REPOSITORY_ROOT / match.group(1)).read_text(encoding="utf-8")
         return re.sub(r"sh /workspace/(scripts/ci/tasks/[\w-]+\.sh)", expand, script)
 
@@ -95,7 +93,13 @@ class JenkinsProductionGateTest(unittest.TestCase):
             scala.count("-v /var/run/docker.sock:/var/run/docker.sock"),
         )
         self.assertIn(
-            "sh /workspace/scripts/ci/tasks/install-sbt.sh python3", scala
+            'apt-get install -y --no-install-recommends curl bash "$@"', scala
+        )
+        octopus_task = (REPOSITORY_ROOT / "scripts/ci/tasks/octopus-1.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "sh /workspace/scripts/ci/tasks/install-sbt.sh python3", octopus_task
         )
         self.assertIn("python3 scripts/check_coverage.py", scala)
 
@@ -146,6 +150,8 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn("scripts/classify_changes.py --base \"$GIT_PREVIOUS_SUCCESSFUL_COMMIT\"", pipeline)
         self.assertIn("scripts/classify_changes.py --full", pipeline)
         self.assertIn("fields.size() == 2 && allowedKeys.contains(fields[0])", pipeline)
+        self.assertIn('env."${fields[0]}" = fields[1]', pipeline)
+        self.assertNotIn("env[fields[0]]", pipeline)
         for name in ("PLATFORM_SYNC", "ATHEROS_SEARCH", "SCHEMA_MIGRATOR", "OCTOPUS", "SENSOR"):
             self.assertIn(f'"$SHOULD_RUN_{name}" != true', pipeline)
         self.assertIn('--only "$CHANGED_SERVICES"', pipeline)
