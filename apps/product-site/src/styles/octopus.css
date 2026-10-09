@@ -208,18 +208,79 @@
 .ops-feed-header p {
   margin: 0;
 }
-.ops-history {
+.ops-history,
+.ops-throughput {
   border-top: 1px solid var(--divider);
   padding-top: 1.5rem;
 }
-.ops-history h3 {
+.ops-history h3,
+.ops-throughput h3 {
   margin-bottom: 1.5rem;
 }
-.ops-history h4 {
+.ops-history h4,
+.ops-throughput h4 {
   color: var(--muted);
   font-size: 1rem;
   font-weight: 500;
   margin: 0;
+}
+.ops-throughput .ops-metrics {
+  margin-block: 0 1rem;
+}
+.ops-window {
+  margin-top: 1.5rem;
+  display: grid;
+  gap: 0.75rem;
+}
+.ops-bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+.ops-bar-row {
+  display: grid;
+  grid-template-columns: 3.25rem minmax(0, 1fr) 5.5rem;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.ops-bar-label,
+.ops-bar-count {
+  font-family: 'JetBrains Mono Variable', monospace;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.ops-bar-count {
+  text-align: end;
+}
+.ops-bar-track {
+  height: 8px;
+  background: var(--raised);
+  border-radius: 4px;
+  overflow: hidden;
+  min-width: 0;
+}
+.ops-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--action);
+  border-radius: 4px;
+}
+.ops-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  height: 3.5rem;
+  min-width: 0;
+}
+.ops-spark-bar {
+  flex: 1 1 0;
+  min-width: 1px;
+  background: var(--action);
+  border-radius: 1px 1px 0 0;
 }
 .ops-widget .ops-metrics {
   margin-block: 1.5rem 0;
@@ -425,5 +486,12 @@
   .ops-widget .ops-card,
   .audience-toggle {
     border-color: CanvasText;
+  }
+  .ops-bar-track {
+    border: 1px solid CanvasText;
+  }
+  .ops-bar-fill,
+  .ops-spark-bar {
+    background: CanvasText;
   }
 }

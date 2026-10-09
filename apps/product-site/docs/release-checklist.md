@@ -60,12 +60,20 @@ hosting or change Kubernetes resources.
 
 The [Pages Function](../functions/api/octopus-stats.ts) serves
 `/api/octopus-stats` and forwards only validated public fields from the
-coordinator. Production hosts are enabled in code; preview hosts return 503.
-There is no build-time metrics configuration or saved measurement fallback.
+store-backed reader. Snapshots publish every 30 seconds and peaks refresh on a
+separate 300-second cache. Production hosts are enabled in code; preview hosts
+return 503. There is no build-time metrics configuration or saved measurement
+fallback. The proxy accepts bodies up to 16384 bytes so a full 168-bucket
+payload fits.
 
 - Verify two real responses at least 30 seconds apart have advancing `asOf`
   values. Counts can legitimately remain unchanged.
 - Check `peaksComputedAt` advances after the 300-second cache period.
+- Confirm `lifetimeTotals` reports `recordsTotal`, `daysCounted`, and
+  `computedAt`, and that `throughput24h` holds 24 hourly buckets while
+  `throughput7d` holds 168, each with `bucket: hour`.
+- Confirm a missing lifetime or throughput window renders unavailable rather
+  than an empty chart of zeros; a measured bucket may honestly be zero.
 - Verify the public gateway targets Service port 8080, which forwards to
   container port 8081. NetworkPolicy still allows Traefik to container port 8081.
 - Confirm `OCTOPUS_PUBLIC_STATS_ENABLED` and the allowed origins in the rendered

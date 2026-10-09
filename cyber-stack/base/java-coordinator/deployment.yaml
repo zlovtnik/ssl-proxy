@@ -370,6 +370,29 @@ spec:
               value: "true"
             - name: OCTOPUS_PUBLIC_STATS_ALLOWED_ORIGINS
               value: "https://rclabs.uk"
+            - name: OCTOPUS_STATS_PUBLISH_ENABLED
+              value: "true"
+            - name: OCTOPUS_STATS_WORKER_COUNT
+              value: "3"
+            - name: OCTOPUS_STATS_PUBLISH_INTERVAL_SECONDS
+              value: "30"
+            - name: OCTOPUS_STATS_PEAKS_INTERVAL_SECONDS
+              value: "300"
+            - name: OCTOPUS_STATS_HISTORY_INTERVAL_SECONDS
+              value: "60"
+            - name: OCTOPUS_STATS_LIVE_INTERVAL_SECONDS
+              value: "15"
+            - name: REDIS_ADDR
+              value: "ssl-proxy-redis-runtime:6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-runtime
+                  key: password
+            - name: MINIO_STATS_BUCKET
+              value: "ssl-proxy-stats"
+            - name: MINIO_STATS_PREFIX
+              value: "stats/"
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: "0.05"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

@@ -1,3 +1,19 @@
+export interface ThroughputPoint {
+  bucketStart: string;
+  records: number;
+}
+
+export interface ThroughputSeries {
+  bucket: 'hour';
+  series: ThroughputPoint[];
+}
+
+export interface LifetimeTotals {
+  recordsTotal: number;
+  daysCounted: number;
+  computedAt: string;
+}
+
 export interface Stats {
   asOf: string;
   peaksComputedAt: string | null;
@@ -12,11 +28,19 @@ export interface Stats {
     lastIngestSuccessAt: string | null;
     backpressureActive: boolean;
   } | null;
+  lifetimeTotals: LifetimeTotals | null;
+  throughput24h: ThroughputSeries | null;
+  throughput7d: ThroughputSeries | null;
 }
 
-export const maxStatsAgeMs = 90_000;
+// Must cover the 30-second store publish cadence plus the reader fallback hop
+// and clock slack.
+export const maxStatsAgeMs = 180_000;
 // Must cover Octopus peaks-refresh-seconds (300) plus fetch and clock slack.
 export const maxPeaksAgeMs = 360_000;
+export const throughput24hBuckets = 24;
+export const throughput7dBuckets = 168;
+const hourMs = 3_600_000;
 const object = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null;
 const count = (v: unknown): v is number =>
@@ -33,6 +57,30 @@ export function isFresh(value: string, now: number, maxAge: number) {
   const age = now - Date.parse(value);
   return age >= -5_000 && age <= maxAge;
 }
+
+// A measured series object is full length and contiguous; a measured bucket may
+// honestly be 0. Absent or null means never computed, never an empty zero chart.
+const throughputSeries = (
+  v: unknown,
+  length: number,
+): v is ThroughputSeries => {
+  if (
+    !object(v) ||
+    v.bucket !== 'hour' ||
+    !Array.isArray(v.series) ||
+    v.series.length !== length
+  )
+    return false;
+  let previous = Number.NaN;
+  for (const raw of v.series) {
+    if (!object(raw) || !instant(raw.bucketStart) || !count(raw.records))
+      return false;
+    const start = Date.parse(raw.bucketStart);
+    if (Number.isFinite(previous) && start - previous !== hourMs) return false;
+    previous = start;
+  }
+  return true;
+};
 
 // Validate at both the server and browser boundary; missing data is never zero.
 export function parseStats(value: unknown, now = Date.now()): Stats {
@@ -79,6 +127,31 @@ export function parseStats(value: unknown, now = Date.now()): Stats {
       ))
   )
     throw new Error('Invalid pipeline metrics');
+  // Absent is missing, not zero; present values must be fully valid.
+  const lifetime = v.lifetimeTotals;
+  if (
+    lifetime !== null &&
+    lifetime !== undefined &&
+    (!object(lifetime) ||
+      !count(lifetime.recordsTotal) ||
+      !count(lifetime.daysCounted) ||
+      !instant(lifetime.computedAt))
+  )
+    throw new Error('Invalid lifetime totals');
+  const t24 = v.throughput24h;
+  if (
+    t24 !== null &&
+    t24 !== undefined &&
+    !throughputSeries(t24, throughput24hBuckets)
+  )
+    throw new Error('Invalid 24h throughput');
+  const t7d = v.throughput7d;
+  if (
+    t7d !== null &&
+    t7d !== undefined &&
+    !throughputSeries(t7d, throughput7dBuckets)
+  )
+    throw new Error('Invalid 7d throughput');
   const strip = live as Stats['liveStrip'];
   // Allowlist fields so an upstream change cannot expose internal metadata.
   return {
@@ -97,6 +170,34 @@ export function parseStats(value: unknown, now = Date.now()): Stats {
             pendingLedgerCount: strip.pendingLedgerCount,
             lastIngestSuccessAt: strip.lastIngestSuccessAt,
             backpressureActive: strip.backpressureActive,
+          },
+    lifetimeTotals:
+      lifetime === null || lifetime === undefined
+        ? null
+        : {
+            recordsTotal: lifetime.recordsTotal as number,
+            daysCounted: lifetime.daysCounted as number,
+            computedAt: lifetime.computedAt as string,
+          },
+    throughput24h:
+      t24 === null || t24 === undefined
+        ? null
+        : {
+            bucket: 'hour',
+            series: (t24.series as ThroughputPoint[]).map((point) => ({
+              bucketStart: point.bucketStart,
+              records: point.records,
+            })),
+          },
+    throughput7d:
+      t7d === null || t7d === undefined
+        ? null
+        : {
+            bucket: 'hour',
+            series: (t7d.series as ThroughputPoint[]).map((point) => ({
+              bucketStart: point.bucketStart,
+              records: point.records,
+            })),
           },
   };
 }

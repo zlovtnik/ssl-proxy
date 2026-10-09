@@ -1,10 +1,11 @@
-import { createSignal, onMount, onCleanup, Show } from 'solid-js';
+import { createSignal, onMount, onCleanup, Show, For } from 'solid-js';
 import {
   isFresh,
   maxPeaksAgeMs,
   maxStatsAgeMs,
   parseStats,
   type Stats,
+  type ThroughputSeries,
 } from '../data/operational-stats';
 
 const number = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
@@ -21,9 +22,19 @@ const timeFmt = new Intl.DateTimeFormat('en-GB', {
   second: '2-digit',
   timeZone: 'UTC',
 });
+const hourFmt = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'UTC',
+});
 const date = (v: string) => dayFmt.format(new Date(v));
 const timestamp = (v: string) =>
   `${date(v)}, ${timeFmt.format(new Date(v))} UTC`;
+const hourLabel = (v: string) => hourFmt.format(new Date(v));
+const seriesMax = (series: ThroughputSeries) =>
+  series.series.reduce((m, p) => Math.max(m, p.records), 0);
+const fill = (records: number, max: number) =>
+  max > 0 ? `${Math.round((records / max) * 100)}%` : '0%';
 
 type Mode = 'ssr' | 'loading' | 'live' | 'warmup' | 'delayed' | 'unavailable';
 
@@ -82,6 +93,23 @@ export default function OctopusOperationalStats() {
     if (m === 'loading') return '—';
     return peaksReady() && stats() !== null ? value() : 'Unavailable';
   };
+  // Lifetime and throughput ride the snapshot asOf gate; null stays unavailable.
+  const snapshotCell = (ready: boolean, value: () => string) => {
+    const m = mode();
+    if (m === 'ssr') return 'Unavailable';
+    if (m === 'loading') return '—';
+    return ready && stats() !== null ? value() : 'Unavailable';
+  };
+  const lifetimeReady = () =>
+    asOfFresh() && stats() !== null && stats()!.lifetimeTotals !== null;
+  const windowReady = (key: 'throughput24h' | 'throughput7d') =>
+    asOfFresh() &&
+    stats() !== null &&
+    stats()![key] !== null &&
+    mode() !== 'ssr' &&
+    mode() !== 'loading';
+  const windowSeries = (key: 'throughput24h' | 'throughput7d') =>
+    windowReady(key) ? stats()![key]! : null;
 
   onMount(() => {
     let disposed = false;
@@ -277,6 +305,131 @@ export default function OctopusOperationalStats() {
             </time>
           </p>
         </Show>
+      </div>
+      <div class="ops-throughput">
+        <h3>Throughput</h3>
+        <dl class="ops-metrics">
+          <div>
+            <dt>
+              Records recorded
+              <span class="fine-print">Lifetime ingestion ledger total</span>
+            </dt>
+            <dd data-metric="lifetime-records">
+              {snapshotCell(lifetimeReady(), () =>
+                number.format(stats()!.lifetimeTotals!.recordsTotal),
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt>
+              Days counted
+              <span class="fine-print">Distinct UTC days with ledger rows</span>
+            </dt>
+            <dd data-metric="lifetime-days">
+              {snapshotCell(lifetimeReady(), () =>
+                number.format(stats()!.lifetimeTotals!.daysCounted),
+              )}
+            </dd>
+          </div>
+        </dl>
+        <Show when={lifetimeReady()}>
+          <p class="fine-print">
+            Totals computed{' '}
+            <time datetime={stats()!.lifetimeTotals!.computedAt}>
+              {timestamp(stats()!.lifetimeTotals!.computedAt)}
+            </time>
+          </p>
+        </Show>
+        <div class="ops-window">
+          <h4 id="ops-24h-title">Last 24 hours</h4>
+          <Show
+            when={windowSeries('throughput24h')}
+            fallback={
+              <p class="ops-count" data-metric="throughput-24h">
+                {snapshotCell(false, () => 'Unavailable')}
+              </p>
+            }
+          >
+            {(series) => {
+              const data = series();
+              const max = seriesMax(data);
+              const first = data.series[0].bucketStart;
+              const last = data.series[data.series.length - 1].bucketStart;
+              return (
+                <div class="ops-chart">
+                  <ul
+                    class="ops-bars"
+                    aria-label="Hourly ledger-row totals for the last 24 hours"
+                  >
+                    <For each={data.series}>
+                      {(point) => (
+                        <li class="ops-bar-row">
+                          <span class="ops-bar-label">
+                            <time datetime={point.bucketStart}>
+                              {hourLabel(point.bucketStart)}
+                            </time>
+                          </span>
+                          <span class="ops-bar-track" aria-hidden="true">
+                            <span
+                              class="ops-bar-fill"
+                              style={{ width: fill(point.records, max) }}
+                            />
+                          </span>
+                          <span class="ops-bar-count">
+                            {number.format(point.records)}
+                          </span>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                  <p class="fine-print">
+                    <time datetime={first}>{timestamp(first)}</time> to{' '}
+                    <time datetime={last}>{timestamp(last)}</time> UTC · peak{' '}
+                    {number.format(max)} records in one hour
+                  </p>
+                </div>
+              );
+            }}
+          </Show>
+        </div>
+        <div class="ops-window">
+          <h4 id="ops-7d-title">Last 7 days</h4>
+          <Show
+            when={windowSeries('throughput7d')}
+            fallback={
+              <p class="ops-count" data-metric="throughput-7d">
+                {snapshotCell(false, () => 'Unavailable')}
+              </p>
+            }
+          >
+            {(series) => {
+              const data = series();
+              const max = seriesMax(data);
+              const first = data.series[0].bucketStart;
+              const last = data.series[data.series.length - 1].bucketStart;
+              const label = `Hourly ledger-row totals for the last 7 days: ${data.series.length} buckets from ${timestamp(first)} to ${timestamp(last)}. Peak ${number.format(max)} records in one hour.`;
+              return (
+                <div class="ops-chart">
+                  <div class="ops-spark" role="img" aria-label={label}>
+                    <For each={data.series}>
+                      {(point) => (
+                        <span
+                          class="ops-spark-bar"
+                          style={{ height: fill(point.records, max) }}
+                        />
+                      )}
+                    </For>
+                  </div>
+                  <p class="fine-print">
+                    <time datetime={first}>{timestamp(first)}</time> to{' '}
+                    <time datetime={last}>{timestamp(last)}</time> UTC · peak{' '}
+                    {number.format(max)} records in one hour
+                  </p>
+                </div>
+              );
+            }}
+          </Show>
+        </div>
       </div>
     </div>
   );

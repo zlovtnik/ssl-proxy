@@ -27,6 +27,8 @@ overrides a rule for its subtree.
   processing via a worker pool and exposes ETL health monitoring.
 - `services/octopus/` is the Scala 3 Cats Effect/FS2 coordinator and owner of
   durable ingestion, leases, outbox, and maintained PostgreSQL projections, built via sbt.
+- `services/stats-reader/` is the Go always-Ready public stats reader. It serves
+  precomputed snapshot JSON from Redis/MinIO only — no PostgreSQL, no Kafka.
 - `services/platform-sync/` is the Go host-side Vault-to-Kubernetes secret
   synchronization service. It reads all platform inputs from Vault, validates
   them, and writes Secrets and ConfigMaps to the production namespace.
@@ -136,6 +138,7 @@ overrides a rule for its subtree.
   - `cd services/octopus && sbt test`
   - `make dependency-boundaries`
   - `make atheros-search-test`
+  - `cd services/stats-reader && go test ./...`
   - `python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v`
   - `make lint`
   - `make test` for a broad repository pass

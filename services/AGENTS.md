@@ -9,6 +9,8 @@ repository root instructions.
 - `atheros-sensor/` is a Rust host-side Wi-Fi sensor and sync-plane producer.
 - `octopus/` is the Scala 3 Cats Effect/FS2 coordinator and the sole owner of
   durable ingestion, leases, outbox, and maintained projections in PostgreSQL.
+- `stats-reader/` is the Go always-Ready public metrics reader. It consumes
+  only precomputed Redis/MinIO snapshots and must not gain a PostgreSQL client.
 - Keep cross-service contracts explicit: Redpanda topic names, stream names,
   schema-versioned payloads, SQL function signatures, protobuf fields, and
   HTTP routes are compatibility surfaces.

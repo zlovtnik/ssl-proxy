@@ -21,6 +21,7 @@ export const octopusMetrics = {
     'Pipeline readings refresh every 30 seconds. Missing, failed, or expired readings show as unavailable; a brief poll failure keeps the last successful reading until it expires. No example values or build-time snapshots are used.',
     'The processing rate covers the responding coordinator\'s scheduled ingest-ledger processor, averaged over five minutes. It is not the rate of all incoming streams. A successful processing check may find no work. Live cells show Warming up until the rate window and collection are ready.',
     'Historical peaks count rows in the production ingestion ledger across all paths and outcomes. They are not unique business events or a capacity benchmark. Days use UTC; weeks run Monday to Sunday. Current periods are counted so far. History is refreshed separately, with its own measurement time.',
+    'Lifetime totals and hourly throughput windows count rows in the same ingestion ledger. The last-24-hours window holds 24 measured hourly totals and the last-7-days window holds 168. A measured hour may honestly be zero; a window that was never computed stays unavailable instead of showing zeros.',
   ],
 } as const;
 

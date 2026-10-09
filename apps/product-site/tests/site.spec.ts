@@ -52,7 +52,7 @@ test('Octopus never publishes saved metrics without JavaScript', async ({ browse
     expect(await page.content()).toContain(
       'Enable JavaScript to load current metrics.',
     );
-    await expect(evidence.locator('[data-metric]')).toHaveCount(6);
+    await expect(evidence.locator('[data-metric]')).toHaveCount(10);
     for (const value of await evidence.locator('[data-metric]').all()) await expect(value).toHaveText('Unavailable');
     await expect(evidence.locator('time')).toHaveCount(0);
     await expect(page.locator('#demo, .product-demo')).toHaveCount(0);

@@ -27,6 +27,8 @@ resources:
   - atheros-sensor/networkpolicy.yaml
   # Atheros search
   - atheros-search
+  # Stats reader (precomputed public metrics)
+  - stats-reader
   # Redis
   - redis-runtime/deployment.yaml
   # PostgreSQL

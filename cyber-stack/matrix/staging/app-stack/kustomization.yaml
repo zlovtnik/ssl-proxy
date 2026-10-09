@@ -11,6 +11,7 @@ resources:
 - ../../../base/atheros-sensor/daemonset.yaml
 - ../../../base/atheros-sensor/networkpolicy.yaml
 - ../../../base/atheros-search
+- ../../../base/stats-reader
 - ../../../base/cloudflared
 - ../../../base/public-gateway
 images:

@@ -27,7 +27,7 @@ export async function onRequestGet({ request }: { request: Request }) {
     const text = await response.text();
     const looksJson =
       type?.includes('application/json') || text.trimStart().startsWith('{');
-    if (!response.ok || !looksJson || text.length > 8192) return unavailable();
+    if (!response.ok || !looksJson || text.length > 16384) return unavailable();
     return Response.json(parseStats(JSON.parse(text)), { headers });
   } catch {
     return unavailable();
