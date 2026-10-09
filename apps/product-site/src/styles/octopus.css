@@ -1,0 +1,376 @@
+/* Octopus composition only. Branding, type, spacing, and controls come from
+   site.css; this file arranges the hero motif, pipeline, audience toggle,
+   operator snapshot chrome, glossary disclosures, and motion gates. */
+
+/* Hero motif and solid accent glow */
+.octopus-hero {
+  position: relative;
+  overflow: hidden;
+}
+.octopus-hero > .hero-copy {
+  position: relative;
+  z-index: 1;
+}
+.octopus-hero > .hero-outline {
+  position: relative;
+  z-index: 1;
+}
+.hero-motif {
+  position: absolute;
+  inset: 0 0 auto auto;
+  width: min(42vw, 28rem);
+  height: auto;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 1;
+}
+.hero-motif .motif-link {
+  fill: none;
+  stroke: var(--action);
+  stroke-width: 1.25;
+  stroke-opacity: 0.18;
+  stroke-linecap: round;
+}
+.hero-motif .motif-node {
+  fill: var(--action);
+  fill-opacity: 0.22;
+}
+.hero-motif .motif-core {
+  fill-opacity: 0.35;
+}
+.octopus-hero h1 .accent {
+  color: var(--action);
+  text-shadow:
+    0 0 18px color-mix(in srgb, var(--action) 28%, transparent),
+    0 0 42px color-mix(in srgb, var(--action) 16%, transparent);
+}
+.octopus-hero .eyebrow {
+  text-shadow: 0 0 12px color-mix(in srgb, var(--action) 18%, transparent);
+}
+
+/* Pipeline: stage chips, selector, decorative track, emphasis mode */
+.octopus-pipeline {
+  display: grid;
+  gap: 1.25rem;
+}
+.pipeline-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+.pipeline-selector button {
+  min-height: 44px;
+  min-width: 6.5rem;
+  font-family: 'JetBrains Mono Variable', monospace;
+  font-size: 0.8125rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pipeline-selector button[aria-pressed='true'] {
+  border-color: var(--action);
+  border-width: 2px;
+  padding: calc(0.55rem - 1px) calc(0.8rem - 1px);
+  font-weight: 650;
+  color: var(--action);
+}
+.pipeline-track {
+  position: relative;
+  height: 2px;
+  margin: 0.25rem 0 0.5rem;
+  background: var(--divider);
+  border-radius: 1px;
+}
+.pipeline-packet {
+  position: absolute;
+  top: 50%;
+  left: 8%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--action);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--action) 45%, transparent);
+  transform: translateX(-50%);
+  transition: left 420ms ease;
+}
+.pipeline-packet[data-step='1'] {
+  left: 50%;
+}
+.pipeline-packet[data-step='2'] {
+  left: 92%;
+}
+.stage-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: 'JetBrains Mono Variable', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--action);
+  border: 1px solid color-mix(in srgb, var(--action) 35%, transparent);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  line-height: 1.4;
+}
+.workflow-step[data-emphasis='true'] {
+  border-color: color-mix(in srgb, var(--action) 55%, var(--divider));
+  box-shadow: var(--panel-shadow);
+}
+.workflow-step[data-emphasis='false'] {
+  opacity: 0.82;
+}
+.workflow-index {
+  flex-wrap: wrap;
+}
+
+/* Audience segmented toggle (progressive enhancement chrome) */
+.audience-split {
+  display: grid;
+  gap: 1.5rem;
+}
+.audience-toggle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.35rem;
+  background: var(--inset);
+  border: 1px solid var(--divider);
+  border-radius: var(--panel-radius);
+  width: fit-content;
+  max-width: 100%;
+}
+.audience-toggle button {
+  min-height: 44px;
+  min-width: 10.5rem;
+  border-color: var(--rule);
+  background: transparent;
+}
+.audience-toggle button[aria-pressed='true'] {
+  background: var(--raised);
+  border-color: var(--action);
+  color: var(--action);
+  font-weight: 650;
+}
+.audience-split.is-toggled .audience-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.audience-card[data-entering='true'] {
+  animation: audience-in 200ms ease;
+}
+@keyframes audience-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Operator snapshot widget chrome */
+.ops-widget {
+  display: grid;
+  gap: 1.5rem;
+  padding: clamp(1.25rem, 3vw, 2rem);
+  background: var(--inset);
+  border: 1px solid var(--divider);
+  border-radius: var(--panel-radius);
+  margin-block: 0.5rem 1.5rem;
+}
+.ops-widget .ops-peaks {
+  margin: 0;
+}
+.ops-widget .ops-card {
+  background: var(--raised);
+}
+.ops-widget .ops-snapshot {
+  margin: 0;
+  padding: 1.25rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--divider);
+}
+.ops-widget .ops-count {
+  font-family: 'JetBrains Mono Variable', monospace;
+  font-variant-numeric: tabular-nums;
+}
+.ops-widget .ops-metrics dd {
+  font-family: 'JetBrains Mono Variable', monospace;
+}
+.ops-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.ops-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--action);
+  flex-shrink: 0;
+}
+.ops-status[data-active='true'] .ops-status-dot {
+  animation: status-pulse 1.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ops-status[data-active='true'] .ops-status-dot {
+    animation: none;
+  }
+  .pipeline-packet {
+    transition: none;
+  }
+  .audience-card[data-entering='true'] {
+    animation: none;
+  }
+}
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+/* Glossary disclosures */
+.octopus-glossary {
+  max-width: none;
+}
+.octopus-glossary-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 2.5rem;
+  margin-top: 1.5rem;
+}
+.octopus-glossary-list details {
+  border-top: 1px solid var(--divider);
+  border-bottom: 0;
+  break-inside: avoid;
+}
+.octopus-glossary-list details:last-child,
+.octopus-glossary-list details:nth-last-child(2):nth-child(odd) {
+  border-bottom: 1px solid var(--divider);
+}
+.octopus-glossary-list summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  list-style: none;
+  min-height: 44px;
+  padding: 0.9rem 0;
+  font-weight: 550;
+}
+.octopus-glossary-list summary::-webkit-details-marker {
+  display: none;
+}
+.octopus-glossary-list summary::after {
+  content: '+';
+  color: var(--muted);
+  font-family: 'JetBrains Mono Variable', monospace;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.octopus-glossary-list details[open] summary::after {
+  content: '−';
+  color: var(--action);
+}
+.octopus-glossary-list details > p {
+  color: var(--muted);
+  font-size: 0.9375rem;
+  margin: 0 0 1rem;
+  max-width: var(--reading-width);
+}
+
+/* Motion gates: only animate when the user allows motion */
+@media (prefers-reduced-motion: no-preference) {
+  .hero-motif .motif-link {
+    stroke-dasharray: 6 14;
+    animation: motif-flow 14s linear infinite;
+  }
+  .hero-motif .motif-node {
+    animation: motif-breathe 5s ease-in-out infinite;
+  }
+  .hero-motif .motif-core {
+    animation-delay: 0.6s;
+  }
+}
+@keyframes motif-flow {
+  to {
+    stroke-dashoffset: -160;
+  }
+}
+@keyframes motif-breathe {
+  0%,
+  100% {
+    fill-opacity: 0.18;
+  }
+  50% {
+    fill-opacity: 0.32;
+  }
+}
+:root[data-motion='reduced'] .hero-motif .motif-link,
+:root[data-motion='reduced'] .hero-motif .motif-node,
+:root[data-motion='reduced'] .ops-status-dot {
+  animation: none !important;
+}
+:root[data-motion='reduced'] .pipeline-packet {
+  transition: none !important;
+}
+
+@media (max-width: 1023px) {
+  .hero-motif {
+    width: min(50vw, 18rem);
+    opacity: 0.85;
+  }
+  .octopus-glossary-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 767px) {
+  .hero-motif {
+    display: none;
+  }
+  .audience-toggle {
+    width: 100%;
+  }
+  .audience-toggle button {
+    flex: 1 1 10rem;
+    min-width: 0;
+  }
+  .pipeline-selector button {
+    flex: 1 1 6rem;
+    min-width: 0;
+  }
+}
+
+/* Forced colours: keep text, borders, and status words; drop decoration */
+@media (forced-colors: active) {
+  .hero-motif,
+  .pipeline-packet,
+  .ops-status-dot {
+    display: none !important;
+  }
+  .octopus-hero h1 .accent,
+  .octopus-hero .eyebrow {
+    text-shadow: none;
+  }
+  .pipeline-selector button[aria-pressed='true'],
+  .audience-toggle button[aria-pressed='true'],
+  .workflow-step[data-emphasis='true'] {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+  .stage-chip {
+    border-color: CanvasText;
+    color: CanvasText;
+  }
+  .ops-widget,
+  .ops-widget .ops-card,
+  .audience-toggle {
+    border-color: CanvasText;
+  }
+}

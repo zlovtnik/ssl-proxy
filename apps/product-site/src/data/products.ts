@@ -917,6 +917,7 @@ export const products = [
     workflow: [
       {
         step: 'Discover work',
+        stageLabel: 'Discovery',
         input: 'Incoming records and sync discovery requests',
         processing:
           'Consume streams with committed group offsets and durable deduplication',
@@ -924,6 +925,7 @@ export const products = [
       },
       {
         step: 'Lease and dispatch',
+        stageLabel: 'Dispatch',
         input: 'Durable jobs and pending work',
         processing:
           'Acquire leases, form batches, and dispatch configured loads',
@@ -931,6 +933,7 @@ export const products = [
       },
       {
         step: 'Record evidence',
+        stageLabel: 'Evidence',
         input: 'Consumed records and their broker coordinates',
         processing:
           'Persist ingestion evidence and maintain configured projections',

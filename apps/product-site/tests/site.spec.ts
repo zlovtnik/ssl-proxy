@@ -38,68 +38,146 @@ const tags = [
   'best-practice',
 ];
 
-test('Octopus evidence is static, dated, and linked without a synthetic demo', async ({ browser }) => {
+test('Octopus evidence is static, dated, and linked without a synthetic demo', async ({
+  browser,
+}) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
   try {
     const page = await context.newPage();
     await page.goto('http://127.0.0.1:4323/');
     await expect(page.locator('.product-card')).toHaveCount(4);
     await expect(page.locator('.preview-switch button')).toHaveCount(3);
-    await page.getByRole('link', { name: 'Review measured throughput', exact: true }).click();
+    await page
+      .getByRole('link', { name: 'Review measured throughput', exact: true })
+      .click();
     await expect(page).toHaveURL(/\/octopus\/#operational-evidence$/);
     const evidence = page.locator('#operational-evidence');
-    await expect(evidence.getByRole('heading', { name: 'Measured operational evidence' })).toBeVisible();
-    await expect(page.locator('#demo, .product-demo, astro-island')).toHaveCount(0);
+    await expect(
+      evidence.getByRole('heading', { name: 'Measured operational evidence' }),
+    ).toBeVisible();
+    await expect(page.locator('#demo, .product-demo')).toHaveCount(0);
+    await expect(
+      page.locator('.search-demo, .migrator-demo, .vpn-demo'),
+    ).toHaveCount(0);
+    // UX islands (toggle/pipeline/count-up) are allowed; synthetic demos are not.
+    // Prefer a named allowlist (wrapper data-ux=...) over a bare astro-island count.
+    await expect(page.locator('[data-ux="pipeline"]')).toHaveCount(1);
+    await expect(page.locator('[data-ux="audience-toggle"]')).toHaveCount(1);
+    await expect(page.locator('[data-ux="count-up"]').first()).toBeAttached();
+    await expect(
+      page.locator('.product-demo, .search-demo, .migrator-demo, .vpn-demo'),
+    ).toHaveCount(0);
     await expect(page.locator('.caveat')).toHaveText(octopusCaveat);
-    await expect(page.locator('.product-hero').getByRole('link', { name: 'Discuss your use case', exact: true })).toHaveAttribute('href', '/demo/#octopus');
+    await expect(
+      page
+        .locator('.product-hero')
+        .getByRole('link', { name: 'Discuss your use case', exact: true }),
+    ).toHaveAttribute('href', '/demo/#octopus');
     await expect(evidence).toContainText(octopusStats.source.definition);
     await expect(evidence).toContainText(octopusStats.source.peaks);
     await expect(evidence).toContainText('Timezone: UTC');
     const format = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
-    for (const [heading, count] of [['Peak day', octopusStats.peakRecordsDay], ['Peak week', octopusStats.peakRecordsWeek]] as const) {
-      const card = evidence.getByRole('article', { name: heading, exact: true });
+    for (const [heading, count] of [
+      ['Peak day', octopusStats.peakRecordsDay],
+      ['Peak week', octopusStats.peakRecordsWeek],
+    ] as const) {
+      const card = evidence.getByRole('article', {
+        name: heading,
+        exact: true,
+      });
       if (count === null) {
         await expect(card).toContainText('Pending first measured refresh');
         await expect(card.locator('.ops-count')).toHaveCount(0);
       } else {
         expect(Number.isSafeInteger(count) && count >= 0).toBe(true);
-        await expect(card.locator('.ops-count')).toHaveText(`${format.format(count)} records`);
+        await expect(card.locator('.ops-count')).toHaveText(
+          `${format.format(count)} records`,
+        );
       }
     }
-    const live: { ingestProcessedRatePerSec: number; pendingLedgerCount: number; lastIngestSuccessAt: string | null; backpressureActive: boolean } | null = octopusStats.liveStrip;
+    const live: {
+      ingestProcessedRatePerSec: number;
+      pendingLedgerCount: number;
+      lastIngestSuccessAt: string | null;
+      backpressureActive: boolean;
+    } | null = octopusStats.liveStrip;
     if (live) {
-      await expect(evidence.locator('.ops-snapshot')).toContainText(`${format.format(live.ingestProcessedRatePerSec)} records/s`);
-      await expect(evidence.locator('.ops-snapshot')).toContainText(`${format.format(live.pendingLedgerCount)} records`);
-      await expect(evidence.locator('.ops-snapshot')).toContainText(live.backpressureActive ? 'Active' : 'Inactive');
-      if (live.lastIngestSuccessAt) await expect(evidence.locator('.ops-snapshot time')).toHaveAttribute('datetime', live.lastIngestSuccessAt);
+      await expect(evidence.locator('.ops-snapshot')).toContainText(
+        `${format.format(live.ingestProcessedRatePerSec)} records/s`,
+      );
+      await expect(evidence.locator('.ops-snapshot')).toContainText(
+        `${format.format(live.pendingLedgerCount)} records`,
+      );
+      await expect(evidence.locator('.ops-snapshot')).toContainText(
+        live.backpressureActive ? 'Active' : 'Inactive',
+      );
+      if (live.lastIngestSuccessAt)
+        await expect(evidence.locator('.ops-snapshot time')).toHaveAttribute(
+          'datetime',
+          live.lastIngestSuccessAt,
+        );
     } else {
       await expect(evidence.locator('.ops-snapshot')).toHaveCount(0);
     }
     if (octopusStats.asOf) {
-      await expect(evidence.locator('time').last()).toHaveAttribute('datetime', octopusStats.asOf);
+      await expect(evidence.locator('time').last()).toHaveAttribute(
+        'datetime',
+        octopusStats.asOf,
+      );
       expect(Number.isNaN(Date.parse(octopusStats.asOf))).toBe(false);
       if (octopusStats.peakRecordsDay !== null) {
-        await expect(evidence.getByRole('article', { name: 'Peak day', exact: true }).locator('time')).toHaveAttribute('datetime', octopusStats.peakRecordsDayDate!);
+        await expect(
+          evidence
+            .getByRole('article', { name: 'Peak day', exact: true })
+            .locator('time'),
+        ).toHaveAttribute('datetime', octopusStats.peakRecordsDayDate!);
       }
       if (octopusStats.peakRecordsWeek !== null) {
-        const week = evidence.getByRole('article', { name: 'Peak week', exact: true });
-        await expect(week.locator('time').first()).toHaveAttribute('datetime', octopusStats.peakRecordsWeekStart!);
-        await expect(week.locator('time').last()).toHaveAttribute('datetime', octopusStats.peakRecordsWeekEnd!);
+        const week = evidence.getByRole('article', {
+          name: 'Peak week',
+          exact: true,
+        });
+        await expect(week.locator('time').first()).toHaveAttribute(
+          'datetime',
+          octopusStats.peakRecordsWeekStart!,
+        );
+        await expect(week.locator('time').last()).toHaveAttribute(
+          'datetime',
+          octopusStats.peakRecordsWeekEnd!,
+        );
         const start = Date.parse(octopusStats.peakRecordsWeekStart!);
         const end = Date.parse(octopusStats.peakRecordsWeekEnd!);
         expect(new Date(start).getUTCDay()).toBe(1);
         expect(end - start).toBe(6 * 24 * 60 * 60 * 1000);
         const asOfDay = octopusStats.asOf.slice(0, 10);
-        if (asOfDay >= octopusStats.peakRecordsWeekStart! && asOfDay <= octopusStats.peakRecordsWeekEnd!) await expect(week).toContainText('Week in progress at capture');
+        if (
+          asOfDay >= octopusStats.peakRecordsWeekStart! &&
+          asOfDay <= octopusStats.peakRecordsWeekEnd!
+        )
+          await expect(week).toContainText('Week in progress at capture');
       }
     } else {
-      await expect(evidence).toContainText('As of: pending first measured refresh.');
+      await expect(evidence).toContainText(
+        'As of: pending first measured refresh.',
+      );
       expect(octopusStats.peakRecordsDay).toBeNull();
       expect(octopusStats.peakRecordsWeek).toBeNull();
       expect(octopusStats.liveStrip).toBeNull();
     }
-    expect(await page.locator('main > section').evaluateAll((sections) => sections.map((section) => section.getAttribute('aria-labelledby')))).toEqual([
-      'hero-title', 'workflow-title', 'value-title', 'evidence-title', 'ops-title', 'terms-title', 'contact-title',
+    expect(
+      await page
+        .locator('main > section')
+        .evaluateAll((sections) =>
+          sections.map((section) => section.getAttribute('aria-labelledby')),
+        ),
+    ).toEqual([
+      'hero-title',
+      'workflow-title',
+      'value-title',
+      'evidence-title',
+      'ops-title',
+      'terms-title',
+      'contact-title',
     ]);
     await page.goto('http://127.0.0.1:4323/demo/#octopus');
     await expect(page.locator('#octopus')).toContainText('Octopus');
@@ -108,14 +186,30 @@ test('Octopus evidence is static, dated, and linked without a synthetic demo', a
   }
 });
 
-test('public routes and committed evidence expose no internal dashboard addresses', async ({ page }) => {
+test('public routes and committed evidence expose no internal dashboard addresses', async ({
+  page,
+}) => {
   const privateText = /grafana|192\.168\.1|30000|gateway\.rclabs\.uk|wiretrap/i;
   expect(JSON.stringify(octopusStats)).not.toMatch(privateText);
   for (const route of routes) {
     await page.goto(route);
-    expect(await page.locator('body').innerText(), route).not.toMatch(privateText);
-    expect(await page.locator('[href]').evaluateAll((elements) => elements.map((element) => element.getAttribute('href')).join('\n')), route).not.toMatch(privateText);
-    expect(await (await page.request.get(route)).text(), route).not.toMatch(privateText);
+    expect(await page.locator('body').innerText(), route).not.toMatch(
+      privateText,
+    );
+    expect(
+      await page
+        .locator('[href]')
+        .evaluateAll((elements) =>
+          elements.map((element) => element.getAttribute('href')).join('\n'),
+        ),
+      route,
+    ).not.toMatch(privateText);
+    // Strip Solid hydration keys (data-hk) so island ids cannot trip port scans.
+    const raw = (await (await page.request.get(route)).text()).replace(
+      /data-hk="[^"]*"/g,
+      '',
+    );
+    expect(raw, route).not.toMatch(privateText);
   }
 });
 
@@ -141,7 +235,9 @@ test('header stays visible and product samples preserve the landing layout', asy
     preview.getByRole('button', { name: 'Schema Migrator', exact: true }),
   ).toBeEnabled();
   for (const product of sampleProducts) {
-    await page.getByRole('link', { name: `Try the ${product.name} sample` }).click();
+    await page
+      .getByRole('link', { name: `Try the ${product.name} sample` })
+      .click();
     await expect(
       preview.getByRole('button', { name: product.name, exact: true }),
     ).toHaveAttribute('aria-pressed', 'true');
@@ -358,7 +454,10 @@ test('Search reviews sample sites and indicators with a keyboard', async ({
   ).toBeVisible();
   await page.getByLabel('1. Choose a monitored sample site').selectOption('0');
   await expect(
-    page.getByRole('heading', { name: 'Suspected rogue access point', exact: true }),
+    page.getByRole('heading', {
+      name: 'Suspected rogue access point',
+      exact: true,
+    }),
   ).toBeVisible();
   for (const theme of ['dark']) {
     await page.evaluate(
@@ -566,29 +665,52 @@ test('display settings controls are absent and previously saved choices still ap
 });
 
 for (const colorScheme of ['light', 'dark'] as const) {
-  test(`dark theme ignores ${colorScheme} system preference and saved themes on every route`, async ({ page }) => {
+  test(`dark theme ignores ${colorScheme} system preference and saved themes on every route`, async ({
+    page,
+  }) => {
     await page.emulateMedia({ colorScheme });
     await page.goto('/');
     for (const theme of ['light', 'system', 'dark']) {
       await page.evaluate((savedTheme) => {
-        localStorage.setItem('rclabs-reading', JSON.stringify({
-          theme: savedTheme,
-          size: 'large',
-          width: 'narrow',
-          spacing: 'comfortable',
-          motion: 'reduced',
-        }));
+        localStorage.setItem(
+          'rclabs-reading',
+          JSON.stringify({
+            theme: savedTheme,
+            size: 'large',
+            width: 'narrow',
+            spacing: 'comfortable',
+            motion: 'reduced',
+          }),
+        );
       }, theme);
       for (const route of routes) {
         await page.goto(route);
-        await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+        await expect(page.locator('html')).toHaveAttribute(
+          'data-theme',
+          'dark',
+        );
         await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
-        await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(9, 9, 9)');
+        await expect(page.locator('html')).toHaveCSS(
+          'background-color',
+          'rgb(9, 9, 9)',
+        );
         await expect(page.locator('#setting-theme')).toHaveCount(0);
-        await expect(page.locator('html')).toHaveAttribute('data-size', 'large');
-        await expect(page.locator('html')).toHaveAttribute('data-width', 'narrow');
-        await expect(page.locator('html')).toHaveAttribute('data-spacing', 'comfortable');
-        await expect(page.locator('html')).toHaveAttribute('data-motion', 'reduced');
+        await expect(page.locator('html')).toHaveAttribute(
+          'data-size',
+          'large',
+        );
+        await expect(page.locator('html')).toHaveAttribute(
+          'data-width',
+          'narrow',
+        );
+        await expect(page.locator('html')).toHaveAttribute(
+          'data-spacing',
+          'comfortable',
+        );
+        await expect(page.locator('html')).toHaveAttribute(
+          'data-motion',
+          'reduced',
+        );
       }
     }
   });
@@ -653,7 +775,10 @@ test('enhanced text contrast and control boundaries meet thresholds in the dark 
       const style = getComputedStyle(document.documentElement);
       function luminance(token: string) {
         const value = style.getPropertyValue(token).trim().slice(1);
-        const hex = value.length === 3 ? [...value].map((digit) => digit + digit).join('') : value;
+        const hex =
+          value.length === 3
+            ? [...value].map((digit) => digit + digit).join('')
+            : value;
         const rgb = [0, 2, 4]
           .map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255)
           .map((value) =>
@@ -907,7 +1032,10 @@ test('rendered text and control boundaries meet the documented targets in every 
     ];
     expect(audited.length, `${state} audited pairs`).toBeGreaterThan(30);
     for (const result of audited)
-      expect(result.ratio, `${state} ${result.kind} ${result.label}`).toBeGreaterThanOrEqual(result.target);
+      expect(
+        result.ratio,
+        `${state} ${result.kind} ${result.label}`,
+      ).toBeGreaterThanOrEqual(result.target);
   };
   for (const route of routes) {
     await page.goto(route);
@@ -927,12 +1055,22 @@ test('rendered text and control boundaries meet the documented targets in every 
       await page.setViewportSize({ width, height: 1000 });
       const state = `${route} ${width}px`;
       await audit(`${state} page`);
-      const choices = route === '/' ? sampleProducts : sampleProducts.filter((product) => product.path === route);
+      const choices =
+        route === '/'
+          ? sampleProducts
+          : sampleProducts.filter((product) => product.path === route);
       for (const product of choices) {
         if (route === '/')
-          await page.locator('.preview-switch').getByRole('button', { name: product.name, exact: true }).click();
+          await page
+            .locator('.preview-switch')
+            .getByRole('button', { name: product.name, exact: true })
+            .click();
         if (product.id === 'migrator') {
-          for (const step of await page.locator(route === '/' ? '.preview-steps button' : '.step-controls button').all()) {
+          for (const step of await page
+            .locator(
+              route === '/' ? '.preview-steps button' : '.step-controls button',
+            )
+            .all()) {
             await step.click();
             await audit(`${state} ${await step.textContent()}`);
           }
@@ -943,7 +1081,9 @@ test('rendered text and control boundaries meet the documented targets in every 
             await audit(`${state} ${await option.textContent()}`);
           }
         } else if (route === '/') {
-          const filter = page.getByLabel('Filter sample sites, indicators, and observations');
+          const filter = page.getByLabel(
+            'Filter sample sites, indicators, and observations',
+          );
           await filter.fill('no-results');
           await audit(`${state} empty search`);
           await filter.fill('');
@@ -953,7 +1093,9 @@ test('rendered text and control boundaries meet the documented targets in every 
           }
         } else {
           for (const sample of ['0', '1']) {
-            await page.getByLabel('1. Choose a monitored sample site').selectOption(sample);
+            await page
+              .getByLabel('1. Choose a monitored sample site')
+              .selectOption(sample);
             await audit(`${state} search ${sample}`);
           }
         }
@@ -962,7 +1104,9 @@ test('rendered text and control boundaries meet the documented targets in every 
   }
 });
 
-test('every route supports forced colours and reduced motion', async ({ page }) => {
+test('every route supports forced colours and reduced motion', async ({
+  page,
+}) => {
   await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
   for (const route of routes) {
     await page.goto(route);
@@ -975,10 +1119,19 @@ test('every route supports forced colours and reduced motion', async ({ page }) 
       await expect(skipLink).toHaveCSS('outline-width', '3px');
       await expect(page.locator('html')).toHaveCSS('scroll-behavior', 'auto');
       await expect(page.locator('.reading-bar')).toHaveCount(0);
-      const transitions = await page.locator('a, button, select').evaluateAll((elements) =>
-        elements.filter((element) => element.checkVisibility()).map((element) => getComputedStyle(element).transitionDuration));
+      const transitions = await page
+        .locator('a, button, select')
+        .evaluateAll((elements) =>
+          elements
+            .filter((element) => element.checkVisibility())
+            .map((element) => getComputedStyle(element).transitionDuration),
+        );
       expect(transitions.every((duration) => duration === '0s')).toBe(true);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
     }
   }
 });
@@ -1301,8 +1454,11 @@ test('homepage metadata, identity markup and technical sections ship from the mo
   // Other pages can describe their visible breadcrumbs without claiming identity.
   for (const route of routes.slice(1)) {
     await page.goto(route);
-    const schemas = await page.locator('script[type="application/ld+json"]').allTextContents();
-    for (const schema of schemas) expect(JSON.parse(schema)['@type'], route).toBe('BreadcrumbList');
+    const schemas = await page
+      .locator('script[type="application/ld+json"]')
+      .allTextContents();
+    for (const schema of schemas)
+      expect(JSON.parse(schema)['@type'], route).toBe('BreadcrumbList');
   }
 });
 
