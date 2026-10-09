@@ -57,6 +57,10 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.65rem;
+  margin: 0;
+  min-inline-size: 0;
+  border: 0;
+  padding: 0;
 }
 .pipeline-selector button {
   min-height: 44px;
@@ -138,6 +142,8 @@
   border-radius: var(--panel-radius);
   width: fit-content;
   max-width: 100%;
+  margin: 0;
+  min-inline-size: 0;
 }
 .audience-toggle button {
   min-height: 44px;

@@ -692,6 +692,10 @@ details > section {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 0.6rem;
+  margin: 0;
+  min-inline-size: 0;
+  border: 0;
+  padding: 0;
 }
 .step-controls button {
   min-width: 0;

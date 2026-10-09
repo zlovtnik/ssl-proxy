@@ -15,9 +15,8 @@ export default function MigratorDemo() {
       </div>
       <div class="demo-content demo-workspace">
         <div class="demo-inputs">
-        <div
+        <fieldset
           class="step-controls"
-          role="group"
           aria-label="Migration review steps"
         >
           <For each={migrationSteps}>
@@ -34,7 +33,7 @@ export default function MigratorDemo() {
               </button>
             )}
           </For>
-        </div>
+        </fieldset>
         </div>
         <div class="demo-output">
         <section aria-live="polite" aria-atomic="true" class="run-stage">

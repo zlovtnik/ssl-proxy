@@ -1380,17 +1380,17 @@ export const guides: readonly Guide[] = [
         examples: [
           {
             label: 'Local synthetic SQL-file comparison',
-            code: `python3 - <<'PY'
+            code: String.raw`python3 - <<'PY'
 from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-original = b"create table observations (id bigint primary key);\\n"
+original = b"create table observations (id bigint primary key);\n"
 with TemporaryDirectory() as directory:
     before = Path(directory) / "before.sql"
     after = Path(directory) / "after.sql"
     before.write_bytes(original)
-    after.write_bytes(original + b"-- review note\\n")
+    after.write_bytes(original + b"-- review note\n")
     base_hash = sha256(before.read_bytes()).hexdigest()
     compare_hash = sha256(after.read_bytes()).hexdigest()
     print("base_sha256:", base_hash)

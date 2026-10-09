@@ -23,9 +23,8 @@ export default function OctopusPipeline() {
 
   return (
     <div class="octopus-pipeline" data-ux="pipeline">
-      <div
+      <fieldset
         class="pipeline-selector"
-        role="group"
         aria-label="Pipeline stage emphasis"
         hidden={!ready()}
       >
@@ -41,7 +40,7 @@ export default function OctopusPipeline() {
             </button>
           )}
         </For>
-      </div>
+      </fieldset>
       <div class="pipeline-track" aria-hidden="true">
         <span class="pipeline-packet" data-step={active()} />
       </div>

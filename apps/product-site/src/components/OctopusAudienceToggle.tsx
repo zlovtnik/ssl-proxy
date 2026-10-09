@@ -29,9 +29,8 @@ export default function OctopusAudienceToggle() {
       data-ux="audience-toggle"
       classList={{ 'is-toggled': ready() }}
     >
-      <div
+      <fieldset
         class="audience-toggle"
-        role="group"
         aria-label="Choose audience view"
         hidden={!ready()}
       >
@@ -46,7 +45,7 @@ export default function OctopusAudienceToggle() {
             </button>
           )}
         </For>
-      </div>
+      </fieldset>
       <div class="audience-grid">
         <For each={product.audiences}>
           {(audience, index) => {

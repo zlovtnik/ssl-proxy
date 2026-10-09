@@ -68,9 +68,8 @@ export default function LandingPlayground() {
           <span class="status-dot" aria-hidden="true" /> INTERACTIVE
         </span>
       </div>
-      <div
+      <fieldset
         class="preview-switch"
-        role="group"
         aria-label="Choose a product preview"
       >
         <For each={sampleProducts}>{(item) => (
@@ -83,7 +82,7 @@ export default function LandingPlayground() {
             onClick={() => setProduct(item.id)}
           >{item.name}</button>
         )}</For>
-      </div>
+      </fieldset>
       <div class="preview-panels">
         <div
           class="preview-body preview-panel panel-migrator"
@@ -96,9 +95,8 @@ export default function LandingPlayground() {
             <span class="preview-badge">OFFLINE</span>
           </div>
           <div class="preview-layout">
-          <div
+          <fieldset
             class="preview-steps"
-            role="group"
             aria-label="Sample migration steps"
           >
             <For each={migrationSteps}>
@@ -116,7 +114,7 @@ export default function LandingPlayground() {
                 </button>
               )}
             </For>
-          </div>
+          </fieldset>
           <div class="preview-detail">
           <div class="preview-file">
             <span>{migrationSteps[step()].title}</span>
