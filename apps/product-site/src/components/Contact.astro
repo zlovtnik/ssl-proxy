@@ -3,15 +3,16 @@ import { allProducts, contact, demoLink, email } from '../data/products';
 import { ArrowUpRight } from '@lucide/astro';
 interface Props {
   product?: string;
+  intro?: { headline: readonly string[]; supporting: string };
 }
-const { product = allProducts } = Astro.props;
+const { product = allProducts, intro = contact } = Astro.props;
 ---
 
 <!--email_off-->
 <section class="contact-banner" aria-labelledby="contact-title">
   <p class="eyebrow">HAVE A USE CASE IN MIND?</p>
-  <h2 id="contact-title">{contact.headline.join(' ')}</h2>
-  <p>{contact.supporting}</p>
+  <h2 id="contact-title">{intro.headline.join(' ')}</h2>
+  <p>{intro.supporting}</p>
   <a class="button primary" href={demoLink(product)}>
     {contact.link} <ArrowUpRight size={18} aria-hidden="true" />
   </a>

@@ -65,12 +65,11 @@ panels grow naturally. No overlapping grid placement or fixed preview height
 is used.
 
 Octopus UX islands follow the same progressive-enhancement rules. Pipeline
-emphasis highlights the active stage without hiding the other two
-`.workflow-step` cards. The audience segmented control is hidden until
-hydration so both `.audience-card` blocks stack without JavaScript; with
-JavaScript the inactive card is `hidden` + `inert` + `aria-hidden`. Named
-`data-ux` wrappers (`pipeline`, `audience-toggle`, `count-up`) identify these
-islands for tests. Synthetic product demos stay forbidden on `/octopus/`.
+emphasis keeps all three workflow steps visible. Both audience cards are
+available without JavaScript; hydration enables the Engineering/Operations
+toggle using `hidden`, `inert`, and `aria-hidden`. Metrics render unavailable
+until validated runtime data arrives. No count-up animation or numeric fallback
+is permitted. Named `data-ux` wrappers identify islands for tests.
 
 Native disclosures stay in document flow. Long SQL, identifiers, and explanations
 wrap within their panel. [Layout regressions](../tests/layout.spec.ts) open
@@ -87,19 +86,16 @@ without JavaScript.
 
 [ProductPage](../src/components/ProductPage.astro) renders the common product
 page structure for Search, Migrator, and VPN / Proxy. [OctopusPage](../src/components/OctopusPage.astro)
-is the dedicated Octopus composition: hero motif and solid accent glow, pipeline
-emphasis island, audience toggle island, operator snapshot widget, and glossary
-disclosures. [ProductCards](../src/components/ProductCards.astro) serves the
-homepage and catalogue. [Layout](../src/layouts/Layout.astro) owns navigation,
-footer, and consent. [OperationalEvidence](../src/components/OperationalEvidence.astro)
-wraps peak cards and the live pipeline metrics strip in an inset operator widget
-with mono metrics, tabular numerals, and a decorative backpressure status dot.
-[OctopusOperationalStats](../src/components/OctopusOperationalStats.tsx) is a
-SolidJS island that polls `PUBLIC_OCTOPUS_STATS_URL` every 30s and updates peaks
-and the live strip in place; the committed `octopus-stats.json` serves as the
-no-JS / fetch-failure SSR fallback. [octopus.css](../src/styles/octopus.css)
-composes the same tokens for motif, pipeline, toggle, ops chrome, glossary, and
-motion gates.
+is the dedicated Octopus composition: hero, production readings and history,
+pipeline, audience views, capabilities, and glossary. [ProductCards](../src/components/ProductCards.astro)
+serves the homepage and catalogue. [Layout](../src/layouts/Layout.astro) owns shared
+navigation and consent. [OperationalEvidence](../src/components/OperationalEvidence.astro)
+places measurement definitions in a native disclosure.
+[OctopusOperationalStats](../src/components/OctopusOperationalStats.tsx) polls the
+same-origin runtime feed every 30 seconds, with separate freshness checks for
+pipeline readings and historical totals. The widget uses one inset surface,
+tabular numbers, explicit status text, and quiet dividers.
+[octopus.css](../src/styles/octopus.css) composes shared tokens.
 
 The homepage technical sections retain captioned tables, scoped headers, native
 disclosures, and labelled diagrams. Wide tables scroll inside named,

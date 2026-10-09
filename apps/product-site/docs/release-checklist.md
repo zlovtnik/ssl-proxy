@@ -28,8 +28,8 @@ appearance follow [messaging](messaging.md) and [the design system](design-syste
 - [ ] Review reading level, specialist terms, and all applicable criteria in the
       [accessibility matrix](accessibility-matrix.md).
 - [ ] Review all four product stories and their caveats against repository evidence.
-- [ ] Verify the live feed is configured (`PUBLIC_OCTOPUS_STATS_URL`) in production
-      and the metrics strip shows live data (not the build-time fallback label).
+- [ ] Verify the production runtime feed returns fresh measurements and errors
+      cannot leave old values labelled live.
 - [ ] Verify CORS from the live origin; confirm foreign origins get no CORS headers.
 - [ ] Confirm rendered pages and shipped assets contain no internal dashboard
       links, addresses, credentials, or topology.
@@ -46,7 +46,7 @@ appearance follow [messaging](messaging.md) and [the design system](design-syste
 - [ ] Verify a preview branch remains `noindex` even when it inherits production variables.
 - [ ] Inspect the sitemap and indexing status in Search Console manually after publication.
 - [ ] Verify plain email contact without JavaScript on the live origin.
-- [ ] Verify the no-JS page still shows the build-time snapshot values.
+- [ ] Verify the no-JS page shows unavailable readings and the JavaScript explanation.
 - [ ] Verify `/metrics` and `/actuator/prometheus` are not publicly routed.
 - [ ] Check social preview compatibility on the sharing platforms in use.
 - [ ] Recheck analytics consent, rejection, and withdrawal on the production build.
@@ -56,77 +56,39 @@ The Git-connected Pages configuration is recorded in [README](../README.md)
 and [wrangler.jsonc](../wrangler.jsonc). This frontend does not provision
 hosting or change Kubernetes resources.
 
-## Live feed configuration
+## Runtime metrics release checks
 
-The Octopus product page fetches live metrics from the coordinator's
-`GET /public/stats` endpoint when `PUBLIC_OCTOPUS_STATS_URL` is set at build
-time. The committed [`octopus-stats.json`](../src/data/octopus-stats.json)
-serves as the no-JS / fetch-failure fallback.
+The [Pages Function](../functions/api/octopus-stats.ts) serves
+`/api/octopus-stats` and forwards only validated public fields from the
+coordinator. Production hosts are enabled in code; preview hosts return 503.
+There is no build-time metrics configuration or saved measurement fallback.
 
-- Set `PUBLIC_OCTOPUS_STATS_URL` only in the production Pages environment.
-  Preview builds leave it unset so previews never fetch production stats.
-- The Octopus service exposes `/public/stats` via `OCTOPUS_PUBLIC_STATS_ENABLED=true`
-  and `OCTOPUS_PUBLIC_STATS_ALLOWED_ORIGINS` (CORS allowlist).
-- The Kubernetes ingress path-allowlists `/public/stats` only; `/metrics` and
-  `/actuator/prometheus` stay internal.
-- The **prod and staging** `cloudflare-edge` overlays must each include the
-  `/public/stats` rule on their real hostname. The base overlay alone is not
-  enough: those overlays replace the public `IngressRoute` wholesale.
-- `java-coordinator` NetworkPolicy must allow Traefik → 8081 (same pattern as
-  atheros-search / schema-migrator). Default-deny otherwise blocks the route.
+- Verify two real responses at least 30 seconds apart have advancing `asOf`
+  values. Counts can legitimately remain unchanged.
+- Check `peaksComputedAt` advances after the 60-second cache period.
+- Verify the public gateway targets Service port 8080, which forwards to
+  container port 8081. NetworkPolicy still allows Traefik to container port 8081.
+- Confirm `OCTOPUS_PUBLIC_STATS_ENABLED` and the allowed origins in the rendered
+  deployment. Internal metrics endpoints remain private.
+- The production allowlist includes the exact published Figma reference origin,
+  `https://palm-beauty-99316208.figma.site`, so its direct public-feed request works
+  after promotion. Unpublished Make preview origins are not allowlisted.
+- Compare displayed readings to the coordinator's collected observations.
+  Zero is valid only after successful collection. A fresh HTTP timestamp alone
+  does not prove the underlying process gauges were sampled.
+- After a restart, the live strip stays unavailable during the five-minute rate
+  window. It also becomes unavailable if required collection is over 60 seconds old.
+- Test a failed request, invalid JSON, missing fields, and stale source timestamps.
+  The page must remove the old readings and stop saying live.
+- Verify no-JavaScript output contains no measurements, and preview builds do not
+  fetch production.
+- Publish through reviewed Git changes and immutable coordinator image promotion,
+  then repeat these checks against the deployed revision.
 
-## Fallback snapshot hygiene
+The source of historical peaks is `octopus_core.ingestion_evidence.first_seen_at`
+across all paths and dispositions. The processing rate sums successful scheduled
+ledger processing counts across a full five-minute window. The last successful
+check may have processed no records; it is not evidence of fresh traffic.
 
-When the live feed is unavailable or for initial population, refresh the
-committed snapshot manually. Use the authorized operator environment and its
-existing database credentials. Do not copy credentials, internal addresses, or
-dashboard links into the site.
-
-Run both peak queries in one read-only, repeatable-read transaction:
-
-```sql
-BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
-SET LOCAL statement_timeout = '60s';
-SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC',
-               'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS as_of;
-
-SELECT date_trunc('day', first_seen_at AT TIME ZONE 'UTC')::date AS day,
-       count(*) AS records
-FROM octopus_core.ingestion_evidence
-GROUP BY 1
-ORDER BY records DESC, day ASC
-LIMIT 1;
-
-SELECT date_trunc('week', first_seen_at AT TIME ZONE 'UTC')::date AS week_start,
-       date_trunc('week', first_seen_at AT TIME ZONE 'UTC')::date + 6 AS week_end,
-       count(*) AS records
-FROM octopus_core.ingestion_evidence
-GROUP BY 1, 2
-ORDER BY records DESC, week_start ASC
-LIMIT 1;
-COMMIT;
-```
-
-The source is always `octopus_core.ingestion_evidence` / `first_seen_at`, with
-no operation, disposition, or path filter. Do not substitute a process counter.
-
-Read these operator metrics at the same `asOf` evaluation time:
-
-| JSON field | Prometheus expression | Conversion |
-| --- | --- | --- |
-| `ingestProcessedRatePerSec` | `octopus:ingest_processed:rate5m` | Finite nonnegative number; records per second averaged over five minutes |
-| `pendingLedgerCount` | `octopus:pending_ledger:current` | Nonnegative integer |
-| `backpressureActive` | `max(coordinator_backpressure_active_value)` | 1 is true; 0 is false; missing is not false |
-| `lastIngestSuccessAt` | `max(coordinator_ingest_ledger_last_success_timestamp_seconds_value)` | Positive Unix seconds to ISO UTC; missing or zero becomes null |
-
-Never infer zero from missing data. If rate, pending count, or
-backpressure is unavailable, leave `liveStrip` null. If only last success is
-unavailable, use null for that field; the page labels it unavailable.
-
-Paste measured values and UTC dates into
-[`octopus-stats.json`](../src/data/octopus-stats.json). Keep numbers numeric,
-use null for unmeasured peaks and their dates, and leave `asOf` null before the
-first capture. Build, run the browser tests, and commit the snapshot.
-
-Screen-reader, participant, and field evaluation remain separate from automated
-tests. See [WCAG 2.2](https://www.w3.org/TR/WCAG22/) for the evaluation criteria.
+Screen-reader and participant evaluation remain separate from automated tests.
+See [WCAG 2.2](https://www.w3.org/TR/WCAG22/) for evaluation criteria.

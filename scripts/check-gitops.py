@@ -1371,7 +1371,7 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
         (
             f"Host(`{hostname}`) && Path(`/public/stats`)",
             "ssl-proxy-java-coordinator",
-            8081,
+            8080,
         ),
     ]
     actual_routes: list[tuple[str, str, Any]] = []

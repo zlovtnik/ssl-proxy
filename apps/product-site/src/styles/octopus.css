@@ -1,6 +1,6 @@
 /* Octopus composition only. Branding, type, spacing, and controls come from
    site.css; this file arranges the hero motif, pipeline, audience toggle,
-   operator snapshot chrome, glossary disclosures, and motion gates. */
+   live metrics, glossary disclosures, and motion gates. */
 
 /* Hero motif and solid accent glow */
 .octopus-hero {
@@ -174,7 +174,7 @@
   }
 }
 
-/* Operator snapshot widget chrome */
+/* Live readings and historical totals share one quiet, scannable panel. */
 .ops-widget {
   display: grid;
   gap: 1.5rem;
@@ -188,13 +188,56 @@
   margin: 0;
 }
 .ops-widget .ops-card {
-  background: var(--raised);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
 }
 .ops-widget .ops-snapshot {
   margin: 0;
-  padding: 1.25rem 0 0;
+  padding: 0;
   border: 0;
+}
+.ops-feed-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+}
+.ops-feed-header p {
+  margin: 0;
+}
+.ops-history {
   border-top: 1px solid var(--divider);
+  padding-top: 1.5rem;
+}
+.ops-history h3 {
+  margin-bottom: 1.5rem;
+}
+.ops-history h4 {
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 500;
+  margin: 0;
+}
+.ops-widget .ops-metrics {
+  margin-block: 1.5rem 0;
+  gap: 2rem;
+}
+.ops-widget .ops-metrics > div {
+  min-width: 0;
+}
+.ops-widget .ops-metrics dd {
+  font-size: clamp(1rem, 2vw, 1.25rem);
+  overflow-wrap: anywhere;
+}
+.ops-widget .ops-metrics .fine-print {
+  margin-top: 0.5rem;
+}
+.ops-method p {
+  max-width: var(--reading-width);
+  color: var(--muted);
 }
 .ops-widget .ops-count {
   font-family: 'JetBrains Mono Variable', monospace;
@@ -212,8 +255,11 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--action);
+  background: var(--muted);
   flex-shrink: 0;
+}
+.ops-status-dot[data-live='true'] {
+  background: var(--action);
 }
 .ops-status[data-active='true'] .ops-status-dot {
   animation: status-pulse 1.8s ease-in-out infinite;

@@ -9,7 +9,25 @@ export const migratorCaveat =
 export const vpnCaveat =
   'Traffic categories are heuristics. Routing, inspection, and policy outcomes depend on deployment configuration. This synthetic sample establishes no VPN connection and sends no traffic.';
 export const octopusCaveat =
-  'Peaks are historical ingest-ledger counts, not a throughput limit, capacity forecast, savings, or latency claim. The metrics strip reflects live production data when the feed is configured.';
+  'Delivery can repeat. Octopus records progress and uses durable deduplication to handle replay. Records outside the configured streams are not covered.';
+
+export const octopusMetrics = {
+  label: 'PRODUCTION ACTIVITY',
+  title: 'See the pipeline as it runs.',
+  summary: 'Current processing, queued work, and recorded history from the production coordinator.',
+  noScript: 'Enable JavaScript to load current metrics. No saved measurements are shown.',
+  methodTitle: 'What these numbers mean',
+  method: [
+    'Pipeline readings refresh every 30 seconds. Missing, failed, or expired readings show as unavailable. No example values or build-time snapshots are used.',
+    'The processing rate covers the responding coordinator\'s scheduled ingest-ledger processor, averaged over five minutes. It is not the rate of all incoming streams. A successful processing check may find no work. Readings are unavailable while the rate window warms up or collection is stale.',
+    'Historical peaks count rows in the production ingestion ledger across all paths and outcomes. They are not unique business events or a capacity benchmark. Days use UTC; weeks run Monday to Sunday. Current periods are counted so far. History is refreshed separately, with its own measurement time.',
+  ],
+} as const;
+
+export const octopusContact = {
+  headline: ['Discuss your', 'pipeline.'],
+  supporting: 'Tell us what needs to move, where progress gets hard to see, and which operational constraints matter.',
+} as const;
 
 export const home = {
   // Google rewrites and truncates titles; this is an editorial target, not a
@@ -864,114 +882,115 @@ export const products = [
     name: 'Octopus',
     path: '/octopus/',
     homeTitle: 'Octopus',
-    label: 'DURABLE SYNC COORDINATOR',
-    headline: ['Coordinate the work.', 'Count the evidence.'],
+    label: 'OCTOPUS / DATA PIPELINE COORDINATOR',
+    headline: ['Keep data moving.', 'Keep track of every step.'],
     summary:
-      'Octopus is a Scala coordinator on the JVM for durable ingestion and sync work. It discovers records, leases and dispatches work, and records ingestion evidence in PostgreSQL.',
+      'Octopus takes incoming events through queued jobs, batches, and database loads. It stores progress in PostgreSQL so your team can see what ran, what is waiting, and where to investigate.',
     problem:
-      'Platform and data teams who need to follow work from incoming streams through durable job state to recorded ingestion evidence.',
-    promise: 'Every processed record leaves a ledger row you can count.',
+      'For platform and data teams running event pipelines that need to recover from failures and account for repeated delivery.',
+    promise: 'A clear record of the work moving through your pipeline.',
     primaryCta: {
-      label: 'Review measured throughput',
+      label: 'View live metrics',
       href: '#operational-evidence',
     },
     secondaryCta: { label: 'Discuss your use case', href: '/demo/#octopus' },
     sections: {
       workflow: {
         ...workflowSection,
-        title: 'From incoming streams to durable evidence.',
-        note: 'Follow discovery, coordinated work, and the ledger that records ingestion across paths.',
+        title: 'From incoming event to recorded result.',
+        note: 'Three stages connect the stream to the work it triggers.',
       },
       value: {
         ...audienceSection,
-        title: 'Two ways to assess Octopus.',
+        label: 'BUILT FOR YOUR TEAM',
+        title: 'Understand the pipeline. Run it with context.',
+        note: 'Follow an event through processing or check the state of queued work.',
       },
       evidence: {
         ...evidenceSection,
-        caveatLabel: 'MEASUREMENT / OPERATING BOUNDARY',
+        label: 'UNDER THE HOOD',
+        title: 'Progress that survives a restart.',
+        note: 'Built in Scala with Cats Effect and FS2, using Redpanda streams and PostgreSQL for persistent state.',
+        caveatLabel: 'DELIVERY AND RECOVERY',
         footnote:
-          'Published measurements come from the production ingest ledger and coordinator pipeline metrics. They describe recorded activity under that deployment configuration.',
+          'Consumer offsets, job state, and load results give operators a place to start when work stalls.',
       },
-      glossary: glossarySection,
+      glossary: { label: 'QUICK REFERENCE', title: 'The terms behind the pipeline.' },
     },
     audiences: [
       {
         id: 'technical',
-        title: 'For technical users',
-        proposition: 'Trace ingestion through durable state.',
+        title: 'For engineers',
+        proposition: 'Trace a record from stream to result.',
         points: [
-          'Inspect committed consumer offsets and ingestion evidence by consumer group, topic, partition, and offset.',
-          'Coordinate deduplication, leases, batching, and load outcomes through PostgreSQL-backed state.',
+          'Find the consumer group, topic, partition, and offset behind an ingestion record.',
+          'Follow deduplication, job claims, batches, and database load results in persistent state.',
         ],
       },
       {
         id: 'buyers',
-        title: 'For buyers and operators',
-        proposition: 'Evaluate operations with a defined count.',
+        title: 'For operators',
+        proposition: 'See what is moving and what is waiting.',
         points: [
-          'Review historical peak day and week counts with their source and UTC boundaries.',
-          'Read the pending ledger, ingest rate, and last ingest success from live production metrics.',
+          'Check processing rate, queued records, and whether intake has paused to let the backlog drain.',
+          'Compare recorded activity by day and week, with the measurement time visible.',
         ],
       },
     ],
     workflow: [
       {
-        step: 'Discover work',
-        stageLabel: 'Discovery',
-        input: 'Incoming records and sync discovery requests',
+        step: 'Receive events',
+        stageLabel: 'Receive',
+        input: 'Events and requests from configured streams',
         processing:
-          'Consume streams with committed group offsets and durable deduplication',
-        output: 'Recorded work available for coordination',
+          'Read from saved offsets and check for repeated delivery',
+        output: 'Recorded events ready for processing',
       },
       {
-        step: 'Lease and dispatch',
-        stageLabel: 'Dispatch',
-        input: 'Durable jobs and pending work',
+        step: 'Coordinate jobs',
+        stageLabel: 'Process',
+        input: 'Queued records and jobs',
         processing:
-          'Acquire leases, form batches, and dispatch configured loads',
-        output: 'Tracked jobs and load outcomes',
+          'Claim work, form batches, and dispatch database loads',
+        output: 'Tracked jobs with load results',
       },
       {
-        step: 'Record evidence',
-        stageLabel: 'Evidence',
-        input: 'Consumed records and their broker coordinates',
+        step: 'Record outcomes',
+        stageLabel: 'Record',
+        input: 'Processing results and source offsets',
         processing:
-          'Persist ingestion evidence and maintain configured projections',
-        output: 'Durable ledger rows for operational review and counting',
+          'Save ingestion history and update configured data views',
+        output: 'A persistent record operators can inspect',
       },
     ],
     caveat: octopusCaveat,
     highlights: [
-      ['Discover work', 'Bring incoming streams into durable coordination.'],
-      ['Coordinate dispatch', 'Track leases, batches, and load outcomes.'],
-      ['Count evidence', 'Review historical ledger counts with provenance.'],
+      ['Receive', 'Read events from configured streams.'],
+      ['Coordinate', 'Claim jobs, build batches, and track loads.'],
+      ['Recover', 'Resume from saved progress and handle replay.'],
     ],
     features: [
       [
-        'Durable ingestion',
-        'PostgreSQL stores ingestion evidence keyed by consumer group, topic, partition, and offset. Repeated delivery preserves the original first-seen time.',
+        'Know where a record came from',
+        'Each ingestion record keeps its consumer group, topic, partition, and offset. Replayed records keep their original first-seen time.',
       ],
       [
-        'At-least-once delivery',
-        'Consumers resume from committed group offsets. Durable deduplication accounts for repeated delivery; new groups start from the earliest retained records.',
+        'Resume from saved progress',
+        'Consumers restart from committed offsets. Deduplication handles repeated delivery; new groups begin at the earliest records still retained.',
       ],
       [
-        'Leases and dispatch',
-        'Coordinator-owned job state, leases, batches, and outbox records track work and its load outcomes.',
+        'Keep track of work in flight',
+        'Time-limited claims coordinate workers. Stored jobs, batches, and outgoing messages preserve the state of each load.',
       ],
       [
-        'Maintained projections',
-        'Octopus maintains PostgreSQL projections and derives alerts. Atheros Search owns embedding job processing through its worker pool.',
-      ],
-      [
-        'Measured ledger history',
-        'Peak day and week counts use durable ingestion evidence across ingest paths. Process restarts do not reset these ledger rows.',
+        'Maintain the data used downstream',
+        'Octopus updates PostgreSQL data views and derives alerts. Atheros Search runs the separate workers that create embeddings.',
       ],
     ],
     glossary: [
       [
         'Ingest ledger',
-        'Durable evidence of consumed records, identified by consumer group, topic, partition, and offset. Counts include all recorded dispositions and are not a count of unique business events.',
+        'A stored record of consumed events and their outcomes, identified by consumer group, topic, partition, and offset.',
       ],
       ['Lease', 'A time-bounded claim on work used to coordinate processing.'],
       ['Outbox', 'Durable records of messages waiting for dispatch.'],

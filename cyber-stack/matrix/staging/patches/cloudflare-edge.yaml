@@ -45,4 +45,4 @@ spec:
       match: Host(`staging-gateway.rclabs.uk`) && Path(`/public/stats`)
       priority: 150
       middlewares: [{name: ssl-proxy-public-security-headers}, {name: ssl-proxy-public-rate-limit}]
-      services: [{kind: Service, name: ssl-proxy-java-coordinator, port: 8081, scheme: http}]
+      services: [{kind: Service, name: ssl-proxy-java-coordinator, port: 8080, scheme: http}]

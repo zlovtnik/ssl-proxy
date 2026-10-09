@@ -8,7 +8,7 @@ import { Check } from 'lucide-solid';
 import { getProduct } from '../data/products';
 
 const product = getProduct('octopus');
-const labels = ['I am an Engineer', 'I am an Operator'] as const;
+const labels = ['Engineering', 'Operations'] as const;
 
 export default function OctopusAudienceToggle() {
   const [active, setActive] = createSignal(0);

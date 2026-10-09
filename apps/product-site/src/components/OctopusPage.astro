@@ -7,7 +7,7 @@ import OperationalEvidence from './OperationalEvidence.astro';
 import OctopusHeroMotif from './OctopusHeroMotif.astro';
 import OctopusPipeline from './OctopusPipeline';
 import OctopusAudienceToggle from './OctopusAudienceToggle';
-import { getProduct } from '../data/products';
+import { getProduct, octopusContact } from '../data/products';
 import '../styles/octopus.css';
 
 const product = getProduct('octopus');
@@ -63,6 +63,8 @@ const product = getProduct('octopus');
     </div>
   </section>
 
+  <OperationalEvidence />
+
   <section class="section" aria-labelledby="workflow-title">
     <div class="section-heading">
       <p class="eyebrow">{product.sections.workflow.label}</p>
@@ -107,8 +109,6 @@ const product = getProduct('octopus');
     </div>
   </section>
 
-  <OperationalEvidence />
-
   <section
     class="section glossary octopus-glossary"
     aria-labelledby="terms-title"
@@ -125,5 +125,5 @@ const product = getProduct('octopus');
     </div>
   </section>
 
-  <Contact product={product.name} />
+  <Contact product={product.name} intro={octopusContact} />
 </Layout>

@@ -1,13 +1,38 @@
 # Local validation results
 
-This record covers the three-product site and technical guides: the shared
+This record covers the four-product site and technical guides: the shared
 RCLabs dark/green visual system, product catalogue, natural-height demos and
 disclosures, and search routing. No accessibility conformance claim is made.
 
-## Automated checks
+## 2026-10-09: runtime metrics and Octopus copy
 
-Last run: 2026-10-08 (Octopus landing redesign). Re-run these after every theme
-or layout change and replace the dated entries with new evidence:
+- `npm run build`: passed with no type errors, warnings, or hints; 17 pages built.
+- Runtime response validation and Pages proxy tests: two passed. These execute
+  without a browser and verify malformed, missing, stale, and private fields.
+- Octopus backend: 27 focused tests passed. A separate PostgreSQL Testcontainers
+  test passed, executing the real day/week queries across UTC boundaries.
+- GitOps and manifest regression checks: 67 tests passed; `make gitops-check`
+  rendered and validated the canonical Kustomize/Argo CD surfaces.
+- `python3 scripts/check-docs.py`: passed after documentation changes.
+- Full `npm test` and local visual review remain pending: the sandbox prevented
+  the preview server from listening, and automatic approval review could not
+  complete because of an account usage limit. Existing browser tests are not
+  evidence for the revised local page until rerun.
+- The updated Figma Make reference was visually inspected. Its failed-feed state
+  displays unavailable values without the previous saved numbers. This does not
+  substitute for local Astro/Solid browser verification.
+- Wiretrap's public stats route returned 404; the direct service returned 500
+  with PostgreSQL SQLSTATE 42883 on the week query. Processing-check timestamps
+  advanced. A later readiness check reported PostgreSQL UP and processors DOWN,
+  so production rollout also needs processor-health verification.
+
+Build and test commands regenerated ignored local build outputs. No runtime
+measurements are committed. These changes are not yet promoted to production.
+
+## Prior automated checks
+
+Prior run: 2026-10-08 (Octopus landing redesign). These results describe that
+earlier revision and do not verify the 2026-10-09 changes:
 
 - `npm run build`: passed; `astro check` clean and 17 pages built, including the
   dedicated `OctopusPage` composition at `/octopus/`.

@@ -26,18 +26,15 @@ performance results or customer adoption.
 | --- | --- | --- |
 | Durable ingest evidence, deduplication, and original first-seen time | [Ingestion SQL](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/sql/IngestionSql.scala), [ingestion store](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/PostgresIngestionStore.scala) | Evidence keys include consumer group, topic, partition, and offset; counts include all dispositions, not unique business events |
 | Leases, batches, dispatch, and outbox | [Batch dispatch](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/dispatch/BatchDispatchService.scala), [outbox store](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/PostgresOutboxStore.scala), [Octopus documentation](../../../services/octopus/README.md) | Mechanisms do not establish capacity, latency, savings, or uptime |
-| Measured peak day and week | [OperationalStatsService](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/observability/OperationalStatsService.scala), [peak queries](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/sql/IngestionSql.scala), [fallback snapshot](../src/data/octopus-stats.json) | Highest ledger counts by first_seen_at in UTC day / Monday-Sunday week; current periods are partial and counts cover recorded ledger history; 60s cached aggregates |
-| Live ingest rate, pending ledger, last success, and backpressure | [CoordinatorMetrics](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/observability/CoordinatorMetrics.scala), [`/public/stats` endpoint](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/http/PublicStatsRoutes.scala) | Live production metrics when the feed is configured; process counters cannot establish historical peaks |
+| Measured peak day and week | [OperationalStatsService](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/observability/OperationalStatsService.scala), [peak queries](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/sql/IngestionSql.scala) | UTC ledger counts; 60-second aggregate cache; failures never republish expired peaks |
+| Live processing, backlog, checks, and intake control | [CoordinatorMetrics](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/observability/CoordinatorMetrics.scala), [public endpoint](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/http/PublicStatsRoutes.scala) | Process readings cover the responding coordinator's scheduled ledger processor; a full five-minute window and recent collection are required |
+| Runtime-only display | [Pages proxy](../functions/api/octopus-stats.ts), [response validation](../src/data/operational-stats.ts), [browser regression tests](../tests/operational-stats.spec.ts) | No saved measurements; failed or stale readings show unavailable |
 
-The 2026-10-08T23:54:52Z capture used a single read-only, repeatable-read
-transaction: 10,077,299 ledger rows, with the earliest `first_seen_at` at
-2026-10-06T15:43:50.915461Z. Peak day: 6,048,436 on 2026-10-07. Peak week:
-10,077,299 for 2026-10-05 through 2026-10-11, still in progress at capture.
-All four metrics were evaluated at that same capture time: ingest rate 0
-records/s, pending ledger 0, backpressure 0, last-success Unix time 1791503684
-(2026-10-08T23:54:44Z). Zeros are returned measurements, not missing-data defaults.
-The unsuffixed last-success metric was absent; the deployed `_value` series
-provided the timestamp. These counts cover the recorded ledger history only.
+Production inspection on 2026-10-09 found a public route pointing to container
+port 8081 instead of Service port 8080 and a PostgreSQL week query failing with
+SQLSTATE 42883. The coordinator's internal processing-check timestamps advanced,
+confirming ongoing collection independently of the broken public feed.
+These findings motivate the route, query, polling, and freshness regressions.
 
 ## Evaluation boundaries
 

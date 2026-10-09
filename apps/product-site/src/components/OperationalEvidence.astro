@@ -1,38 +1,6 @@
 ---
-import snapshot from '../data/octopus-stats.json';
 import OctopusOperationalStats from './OctopusOperationalStats';
-
-interface Stats {
-  asOf: string | null;
-  source: {
-    peaks: string;
-    liveStrip: string;
-    definition: string;
-    timezone: string;
-  };
-  peakRecordsDay: number | null;
-  peakRecordsDayDate: string | null;
-  peakRecordsWeek: number | null;
-  peakRecordsWeekStart: string | null;
-  peakRecordsWeekEnd: string | null;
-  liveStrip: {
-    ingestProcessedRatePerSec: number;
-    pendingLedgerCount: number;
-    lastIngestSuccessAt: string | null;
-    backpressureActive: boolean;
-  } | null;
-}
-interface Props {
-  stats?: Stats;
-}
-const { stats = snapshot } = Astro.props;
-const statsUrl = import.meta.env.PUBLIC_OCTOPUS_STATS_URL as string | undefined;
-const hasDay =
-  stats.peakRecordsDay !== null && stats.peakRecordsDayDate !== null;
-const hasWeek =
-  stats.peakRecordsWeek !== null &&
-  stats.peakRecordsWeekStart !== null &&
-  stats.peakRecordsWeekEnd !== null;
+import { octopusMetrics } from '../data/products';
 ---
 
 <section
@@ -41,30 +9,18 @@ const hasWeek =
   aria-labelledby="ops-title"
 >
   <div class="section-heading">
-    <h2 id="ops-title">Measured operational evidence</h2>
-    <p>
-      All-time peak ledger counts across ingest paths from production records.
-    </p>
+    <p class="eyebrow">{octopusMetrics.label}</p>
+    <h2 id="ops-title">{octopusMetrics.title}</h2>
+    <p>{octopusMetrics.summary}</p>
   </div>
-  {(!hasDay || !hasWeek) && (
-    <p class="fine-print">Numbers pending first measured refresh.</p>
-  )}
-  <OctopusOperationalStats
-    client:visible
-    initial={{
-      asOf: stats.asOf ?? '',
-      peaksComputedAt: null,
-      peakRecordsDay: stats.peakRecordsDay,
-      peakRecordsDayDate: stats.peakRecordsDayDate,
-      peakRecordsWeek: stats.peakRecordsWeek,
-      peakRecordsWeekStart: stats.peakRecordsWeekStart,
-      peakRecordsWeekEnd: stats.peakRecordsWeekEnd,
-      liveStrip: stats.liveStrip,
-    }}
-    statsUrl={statsUrl}
-  />
-  <p class="fine-print">Source: {stats.source.peaks}.</p>
-  <p class="fine-print">
-    {stats.source.definition} Timezone: {stats.source.timezone}.
-  </p>
+  <OctopusOperationalStats client:load />
+  <noscript>
+    <p>{octopusMetrics.noScript}</p>
+  </noscript>
+  <details class="ops-method">
+    <summary>{octopusMetrics.methodTitle}</summary>
+    {octopusMetrics.method.map((paragraph) => (
+      <p>{paragraph}</p>
+    ))}
+  </details>
 </section>

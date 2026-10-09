@@ -17,20 +17,17 @@ statements, workflow steps, caveats, or contact labels.
 | Atheros Search | Review wireless indicators with monitored-site context and supporting observations. | Explore the synthetic site review. |
 | Schema Migrator | Inspect ordered SQL changes, validation, and run records before execution. | Explore the synthetic change review. |
 | RCLabs VPN / Proxy | Inspect WireGuard ingress, transparent-proxy classification, and audit publishing. | Explore the synthetic traffic review. |
-| Octopus | Coordinate durable ingestion and inspect historical ledger counts with provenance. | Review measured throughput. |
+| Octopus | Follow incoming events through jobs and loads, with live readings and recorded history. | View live metrics. |
 
 The catalogue at `/products/` compares all four. The homepage playground runs
-one of three synthetic samples at a time. Their product pages place the full
-sample below the introductory hero. Octopus has no demo island. Its page uses
-UX islands only for stage emphasis, audience framing, optional count-up
-presentation, and the operational-evidence widget. That widget polls live
-production metrics when `PUBLIC_OCTOPUS_STATS_URL` is set at build time;
-otherwise it shows the dated `octopus-stats.json` snapshot and must label it as
-the build-time fallback, never as live.
-The operator snapshot section follows capability evidence and precedes the
-glossary. Pipeline short labels (`Discovery`, `Dispatch`, `Evidence`) are
-model-owned `stageLabel` values. Toggle labels (`I am an Engineer`,
-`I am an Operator`) are UI chrome; the card audience statements stay in the model.
+one of three synthetic samples at a time. Octopus has no synthetic demo.
+Its production activity section follows the hero, with current readings before
+historical peaks and a disclosure for measurement definitions.
+The same-origin runtime feed refreshes every 30 seconds. Never embed measurements
+in the build. Loading, unavailable, stale, and live states must be distinct;
+failed requests immediately remove old readings. No-JavaScript rendering
+shows unavailable values. Pipeline and audience controls progressively enhance
+static product copy.
 
 The six technical guides under `/guides/` explain separate investigation and
 migration questions with repository-backed mechanisms and labelled examples.
@@ -39,21 +36,18 @@ the homepage introduces the topics and links to the complete guides.
 
 ## Evidence and language
 
-Use `interactive sample`, never `live sample`. Every demonstration uses
-synthetic fixtures in the browser. There is no production connection, account,
-or credential on this site.
+Use `interactive sample`, never `live sample`, for the synthetic demos.
+Those demos run only in the browser. Octopus separately reads public production
+metrics without credentials or personal data.
 
-Measured operational evidence needs a documented source, definition, UTC
-boundaries, and visible as-of time. Octopus peaks count rows in
-`octopus_core.ingestion_evidence` by `first_seen_at`, across all ingest paths
-and dispositions. They are ledger counts, not unique business events or a
-throughput benchmark. A current day or week is counted only so far. Describe
-the metrics strip as live production data when the feed is configured;
-otherwise label it as a dated published snapshot. Never present the snapshot
-as live when the feed is not updating.
-Never link internal dashboards or publish their addresses or topology in
-page content, rendered JSON fields, or bundled assets. Never fabricate numbers;
-null peaks show a pending-refresh note and a null strip is omitted.
+Historical peaks count rows in `octopus_core.ingestion_evidence` by
+`first_seen_at`, across all ingest paths and dispositions. They are not unique
+business events or a capacity benchmark. UTC days and Monday-Sunday weeks include
+the current period so far. Show their own computation time, separately from the
+live response time. The processing rate describes the responding coordinator's
+scheduled ledger processor, not every stream; a successful check can find no work.
+Require fresh observations before displaying zero or inactive. Never link internal
+dashboards or publish credentials, topology, or extra upstream JSON fields.
 
 Describe Search heuristics as indicators for analyst review. Atheros Sensor
 uses monitor-mode capture on configured Wi-Fi channels; say `monitored site`,
@@ -71,10 +65,9 @@ Keep these statements in the model, product page, and relevant sample:
   not back up database data. The public demonstration executes no SQL.
 - **VPN / Proxy:** Classification is an operator review aid. It does not prove
   intent, prevent a connection, or cover traffic outside the configured path.
-- **Octopus:** Peaks are historical ledger counts, not a throughput limit,
-  capacity forecast, savings, or latency claim. The metrics strip reflects live
-  production data when the feed is configured. Keep this caveat beside the
-  measured evidence.
+- **Octopus:** Delivery may repeat; saved progress and deduplication support replay.
+  Coverage is limited to configured streams. Keep measurement definitions beside
+  the production activity section in a disclosure.
 
 ## Contact
 

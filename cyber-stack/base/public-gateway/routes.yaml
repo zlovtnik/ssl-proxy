@@ -125,7 +125,7 @@ spec:
       services:
         - kind: Service
           name: ssl-proxy-java-coordinator
-          port: 8081
+          port: 8080
           scheme: http
   tls:
     store:

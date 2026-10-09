@@ -1,197 +1,220 @@
-/**
- * Live operational stats island. Fetches from PUBLIC_OCTOPUS_STATS_URL every
- * 30s and updates peak cards + live strip in place. Falls back to SSR values
- * when the URL is unset, fetch fails, or JS is disabled.
- */
-import { createSignal, onMount, onCleanup, For, Show } from 'solid-js';
-
-interface LiveStrip {
-  ingestProcessedRatePerSec: number;
-  pendingLedgerCount: number;
-  lastIngestSuccessAt: string | null;
-  backpressureActive: boolean;
-}
-
-interface Stats {
-  asOf: string;
-  peaksComputedAt?: string | null;
-  peakRecordsDay: number | null;
-  peakRecordsDayDate: string | null;
-  peakRecordsWeek: number | null;
-  peakRecordsWeekStart: string | null;
-  peakRecordsWeekEnd: string | null;
-  liveStrip: LiveStrip | null;
-}
+import { createSignal, onMount, onCleanup, Show } from 'solid-js';
+import {
+  isFresh,
+  maxPeaksAgeMs,
+  maxStatsAgeMs,
+  parseStats,
+  type Stats,
+} from '../data/operational-stats';
 
 const number = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
+const rate = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 3 });
 const dayFmt = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
   month: 'short',
   year: 'numeric',
   timeZone: 'UTC',
 });
-
+const timeFmt = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  timeZone: 'UTC',
+});
 const date = (v: string) => dayFmt.format(new Date(v));
-const timestamp = (v: string) => `${v.replace('T', ' ').replace('Z', '')} UTC`;
+const timestamp = (v: string) =>
+  `${date(v)}, ${timeFmt.format(new Date(v))} UTC`;
 
-function motionReduced() {
-  return (
-    typeof window !== 'undefined' &&
-    (window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
-      document.documentElement.dataset.motion === 'reduced')
+export default function OctopusOperationalStats() {
+  const [stats, setStats] = createSignal<Stats | null>(null);
+  const [state, setState] = createSignal<'loading' | 'ready' | 'unavailable'>(
+    'loading',
   );
-}
-
-export default function OctopusOperationalStats(props: {
-  initial: Stats;
-  statsUrl?: string;
-  pollMs?: number;
-}) {
-  const [stats, setStats] = createSignal<Stats>(props.initial);
-  const [live, setLive] = createSignal(false);
+  const [now, setNow] = createSignal(Date.now());
+  const fresh = () =>
+    state() === 'ready' &&
+    stats() !== null &&
+    isFresh(stats()!.asOf, now(), maxStatsAgeMs);
+  const live = () => (fresh() ? stats()!.liveStrip : null);
+  const peaks = () =>
+    fresh() &&
+    stats()!.peaksComputedAt !== null &&
+    isFresh(stats()!.peaksComputedAt!, now(), maxPeaksAgeMs);
+  const weekInProgress = () =>
+    peaks() &&
+    stats()!.peakRecordsWeekStart !== null &&
+    stats()!.asOf.slice(0, 10) >= stats()!.peakRecordsWeekStart! &&
+    stats()!.asOf.slice(0, 10) <= stats()!.peakRecordsWeekEnd!;
 
   onMount(() => {
-    if (!props.statsUrl) return;
-    let aborted = false;
-    let timer: ReturnType<typeof setInterval> | undefined;
-
-    const fetchStats = async () => {
+    let disposed = false;
+    let controller: AbortController | undefined;
+    const refresh = async () => {
+      if (controller) return;
+      controller = new AbortController();
+      const timeout = setTimeout(() => controller?.abort(), 10_000);
       try {
-        const res = await fetch(props.statsUrl!, {
-          signal: AbortSignal.timeout(10_000),
+        const response = await fetch('/api/octopus-stats', {
+          signal: controller.signal,
+          cache: 'no-store',
+          headers: { Accept: 'application/json' },
         });
-        if (!res.ok || aborted) return;
-        const data: Stats = await res.json();
-        if (!aborted) {
+        if (!response.ok) throw new Error('Metrics unavailable');
+        const data = parseStats(await response.json());
+        if (!disposed) {
+          setNow(Date.now());
           setStats(data);
-          setLive(true);
+          setState('ready');
         }
       } catch {
-        // keep SSR values on failure
+        if (!disposed) {
+          setStats(null);
+          setState('unavailable');
+        }
+      } finally {
+        clearTimeout(timeout);
+        controller = undefined;
       }
     };
-
-    fetchStats();
-    timer = setInterval(() => {
-      if (!document.hidden) fetchStats();
-    }, props.pollMs ?? 30_000);
-
-    const onVisibility = () => {
-      if (!document.hidden) fetchStats();
+    void refresh();
+    const poll = setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, 30_000);
+    const age = setInterval(() => setNow(Date.now()), 1_000);
+    const visible = () => {
+      setNow(Date.now());
+      if (!document.hidden) void refresh();
     };
-    document.addEventListener('visibilitychange', onVisibility);
-
+    document.addEventListener('visibilitychange', visible);
     onCleanup(() => {
-      aborted = true;
-      if (timer) clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisibility);
+      disposed = true;
+      controller?.abort();
+      clearInterval(poll);
+      clearInterval(age);
+      document.removeEventListener('visibilitychange', visible);
     });
   });
 
-  const s = stats();
-  const weekInProgress =
-    s.asOf.slice(0, 10) >= s.peakRecordsWeekStart! &&
-    s.asOf.slice(0, 10) <= s.peakRecordsWeekEnd!;
-
   return (
-    <div class="ops-widget" data-ux="ops-stats" data-live={live() ? 'true' : 'false'}>
-      <div class="ops-peaks">
-        <article class="ops-card" aria-labelledby="ops-day-title">
-          <h3 id="ops-day-title">Peak day</h3>
-          <Show
-            when={s.peakRecordsDay !== null && s.peakRecordsDayDate !== null}
-            fallback={<p>Pending first measured refresh</p>}
-          >
-            <p class="ops-count">
-              <span data-ux="count-up">{number.format(s.peakRecordsDay!)} records</span>
-            </p>
-            <p>
-              <time datetime={s.peakRecordsDayDate!}>{date(s.peakRecordsDayDate!)}</time>{' '}
-              (UTC)
-            </p>
-          </Show>
-        </article>
-        <article class="ops-card" aria-labelledby="ops-week-title">
-          <h3 id="ops-week-title">Peak week</h3>
-          <Show
-            when={
-              s.peakRecordsWeek !== null &&
-              s.peakRecordsWeekStart !== null &&
-              s.peakRecordsWeekEnd !== null
-            }
-            fallback={<p>Pending first measured refresh</p>}
-          >
-            <p class="ops-count">
-              <span data-ux="count-up">{number.format(s.peakRecordsWeek!)} records</span>
-            </p>
-            <p>
-              <time datetime={s.peakRecordsWeekStart!}>{date(s.peakRecordsWeekStart!)}</time> to{' '}
-              <time datetime={s.peakRecordsWeekEnd!}>{date(s.peakRecordsWeekEnd!)}</time> (UTC)
-            </p>
-            <Show when={weekInProgress}>
-              <p class="fine-print">Week in progress at capture; counted so far.</p>
-            </Show>
-          </Show>
-        </article>
+    <div
+      class="ops-widget"
+      data-ux="ops-stats"
+      data-live={live() ? 'true' : 'false'}
+    >
+      <div class="ops-feed-header">
+        <p class="ops-status" role="status">
+          <span
+            class="ops-status-dot"
+            data-live={live() ? 'true' : 'false'}
+            aria-hidden="true"
+          />
+          {state() === 'loading'
+            ? 'Connecting to production'
+            : live()
+              ? 'Live production data'
+              : 'Live metrics unavailable'}
+        </p>
+        <p class="fine-print">Refreshes every 30 seconds</p>
       </div>
-      <Show when={s.liveStrip}>
-        <div class="ops-snapshot">
-          <h3>Pipeline metrics</h3>
-          <dl class="ops-metrics">
-            <div>
-              <dt>Ingest rate (5-minute average)</dt>
-              <dd>{number.format(s.liveStrip!.ingestProcessedRatePerSec)} records/s</dd>
-            </div>
-            <div>
-              <dt>Pending ledger</dt>
-              <dd>{number.format(s.liveStrip!.pendingLedgerCount)} records</dd>
-            </div>
-            <div>
-              <dt>Last ingest success</dt>
-              <dd>
-                <Show
-                  when={s.liveStrip!.lastIngestSuccessAt}
-                  fallback={<span>Unavailable in this snapshot</span>}
-                >
-                  <time datetime={s.liveStrip!.lastIngestSuccessAt!}>
-                    {timestamp(s.liveStrip!.lastIngestSuccessAt!)}
-                  </time>
-                </Show>
-              </dd>
-            </div>
-            <div>
-              <dt>Backpressure</dt>
-              <dd>
-                <span
-                  class="ops-status"
-                  data-active={s.liveStrip!.backpressureActive ? 'true' : 'false'}
-                >
-                  <span class="ops-status-dot" aria-hidden="true"></span>
-                  {s.liveStrip!.backpressureActive ? 'Active' : 'Inactive'}
-                </span>
-              </dd>
-            </div>
-          </dl>
+      <div class="ops-snapshot">
+        <h3>Pipeline now</h3>
+        <dl class="ops-metrics">
+          <div>
+            <dt>Ledger processing / second</dt>
+            <dd data-metric="rate">
+              {live()
+                ? `${rate.format(live()!.ingestProcessedRatePerSec)} records/s`
+                : 'Unavailable'}
+            </dd>
+            <p class="fine-print">Average over the last 5 minutes</p>
+          </div>
+          <div>
+            <dt>Records waiting</dt>
+            <dd data-metric="pending">
+              {live()
+                ? number.format(live()!.pendingLedgerCount)
+                : 'Unavailable'}
+            </dd>
+            <p class="fine-print">Pending or being processed</p>
+          </div>
+          <div>
+            <dt>Last successful processing check</dt>
+            <dd data-metric="success">
+              <Show when={live()?.lastIngestSuccessAt} fallback="Unavailable">
+                {(value) => (
+                  <time datetime={value()}>{timestamp(value())}</time>
+                )}
+              </Show>
+            </dd>
+          </div>
+          <div>
+            <dt>Intake control</dt>
+            <dd data-metric="backpressure">
+              {live()
+                ? live()!.backpressureActive
+                  ? 'Paused to drain backlog'
+                  : 'Accepting work'
+                : 'Unavailable'}
+            </dd>
+          </div>
+        </dl>
+        <Show when={live()}>
           <p class="fine-print">
-            {live()
-              ? 'Live production metrics. Refreshes every 30 seconds.'
-              : 'Build-time snapshot fallback.'}
+            Measured{' '}
+            <time datetime={stats()!.asOf}>{timestamp(stats()!.asOf)}</time>
           </p>
+        </Show>
+      </div>
+      <div class="ops-history">
+        <h3>Busiest recorded periods</h3>
+        <div class="ops-peaks">
+          <article class="ops-card" aria-labelledby="ops-day-title">
+            <h4 id="ops-day-title">Peak day</h4>
+            <p class="ops-count" data-metric="day">
+              {peaks() && stats()!.peakRecordsDay !== null
+                ? `${number.format(stats()!.peakRecordsDay!)} records`
+                : 'Unavailable'}
+            </p>
+            <Show when={peaks() && stats()!.peakRecordsDayDate}>
+              {(value) => (
+                <p>
+                  <time datetime={value()}>{date(value())}</time> UTC
+                </p>
+              )}
+            </Show>
+          </article>
+          <article class="ops-card" aria-labelledby="ops-week-title">
+            <h4 id="ops-week-title">Peak week</h4>
+            <p class="ops-count" data-metric="week">
+              {peaks() && stats()!.peakRecordsWeek !== null
+                ? `${number.format(stats()!.peakRecordsWeek!)} records`
+                : 'Unavailable'}
+            </p>
+            <Show when={peaks() && stats()!.peakRecordsWeekStart}>
+              {(value) => (
+                <p>
+                  <time datetime={value()}>{date(value())}</time> to{' '}
+                  <time datetime={stats()!.peakRecordsWeekEnd!}>
+                    {date(stats()!.peakRecordsWeekEnd!)}
+                  </time>{' '}
+                  UTC
+                </p>
+              )}
+            </Show>
+            <Show when={weekInProgress()}>
+              <p class="fine-print">This week, so far</p>
+            </Show>
+          </article>
         </div>
-      </Show>
-      <p class="fine-print">
-        {s.asOf ? (
-          <>
-            As of{' '}
-            <time datetime={s.asOf}>
-              {timestamp(s.asOf)}
+        <Show when={peaks()}>
+          <p class="fine-print">
+            History checked{' '}
+            <time datetime={stats()!.peaksComputedAt!}>
+              {timestamp(stats()!.peaksComputedAt!)}
             </time>
-            .
-          </>
-        ) : (
-          'As of: pending first measured refresh.'
-        )}
-      </p>
+          </p>
+        </Show>
+      </div>
     </div>
   );
 }

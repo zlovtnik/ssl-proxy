@@ -46,16 +46,16 @@ const diagrams = {
   },
   octopus: {
     stages: [
-      ['Incoming streams', 'work discovery'],
-      ['Leases / batches', 'tracked dispatch'],
-      ['Ingest ledger', 'historical counts'],
+      ['Incoming events', 'saved offsets'],
+      ['Jobs / batches', 'tracked loads'],
+      ['Recorded results', 'stored history'],
     ],
-    labels: ['INPUT', 'COORDINATION', 'EVIDENCE'],
-    title: 'Octopus streams, leases and batches, and ledger counts',
+    labels: ['RECEIVE', 'PROCESS', 'RECORD'],
+    title: 'Octopus events, jobs, and recorded results',
     description:
-      'Incoming streams become durable work. Leases and batches coordinate dispatch. Ingestion evidence records consumed broker coordinates and first-seen times for historical counting.',
+      'Octopus reads incoming events from saved offsets, coordinates jobs and database loads, and stores their results for later review.',
     caption:
-      'Coordination mechanisms and ledger evidence. Published counts describe recorded activity in the deployment.',
+      'Source offsets, job state, and recorded outcomes connect each stage of the pipeline.',
   },
 } satisfies Record<
   ProductId,

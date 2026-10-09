@@ -1,7 +1,8 @@
 # Product site
 
 - This is a static public marketing frontend, separate from the operator consoles.
-- Use Astro pages and SolidJS islands with synthetic fixtures in `src/data/`.
+- Use Astro pages and SolidJS islands. Product demos use synthetic fixtures;
+  Octopus operational metrics must come from the runtime feed, never fixtures.
 - Keep core navigation, product copy, and email contact available without JavaScript.
 - Analytics may be added only with explicit consent, minimal event data, no PII,
   and production-only configuration. Never add advertising or identity tracking.

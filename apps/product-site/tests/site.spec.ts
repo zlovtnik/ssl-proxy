@@ -10,10 +10,10 @@ import {
   products,
   sampleProducts,
   octopusCaveat,
+  octopusContact,
   guides,
   guidePath,
 } from '../src/data/products';
-import octopusStats from '../src/data/octopus-stats.json' with { type: 'json' };
 
 const routes = [
   '/',
@@ -38,148 +38,27 @@ const tags = [
   'best-practice',
 ];
 
-test('Octopus evidence is static, dated, and linked without a synthetic demo', async ({
-  browser,
-}) => {
+test('Octopus never publishes saved metrics without JavaScript', async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
   try {
     const page = await context.newPage();
     await page.goto('http://127.0.0.1:4323/');
     await expect(page.locator('.product-card')).toHaveCount(4);
-    await expect(page.locator('.preview-switch button')).toHaveCount(3);
-    await page
-      .getByRole('link', { name: 'Review measured throughput', exact: true })
-      .click();
-    await expect(page).toHaveURL(/\/octopus\/#operational-evidence$/);
+    await page.getByRole('link', { name: 'View live metrics', exact: true }).click();
+    await expect(page).toHaveURL('http://127.0.0.1:4323/octopus/#operational-evidence');
     const evidence = page.locator('#operational-evidence');
-    await expect(
-      evidence.getByRole('heading', { name: 'Measured operational evidence' }),
-    ).toBeVisible();
+    await expect(evidence.getByRole('heading', { name: 'See the pipeline as it runs.' })).toBeVisible();
+    await expect(evidence).toContainText('Enable JavaScript to load current metrics.');
+    await expect(evidence.locator('[data-metric]')).toHaveCount(6);
+    for (const value of await evidence.locator('[data-metric]').all()) await expect(value).toHaveText('Unavailable');
+    await expect(evidence.locator('time')).toHaveCount(0);
     await expect(page.locator('#demo, .product-demo')).toHaveCount(0);
-    await expect(
-      page.locator('.search-demo, .migrator-demo, .vpn-demo'),
-    ).toHaveCount(0);
-    // UX islands (toggle/pipeline/count-up) are allowed; synthetic demos are not.
-    // Prefer a named allowlist (wrapper data-ux=...) over a bare astro-island count.
     await expect(page.locator('[data-ux="pipeline"]')).toHaveCount(1);
     await expect(page.locator('[data-ux="audience-toggle"]')).toHaveCount(1);
-    await expect(page.locator('[data-ux="count-up"]').first()).toBeAttached();
-    await expect(
-      page.locator('.product-demo, .search-demo, .migrator-demo, .vpn-demo'),
-    ).toHaveCount(0);
     await expect(page.locator('.caveat')).toHaveText(octopusCaveat);
-    await expect(
-      page
-        .locator('.product-hero')
-        .getByRole('link', { name: 'Discuss your use case', exact: true }),
-    ).toHaveAttribute('href', '/demo/#octopus');
-    await expect(evidence).toContainText(octopusStats.source.definition);
-    await expect(evidence).toContainText(octopusStats.source.peaks);
-    await expect(evidence).toContainText('Timezone: UTC');
-    const format = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
-    for (const [heading, count] of [
-      ['Peak day', octopusStats.peakRecordsDay],
-      ['Peak week', octopusStats.peakRecordsWeek],
-    ] as const) {
-      const card = evidence.getByRole('article', {
-        name: heading,
-        exact: true,
-      });
-      if (count === null) {
-        await expect(card).toContainText('Pending first measured refresh');
-        await expect(card.locator('.ops-count')).toHaveCount(0);
-      } else {
-        expect(Number.isSafeInteger(count) && count >= 0).toBe(true);
-        await expect(card.locator('.ops-count')).toHaveText(
-          `${format.format(count)} records`,
-        );
-      }
-    }
-    const live: {
-      ingestProcessedRatePerSec: number;
-      pendingLedgerCount: number;
-      lastIngestSuccessAt: string | null;
-      backpressureActive: boolean;
-    } | null = octopusStats.liveStrip;
-    if (live) {
-      await expect(evidence.locator('.ops-snapshot')).toContainText(
-        `${format.format(live.ingestProcessedRatePerSec)} records/s`,
-      );
-      await expect(evidence.locator('.ops-snapshot')).toContainText(
-        `${format.format(live.pendingLedgerCount)} records`,
-      );
-      await expect(evidence.locator('.ops-snapshot')).toContainText(
-        live.backpressureActive ? 'Active' : 'Inactive',
-      );
-      if (live.lastIngestSuccessAt)
-        await expect(evidence.locator('.ops-snapshot time')).toHaveAttribute(
-          'datetime',
-          live.lastIngestSuccessAt,
-        );
-    } else {
-      await expect(evidence.locator('.ops-snapshot')).toHaveCount(0);
-    }
-    if (octopusStats.asOf) {
-      await expect(
-        evidence.locator('[data-ux="ops-stats"] time').last(),
-      ).toHaveAttribute('datetime', octopusStats.asOf);
-      expect(Number.isNaN(Date.parse(octopusStats.asOf))).toBe(false);
-      if (octopusStats.peakRecordsDay !== null) {
-        await expect(
-          evidence
-            .getByRole('article', { name: 'Peak day', exact: true })
-            .locator('time'),
-        ).toHaveAttribute('datetime', octopusStats.peakRecordsDayDate!);
-      }
-      if (octopusStats.peakRecordsWeek !== null) {
-        const week = evidence.getByRole('article', {
-          name: 'Peak week',
-          exact: true,
-        });
-        await expect(week.locator('time').first()).toHaveAttribute(
-          'datetime',
-          octopusStats.peakRecordsWeekStart!,
-        );
-        await expect(week.locator('time').last()).toHaveAttribute(
-          'datetime',
-          octopusStats.peakRecordsWeekEnd!,
-        );
-        const start = Date.parse(octopusStats.peakRecordsWeekStart!);
-        const end = Date.parse(octopusStats.peakRecordsWeekEnd!);
-        expect(new Date(start).getUTCDay()).toBe(1);
-        expect(end - start).toBe(6 * 24 * 60 * 60 * 1000);
-        const asOfDay = octopusStats.asOf.slice(0, 10);
-        if (
-          asOfDay >= octopusStats.peakRecordsWeekStart! &&
-          asOfDay <= octopusStats.peakRecordsWeekEnd!
-        )
-          await expect(week).toContainText('Week in progress at capture');
-      }
-    } else {
-      await expect(evidence).toContainText(
-        'As of: pending first measured refresh.',
-      );
-      expect(octopusStats.peakRecordsDay).toBeNull();
-      expect(octopusStats.peakRecordsWeek).toBeNull();
-      expect(octopusStats.liveStrip).toBeNull();
-    }
-    expect(
-      await page
-        .locator('main > section')
-        .evaluateAll((sections) =>
-          sections.map((section) => section.getAttribute('aria-labelledby')),
-        ),
-    ).toEqual([
-      'hero-title',
-      'workflow-title',
-      'value-title',
-      'evidence-title',
-      'ops-title',
-      'terms-title',
-      'contact-title',
+    expect(await page.locator('main > section').evaluateAll(sections => sections.map(section => section.getAttribute('aria-labelledby')))).toEqual([
+      'hero-title', 'ops-title', 'workflow-title', 'value-title', 'evidence-title', 'terms-title', 'contact-title',
     ]);
-    await page.goto('http://127.0.0.1:4323/demo/#octopus');
-    await expect(page.locator('#octopus')).toContainText('Octopus');
   } finally {
     await context.close();
   }
@@ -189,7 +68,6 @@ test('public routes and committed evidence expose no internal dashboard addresse
   page,
 }) => {
   const privateText = /grafana|192\.168\.1|30000|gateway\.rclabs\.uk|wiretrap/i;
-  expect(JSON.stringify(octopusStats)).not.toMatch(privateText);
   for (const route of routes) {
     await page.goto(route);
     expect(await page.locator('body').innerText(), route).not.toMatch(
@@ -1300,10 +1178,9 @@ test('every route that offers a commercial action uses the shared contact patter
     await page.goto(route);
     const banner = page.locator('.contact-banner');
     await expect(banner, route).toHaveCount(1);
-    // One pattern, one set of words: the heading, the shorter link label, and the
-    // visible address all ship from the content model.
+    // Product-specific introductions retain the shared action and visible address.
     await expect(banner.getByRole('heading', { level: 2 })).toHaveText(
-      contact.headline.join(' '),
+      (product?.id === 'octopus' ? octopusContact : contact).headline.join(' '),
     );
     const href = await banner
       .getByRole('link', { name: contact.link })
