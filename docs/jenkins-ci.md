@@ -202,6 +202,107 @@ the same artifact check inside the image build and embeds the exact parent and
 Octopus revisions as OCI labels, so stale cutover classes or the superseded
 replication/TLS validation cannot be pushed as `java-coordinator`.
 
+## Pipeline implementation and refactor report
+
+The pipeline inventory contains five declarative definitions:
+
+| Definition | Agent scripts | Preserved behavior |
+| --- | --- | --- |
+| [Umbrella Jenkinsfile](../Jenkinsfile) | [scripts/ci](../scripts/ci/) | Change classification, pinned sources, parallel validation, selected publication and manual digest report |
+| [Integration Console Jenkinsfile](../apps/integration-console/Jenkinsfile) | [Console CI scripts](../apps/integration-console/scripts/ci/) | Parallel Go/UI checks and two full-SHA image tags |
+| [Schema Migrator Jenkinsfile](../apps/schema-migrator/Jenkinsfile) | [Migrator CI scripts](../apps/schema-migrator/scripts/ci/) | Parallel backend/UI checks and two full-SHA image tags |
+| [Octopus Jenkinsfile](../services/octopus/Jenkinsfile) | [Octopus CI scripts](../services/octopus/scripts/ci/) | Formatting, lint, Docker-required JaCoCo tests, coverage floor, assembly and report/JAR archive |
+| [Key Rotator Jenkinsfile](../apps/wg-key-rotator/Jenkinsfile) | [Rotator CI scripts](../apps/wg-key-rotator/scripts/ci/) | Elixir tests and main-only full-SHA image publication |
+
+The job definitions embedded in
+[Configuration as Code](../docker/jenkins/casc/jenkins.yaml) continue to load
+these Jenkinsfiles from SCM. The existing GitHub Actions workflow is a separate
+CI system and is unchanged.
+
+Jenkinsfiles now describe orchestration, conditions, deadlines and artifact
+archives. Long shell bodies execute in agent `sh` steps through Bash scripts.
+Container-side package setup and Scala/Rust/contract commands live in
+`scripts/ci/tasks/` within the owning repository. This follows the official
+[Jenkins Pipeline best practices](https://www.jenkins.io/doc/book/pipeline/pipeline-best-practices/)
+for minimizing Groovy processing on the controller. The small classifier
+environment import uses an explicit key allowlist; classification and JSON
+processing stay in Python on the agent.
+
+[common.sh](../scripts/ci/common.sh) centralizes Docker endpoint selection,
+TLS context refresh, container naming, cleanup traps and the inotify guard.
+It also supplies the standalone jobs' Buildx bootstrap. Each independent
+repository carries an identical local copy of this helper and
+[cleanup.sh](../scripts/ci/cleanup.sh), so its Jenkinsfile requires only its own
+checkout. The umbrella script tests reject drift between copies. No Jenkins
+Shared Library registration or extra plugin is required. Existing root Make
+targets remain authoritative for umbrella Buildx configuration and image
+contracts; standalone publishers retain their previous Buildx configuration.
+
+Each container runner installs EXIT and signal traps. Containers receive a
+build scope derived from job name, build number and workspace, plus a stage
+label. Stage cleanup removes only that stage's containers. The five-minute
+`post { always }` fallback removes remaining containers for that build, then
+prunes only the job's configured builder with the existing seven-day filter
+and 20 GB reservation. Persistent Docker contexts and builders remain reusable;
+contexts refresh from current TLS certificates before publication. Cleanup
+errors cannot convert a failed test into a successful test. Keycloak diagnostic
+copying still runs on failure, and Octopus report/JAR copying still precedes
+container removal. The temporary Integration Console image context is removed
+on exit. Bash `pipefail` also makes a failed checkout tar stream fail its stage.
+
+Test commands, images, image tags, metadata names, archive patterns, branch
+restrictions, delegation flags and global timeouts are preserved. Additional
+controls are intentional: standalone jobs retain 20 builds and 10 artifact
+sets; checkout has a ten-minute deadline; standalone parallel test branches
+have sixty-minute deadlines; Octopus test/assembly has seventy-five minutes;
+standalone publication has sixty minutes (forty-five for Key Rotator).
+The global 90/60-minute limits still take precedence. The inotify floor now
+also runs before umbrella Docker testing and standalone publication, and
+standalone publish scripts independently reject non-main branches. Changes
+under the new umbrella `scripts/ci/` path select Search contract validation,
+just as changes to the previous inline Jenkinsfile did.
+
+### Verification and rollout
+
+Run the script tests and documentation validator from the superproject:
+
+```bash
+python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+python3 scripts/check-docs.py
+```
+
+[CI script tests](../scripts/tests/test_jenkins_ci_scripts.py) simulate the
+Docker CLI without a daemon. They cover test failure and cancellation cleanup,
+parallel-stage isolation, tar failures, context refresh, registry and inotify
+rejections, branch restrictions, unchanged standalone publication tags and
+coverage copying. Syntax checks cover every extracted script. These checks do
+not replace Jenkins declarative validation or a Docker-enabled pipeline run.
+Validate each Jenkinsfile with the target controller's
+[declarative linter](https://www.jenkins.io/doc/book/pipeline/development/#linter)
+before rollout, then exercise failure/cancellation and selected publication in
+the existing Jenkins jobs.
+
+Commit each submodule's Jenkinsfile and its complete `scripts/ci/` directory
+together in that repository. Review those upstream changes and update the four
+superproject gitlinks only after their builds pass. A superproject commit alone
+cannot include uncommitted files inside a submodule. Keep `SUBMODULE_CI_READY`
+false until the handoff requirements above are met. The current source-integrity
+gate continues to reject dirty or unpinned submodule checkouts.
+
+No job path, credential, registry, or plugin configuration update is required.
+Agents need Bash in addition to the existing Docker/Buildx, Git, tar, Python,
+Make and curl tools, and the same Docker TLS and registry environment already
+provided by the CI stack. The existing controller image provides these tools.
+The Linux build host must satisfy the documented inotify floor.
+
+`agent any` is retained for scheduling compatibility. The checked-in controller
+configuration currently permits a built-in executor. To isolate builds from
+the controller, provision a dedicated Linux agent with those tools and Docker
+contracts, then review an agent-label and controller-executor configuration
+change together. That infrastructure rollout is separate from this source
+refactor; moving shell logic into scripts alone does not move the built-in
+executor to another machine.
+
 ## GitOps handoff
 
 Jenkins publishes immutable image digests but does not mutate Kubernetes or

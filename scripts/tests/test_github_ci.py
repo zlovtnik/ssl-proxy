@@ -18,6 +18,9 @@ class GitHubCiTest(unittest.TestCase):
         self.assertNotIn("continue-on-error", search)
         jenkins = (REPOSITORY_ROOT / "Jenkinsfile").read_text()
         stage = jenkins[jenkins.index("stage('Atheros search contracts')"):jenkins.index("stage('Schema migrator')")]
+        self.assertIn("bash scripts/ci/atheros-search-contracts.sh", stage)
+        stage = (REPOSITORY_ROOT / "scripts/ci/atheros-search-contracts.sh").read_text()
+        stage += (REPOSITORY_ROOT / "scripts/ci/tasks/atheros-search-contracts-1.sh").read_text()
         self.assertNotIn("SUBMODULE_CI_READY", stage)
         self.assertIn("SHOULD_RUN_ATHEROS_SEARCH_CONTRACTS", stage)
         self.assertIn("make atheros-search-db-contract", stage)

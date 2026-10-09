@@ -57,6 +57,7 @@ class ClassifyChangesTest(unittest.TestCase):
             "sql/postgres/contracts/processors.json",
             "scripts/tests/test_atheros_reporting.py",
             "scripts/classify_changes.py",
+            "scripts/ci/atheros-search-contracts.sh",
         ):
             with self.subTest(path=path):
                 result = classify_paths({path}, self.bumped(), full=False)

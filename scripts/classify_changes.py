@@ -69,6 +69,7 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         "cyber-stack/matrix/prod/", "scripts/tests/test_atheros_reporting.py",
         "scripts/classify_changes.py", "scripts/tests/test_classify_changes.py",
         "scripts/requirements-test.txt", "scripts/requirements.txt", "Jenkinsfile",
+        "scripts/ci/",
     )
     tests = {
         "platform_sync": changed("services/platform-sync/"),

@@ -7,9 +7,22 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
+def pipeline_source() -> str:
+    """Follow agent script entrypoints for the existing delivery contracts."""
+    pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+
+    def expand(match: re.Match) -> str:
+        if match.group(1).endswith("install-sbt.sh"):
+            return match.group(0)
+        script = (REPOSITORY_ROOT / match.group(1)).read_text(encoding="utf-8")
+        return re.sub(r"sh /workspace/(scripts/ci/tasks/[\w-]+\.sh)", expand, script)
+
+    return re.sub(r"bash (scripts/ci/[\w-]+\.sh)", expand, pipeline)
+
+
 class JenkinsProductionGateTest(unittest.TestCase):
     def test_workspace_is_cleaned_before_checkout_and_source_integrity(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         cleanup = pipeline.index("deleteDir()")
         checkout = pipeline.index("checkout scm")
         source_integrity = pipeline.index("make octopus-source-integrity")
@@ -18,7 +31,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertLess(checkout, source_integrity)
 
     def test_registry_authority_is_fail_closed_before_validation(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         checkout = pipeline.index("checkout scm")
         authority = pipeline.index(
             "scripts/image_contract.py registry-authority --environment prod"
@@ -49,18 +62,21 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn('CI_REGISTRY: "${SERVER_IP}:5000"', jenkins_service)
 
     def test_docker_context_is_ready_before_containerized_validation(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         preflight = pipeline.index("stage('Docker test preflight')")
         validation = pipeline.index("stage('Validate and test')")
         block = pipeline[preflight:validation]
 
         self.assertLess(preflight, validation)
-        self.assertIn('docker context inspect "$DOCKER_CONTEXT_NAME"', block)
-        self.assertIn('docker context create "$DOCKER_CONTEXT_NAME"', block)
-        self.assertIn('DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker version', block)
+        self.assertIn("ci_refresh_context", block)
+        self.assertIn("docker_cmd version", block)
+        self.assertLess(block.index("ci_refresh_context"), block.index("docker_cmd version"))
+        common = (REPOSITORY_ROOT / "scripts/ci/common.sh").read_text()
+        self.assertIn('docker context create "$DOCKER_CONTEXT_NAME"', common)
+        self.assertIn('DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker "$@"', common)
 
     def test_dind_can_resolve_workspace_binds_and_scala_can_start_testcontainers(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
             encoding="utf-8"
         )
@@ -79,12 +95,12 @@ class JenkinsProductionGateTest(unittest.TestCase):
             scala.count("-v /var/run/docker.sock:/var/run/docker.sock"),
         )
         self.assertIn(
-            "apt-get install -y --no-install-recommends curl bash python3", scala
+            "sh /workspace/scripts/ci/tasks/install-sbt.sh python3", scala
         )
         self.assertIn("python3 scripts/check_coverage.py", scala)
 
     def test_container_workspaces_preserve_git_ownership_checks(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
 
         extractions = re.findall(r"\btar\b[^;&|\n]*\s-xf\s+-", pipeline)
 
@@ -96,7 +112,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertNotIn("safe.directory", pipeline)
 
     def test_pipeline_has_no_automatic_git_promotion(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
 
         self.assertNotIn("digest-promotion", pipeline)
         self.assertNotIn("Open digest promotion PR", pipeline)
@@ -105,7 +121,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertNotIn("git push", pipeline)
 
     def test_pipeline_validates_before_bounded_publication(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
 
         self.assertIn("timeout(time: 180, unit: 'MINUTES')", pipeline)
         validation = pipeline.index("stage('Validate and test')")
@@ -115,7 +131,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn("--manifest-out", pipeline[publication:])
 
     def test_pipeline_ends_with_manual_digest_report(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         publication = pipeline.index("stage('Publish immutable images')")
         report = pipeline.index("=== Manual production digest update report ===")
 
@@ -125,11 +141,11 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn("artifacts/bump-digest-commands.txt", pipeline[publication:])
 
     def test_classification_drives_tests_and_publication(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         self.assertLess(pipeline.index("stage('Classify changes')"), pipeline.index("stage('Validate and test')"))
         self.assertIn("scripts/classify_changes.py --base \"$GIT_PREVIOUS_SUCCESSFUL_COMMIT\"", pipeline)
         self.assertIn("scripts/classify_changes.py --full", pipeline)
-        self.assertNotIn("env[fields[0]]", pipeline)
+        self.assertIn("fields.size() == 2 && allowedKeys.contains(fields[0])", pipeline)
         for name in ("PLATFORM_SYNC", "ATHEROS_SEARCH", "SCHEMA_MIGRATOR", "OCTOPUS", "SENSOR"):
             self.assertIn(f'"$SHOULD_RUN_{name}" != true', pipeline)
         self.assertIn('--only "$CHANGED_SERVICES"', pipeline)
@@ -140,7 +156,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn('"$SHOULD_PUBLISH_STATS_READER" = true', pipeline)
 
     def test_stats_reader_is_tested_before_bootstrap_publication(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         self.assertLess(pipeline.index("stage('Stats reader')"), pipeline.index("stage('Publish immutable images')"))
         self.assertIn("cd services/stats-reader && go test ./...", pipeline)
         self.assertIn("publish-stats-reader", pipeline)
@@ -158,7 +174,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
             self.assertIn(f"remote('{url}')", config)
 
     def test_delivery_validation_is_fail_closed(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         validation = pipeline[
             pipeline.index("stage('Validate and test')") : pipeline.index(
                 "stage('Registry and Buildx preflight')"
@@ -170,13 +186,13 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertNotIn("catchError", validation)
 
     def test_pipeline_aborts_superseded_builds(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
 
         self.assertIn("disableConcurrentBuilds(abortPrevious: true)", pipeline)
         self.assertNotIn("disableConcurrentBuilds()", pipeline)
 
     def test_pipeline_verifies_octopus_pin_before_buildx_preflight(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         submodule_update = pipeline.index("git submodule update --init --recursive")
         source_integrity = pipeline.index("make octopus-source-integrity")
         buildx_preflight = pipeline.index("stage('Registry and Buildx preflight')")
@@ -201,7 +217,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertRegex(dockerfile, r'echo "\$\{KUBECTL_SHA256\}  /tmp/kubectl" \| sha256sum -c -')
 
     def test_pipeline_does_not_mutate_or_observe_production(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
 
         self.assertNotIn("Observe Wiretrap production", pipeline)
         self.assertNotIn("production-gate", pipeline)
@@ -210,10 +226,13 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertNotIn("argocd app sync", pipeline)
 
     def test_pipeline_refreshes_dind_tls_context_before_preflight(self) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         preflight_start = pipeline.index("stage('Registry and Buildx preflight')")
         publication_start = pipeline.index("stage('Publish immutable images')")
         preflight = pipeline[preflight_start:publication_start]
+        self.assertIn("ci_refresh_context", preflight)
+        common = (REPOSITORY_ROOT / "scripts/ci/common.sh").read_text()
+        preflight = common[common.index("ci_refresh_context()") : common.index("ci_check_inotify()")]
 
         inspect = 'docker context inspect "$DOCKER_CONTEXT_NAME"'
         remove = 'docker context rm --force "$DOCKER_CONTEXT_NAME"'
@@ -229,10 +248,13 @@ class JenkinsProductionGateTest(unittest.TestCase):
     def test_pipeline_rejects_insufficient_inotify_before_docker_preflight(
         self,
     ) -> None:
-        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        pipeline = pipeline_source()
         preflight_start = pipeline.index("stage('Registry and Buildx preflight')")
         publication_start = pipeline.index("stage('Publish immutable images')")
         preflight = pipeline[preflight_start:publication_start]
+        self.assertLess(preflight.index("ci_check_inotify"), preflight.index("ci_refresh_context"))
+        common = (REPOSITORY_ROOT / "scripts/ci/common.sh").read_text()
+        preflight = common[common.index("ci_check_inotify()") : common.index("ci_prepare_publish()")]
 
         capacity_path = "/proc/sys/fs/inotify/max_user_instances"
         threshold = "required_inotify_instances=1024"
@@ -244,21 +266,11 @@ class JenkinsProductionGateTest(unittest.TestCase):
             "docker compose -f docker-compose.ci.yaml up -d --no-deps "
             "--force-recreate jenkins-docker"
         )
-        docker_preflight = 'docker context inspect "$DOCKER_CONTEXT_NAME"'
-
         self.assertIn(capacity_path, preflight)
         self.assertIn(threshold, preflight)
         self.assertIn(invalid_value_guard, preflight)
         self.assertIn(insufficient_capacity_guard, preflight)
         self.assertIn(recovery_command, preflight)
-        self.assertLess(
-            preflight.index(capacity_path),
-            preflight.index(docker_preflight),
-        )
-        self.assertLess(
-            preflight.index(insufficient_capacity_guard),
-            preflight.index(docker_preflight),
-        )
 
     def test_credentials_binding_plugin_is_explicitly_pinned(self) -> None:
         plugins = (REPOSITORY_ROOT / "docker/jenkins/plugins.txt").read_text(
