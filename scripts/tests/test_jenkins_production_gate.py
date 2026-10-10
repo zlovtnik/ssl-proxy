@@ -137,7 +137,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
     def test_pipeline_ends_with_manual_digest_report(self) -> None:
         pipeline = pipeline_source()
         publication = pipeline.index("stage('Publish immutable images')")
-        report = pipeline.index("=== Manual production digest update report ===")
+        report = pipeline.index("Manual production digest update report")
 
         self.assertLess(publication, report)
         self.assertIn('--commands-out "$BUMP_COMMANDS_REPORT"', pipeline[publication:])
@@ -147,7 +147,8 @@ class JenkinsProductionGateTest(unittest.TestCase):
     def test_classification_drives_tests_and_publication(self) -> None:
         pipeline = pipeline_source()
         self.assertLess(pipeline.index("stage('Classify changes')"), pipeline.index("stage('Validate and test')"))
-        self.assertIn("scripts/classify_changes.py --base \"$GIT_PREVIOUS_SUCCESSFUL_COMMIT\"", pipeline)
+        self.assertIn("scripts/classify_changes.py --base \"$CI_PREVIOUS_SUCCESSFUL_REVISION\"", pipeline)
+        self.assertNotIn("scripts/classify_changes.py --base \"$GIT_PREVIOUS_SUCCESSFUL_COMMIT\"", pipeline)
         self.assertIn("scripts/classify_changes.py --full", pipeline)
         self.assertIn("fields.size() == 2 && allowedKeys.contains(fields[0])", pipeline)
         self.assertIn('env."${fields[0]}" = fields[1]', pipeline)

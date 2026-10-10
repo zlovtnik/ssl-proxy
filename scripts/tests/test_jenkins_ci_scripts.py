@@ -298,6 +298,13 @@ Path("artifacts/octopus-metrics-buildx.json").write_text(json.dumps(
     {{"containerimage.digest": "sha256:" + "a" * 64}}))
 ''')
         self.env.pop("CHANGED_SERVICES", None)
+        # setUp stubs cat for the inotify probe; the final report must print the
+        # real bump-commands file so operators see it in the Jenkins console.
+        self.executable("cat", (
+            "import pathlib, sys\n"
+            "for path in sys.argv[1:]:\n"
+            "    sys.stdout.write(pathlib.Path(path).read_text())\n"
+        ))
         for selection in (None, ""):
             with self.subTest(selection=selection):
                 selected_env = {} if selection is None else {"CHANGED_SERVICES": selection}
