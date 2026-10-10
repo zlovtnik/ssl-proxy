@@ -231,8 +231,13 @@ class JenkinsCiScriptsTest(unittest.TestCase):
         self.assertNotIn("--security-opt", run)
 
     def test_metrics_candidate_publication_records_digest(self) -> None:
-        (self.root / "scripts/publish_images.py").write_text("# No active image inputs\n")
-        shutil.copyfile(ROOT / "scripts/image_contract.py", self.root / "scripts/image_contract.py")
+        # Run the real selector/publisher; mock only the external Make boundary.
+        for name in ("publish_images.py", "image_contract.py", "classify_changes.py"):
+            shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
+        for slice_name in ("app-stack", "data-plane"):
+            relative = Path("cyber-stack/matrix/prod") / slice_name / "kustomization.yaml"
+            (self.root / relative).parent.mkdir(parents=True)
+            shutil.copyfile(ROOT / relative, self.root / relative)
         publish_log = self.root / "make.json"
         self.executable("make", f'''
 import json, sys
@@ -241,19 +246,28 @@ Path({str(publish_log)!r}).write_text(json.dumps(sys.argv[1:]))
 Path("artifacts/octopus-metrics-buildx.json").write_text(json.dumps(
     {{"containerimage.digest": "sha256:" + "a" * 64}}))
 ''')
-        result = self.run_script("publish", CHANGED_SERVICES="", REGISTRY="registry.example:5000",
-                                 REGISTRY_PLAIN_HTTP="1", RELEASE_MANIFEST="artifacts/release.json",
-                                 BUMP_COMMANDS_REPORT="artifacts/commands.txt",
-                                 SHOULD_PUBLISH_REDPANDA_MAINT="false",
-                                 SHOULD_PUBLISH_STATS_READER="false",
-                                 SHOULD_PUBLISH_OCTOPUS_METRICS="true")
-        self.assertEqual(0, result.returncode, result.stderr)
-        args = json.loads(publish_log.read_text())
-        self.assertIn("publish-octopus-metrics", args)
-        self.assertIn("PUBLISH_REPOSITORY=registry.example:5000/octopus-metrics", args)
-        self.assertIn("PUBLISH_METADATA_FILE=artifacts/octopus-metrics-buildx.json", args)
-        self.assertIn("sha256:" + "a" * 64, result.stdout)
-        self.assertEqual([], self.calls())
+        self.env.pop("CHANGED_SERVICES", None)
+        for selection in (None, ""):
+            with self.subTest(selection=selection):
+                selected_env = {} if selection is None else {"CHANGED_SERVICES": selection}
+                result = self.run_script("publish", **selected_env, REGISTRY="registry.example:5000",
+                                         REGISTRY_PLAIN_HTTP="1", RELEASE_MANIFEST="artifacts/release.json",
+                                         BUMP_COMMANDS_REPORT="artifacts/commands.txt",
+                                         SHOULD_PUBLISH_REDPANDA_MAINT="false",
+                                         SHOULD_PUBLISH_STATS_READER="false",
+                                         SHOULD_PUBLISH_OCTOPUS_METRICS="true")
+                self.assertEqual(0, result.returncode, result.stderr)
+                manifest = json.loads((self.root / "artifacts/release.json").read_text())
+                self.assertEqual([], manifest["images"])
+                self.assertIn("Publishing 0 Kubernetes images", result.stdout)
+                self.assertEqual("No digest updates are required.\n",
+                                 (self.root / "artifacts/commands.txt").read_text())
+                args = json.loads(publish_log.read_text())
+                self.assertIn("publish-octopus-metrics", args)
+                self.assertIn("PUBLISH_REPOSITORY=registry.example:5000/octopus-metrics", args)
+                self.assertIn("PUBLISH_METADATA_FILE=artifacts/octopus-metrics-buildx.json", args)
+                self.assertIn("sha256:" + "a" * 64, result.stdout)
+                self.assertEqual([], self.calls())
 
     def test_metrics_supports_docker_desktop_fixture_addresses(self) -> None:
         (self.root / "services/octopus-metrics").mkdir(parents=True)

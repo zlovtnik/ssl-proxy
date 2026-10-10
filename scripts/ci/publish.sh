@@ -7,7 +7,7 @@ build_tag="$(git rev-parse --short=12 HEAD)"
 build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" python3 scripts/publish_images.py \
-  --environment prod --only "$CHANGED_SERVICES" --reuse-submodules "$SUBMODULE_CI_READY" \
+  --environment prod --only "${CHANGED_SERVICES:-}" --reuse-submodules "$SUBMODULE_CI_READY" \
   --tag "$build_tag" --build-date "$build_date" \
   --source-revision "$source_revision" --builder "$BUILDER" \
   --platform linux/amd64 --registry-plain-http "$REGISTRY_PLAIN_HTTP" \

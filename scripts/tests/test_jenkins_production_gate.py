@@ -154,7 +154,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertNotIn("env[fields[0]]", pipeline)
         for name in ("PLATFORM_SYNC", "ATHEROS_SEARCH", "SCHEMA_MIGRATOR", "OCTOPUS", "SENSOR"):
             self.assertIn(f'"$SHOULD_RUN_{name}" != true', pipeline)
-        self.assertIn('--only "$CHANGED_SERVICES"', pipeline)
+        self.assertIn('--only "${CHANGED_SERVICES:-}"', pipeline)
         self.assertIn('--reuse-submodules "$SUBMODULE_CI_READY"', pipeline)
         self.assertIn("SUBMODULE_CI_READY = 'false'", pipeline)
         self.assertIn('"$SUBMODULE_CI_READY" = true ] || [ "$SHOULD_RUN_OCTOPUS" != true', pipeline)
