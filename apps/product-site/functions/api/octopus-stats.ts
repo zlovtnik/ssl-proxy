@@ -2,6 +2,7 @@ import {
   isFresh,
   maxStatsAgeMs,
   parseStats,
+  retainHistory,
   type Stats,
 } from '../../src/data/operational-stats';
 
@@ -30,15 +31,26 @@ async function recorded(history: HistoryStore): Promise<Stats | undefined> {
   } catch {
     // The permanent initial reading also covers listing outages/quotas.
   }
+  let selected: Stats | undefined;
   for (const key of keys) {
     try {
       const text = await history.get(key);
-      if (text && new TextEncoder().encode(text).byteLength <= bodyLimit)
-        return parseStats(JSON.parse(text));
+      if (text && new TextEncoder().encode(text).byteLength <= bodyLimit) {
+        const measured = parseStats(JSON.parse(text));
+        selected = selected ? retainHistory(selected, measured) : measured;
+        if (
+          selected.peaksComputedAt &&
+          selected.lifetimeTotals &&
+          selected.throughput24h &&
+          selected.throughput7d
+        )
+          return selected;
+      }
     } catch {
       // Try an earlier real measurement if a saved object cannot be read.
     }
   }
+  return selected;
 }
 
 // Bound the response while reading it, including a stalled or oversized body.
@@ -126,7 +138,7 @@ export async function onRequestGet(context: {
     ]);
     received = measured;
     if (!selected || snapshotKey(measured.asOf) <= snapshotKey(selected.asOf)) {
-      selected = measured;
+      selected = retainHistory(measured, saved);
       // A durable historical copy every five minutes bounds backup writes;
       // the current gateway reading still supplies every successful response.
       if (
@@ -135,7 +147,7 @@ export async function onRequestGet(context: {
           Date.parse(measured.asOf) - Date.parse(saved.asOf) >= 300_000)
       ) {
         const persist = history
-          .put(snapshotKey(measured.asOf), JSON.stringify(measured))
+          .put(snapshotKey(selected.asOf), JSON.stringify(selected))
           .catch(() => {});
         if (context.waitUntil) context.waitUntil(persist);
         else await persist;

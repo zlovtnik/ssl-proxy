@@ -122,8 +122,10 @@ Historical counts cover ingestion evidence rows of every disposition, as before.
 select the earliest UTC day/week. Weeks begin Monday and end Sunday. A successful
 empty ledger yields null peaks, zero lifetime counts, and dense measured-zero
 history. Failed initial reads stay null; later failures retain last-good parts
-and their original timestamps. History is omitted after its complete-hour
-window expires. Live data is omitted after 60 seconds or when the source reports
+and their original timestamps. Measured history remains available after hour
+rollover with its original bucket times. A cold process waits for aggregate and
+history measurements before publishing, preserving the previous durable snapshot
+when initial reads fail. Live data is omitted after 60 seconds or when the source reports
 unavailable telemetry. Source timestamps may lead the local clock by up to five
 seconds; larger future offsets or malformed timestamps are rejected.
 

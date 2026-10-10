@@ -94,8 +94,9 @@ serves the homepage and catalogue. [Layout](../src/layouts/Layout.astro) owns sh
 navigation and consent. [OperationalEvidence](../src/components/OperationalEvidence.astro)
 places measurement definitions in a native disclosure.
 [OctopusOperationalStats](../src/components/OctopusOperationalStats.tsx) polls the
-same-origin runtime feed every 30 seconds, with separate freshness checks for
-pipeline readings and historical totals. The widget uses one inset surface,
+same-origin runtime feed every 30 seconds. Freshness controls the live label;
+historical totals and windows retain their original timestamps through outages
+and partial refreshes. The widget uses one inset surface,
 tabular numbers, explicit status text, and quiet dividers.
 [octopus.css](../src/styles/octopus.css) composes shared tokens.
 

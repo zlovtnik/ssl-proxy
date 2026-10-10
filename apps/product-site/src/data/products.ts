@@ -12,6 +12,22 @@ export const octopusCaveat =
   'Delivery can repeat. Octopus records progress and uses durable deduplication to handle replay. Records outside the configured streams are not covered.';
 
 export const octopusMetrics = {
+  status: {
+    ssr: 'Production metrics',
+    loading: 'Connecting to production',
+    live: 'Live production data',
+    warmup: 'Production connected · warming up',
+    delayed: 'Live metrics delayed',
+    historical: 'Latest recorded production data',
+    unavailable: 'Waiting for production data',
+  },
+  pipelineTitle: 'Pipeline now',
+  snapshotTitle: 'Latest snapshot',
+  recorded24hTitle: 'Recorded 24-hour window',
+  recorded7dTitle: 'Recorded 7-day window',
+  current24hTitle: 'Last 24 hours',
+  current7dTitle: 'Last 7 days',
+  recordedMessage: 'Recorded totals and hourly history remain available while live collection starts or recovers.',
   label: 'PIPELINE OBSERVABILITY',
   title: 'Spot backlog. Investigate stalled work.',
   summary:

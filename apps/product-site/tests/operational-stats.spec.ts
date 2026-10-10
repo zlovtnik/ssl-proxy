@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { parseStats } from '../src/data/operational-stats';
+import { parseStats, retainHistory } from '../src/data/operational-stats';
 import { onRequestGet, snapshotKey } from '../functions/api/octopus-stats';
 import { octopusMetrics } from '../src/data/products';
 
@@ -243,6 +243,69 @@ test('a recent backup is labelled historical and does not show live gauges', asy
   );
   await expect(page.locator('[data-metric="rate"]')).toHaveCount(0);
   await expect(page.locator('[data-metric="day"]')).toHaveText('123 records');
+  await page.route('**/api/octopus-stats', (route) => route.abort());
+  await page.reload();
+  await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
+    'data-mode',
+    'historical',
+  );
+  await expect(page.locator('[data-metric="rate"]')).toHaveCount(0);
+});
+
+test('a newer partial response retains historical sections across polls and reload', async ({
+  page,
+}) => {
+  await page.clock.install({ time: captured });
+  let calls = 0;
+  const partial = {
+    ...withThroughput(30_000),
+    peaksComputedAt: null,
+    peakRecordsDay: null,
+    peakRecordsDayDate: null,
+    peakRecordsWeek: null,
+    peakRecordsWeekStart: null,
+    peakRecordsWeekEnd: null,
+    lifetimeTotals: null,
+    throughput24h: null,
+    throughput7d: null,
+  };
+  await page.route('**/api/octopus-stats', (route) =>
+    route.fulfill({ json: ++calls === 1 ? withThroughput() : partial }),
+  );
+  await page.goto('/octopus/');
+  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
+    '45,678',
+  );
+  await page.clock.runFor(30_000);
+  await expect(page.locator('[data-metric="day"]')).toHaveText('123 records');
+  await expect(page.locator('.ops-bar-row')).toHaveCount(24);
+  await expect(page.locator('.ops-spark-bar')).toHaveCount(168);
+  await expect(page.locator('.ops-history time').last()).toHaveAttribute(
+    'datetime',
+    captured.toISOString(),
+  );
+  await page.reload();
+  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
+    '45,678',
+  );
+  await expect(page.locator('.ops-bar-row')).toHaveCount(24);
+});
+
+test('fresh C++ history remains visible while live telemetry starts or recovers', async ({
+  page,
+}) => {
+  await page.clock.install({ time: captured });
+  await page.route('**/api/octopus-stats', (route) =>
+    route.fulfill({ json: { ...withThroughput(), liveStrip: null } }),
+  );
+  await page.goto('/octopus/');
+  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
+    '45,678',
+  );
+  await expect(
+    page.getByText(octopusMetrics.recordedMessage, { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.ops-bar-row')).toHaveCount(24);
 });
 
 test('a failed feed shows a workflow path and automatically recovers to measured data', async ({
@@ -494,6 +557,31 @@ test('response validation accepts historical snapshots and strips unknown keys',
   );
 });
 
+test('retaining history preserves a newly measured empty dataset as zero', () => {
+  const at = new Date(captured.getTime() + 600_000);
+  const measured = parseStats(
+    {
+      ...withThroughput(600_000),
+      peakRecordsDay: null,
+      peakRecordsDayDate: null,
+      peakRecordsWeek: null,
+      peakRecordsWeekStart: null,
+      peakRecordsWeekEnd: null,
+      lifetimeTotals: {
+        recordsTotal: 0,
+        daysCounted: 0,
+        computedAt: at.toISOString(),
+      },
+      throughput24h: hourlySeries(at, 24, () => 0),
+      throughput7d: hourlySeries(at, 168, () => 0),
+    },
+    at.getTime(),
+  );
+  expect(
+    retainHistory(measured, parseStats(withThroughput(), captured.getTime())),
+  ).toEqual(measured);
+});
+
 test('Pages proxy passes only measured public fields and fails closed', async () => {
   const original = globalThis.fetch;
   const request = new Request('https://rclabs.uk/api/octopus-stats');
@@ -601,6 +689,41 @@ test('late older requests cannot overwrite newer durable history', async () => {
       snapshotKey('2026-10-08T12:30:00.123456789Z') <
         snapshotKey('2026-10-08T12:30:00.123Z'),
     ).toBe(true);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('API and durable backup retain original history through a newer partial snapshot', async () => {
+  const original = globalThis.fetch;
+  const { env, values } = backup();
+  values.set('bootstrap', JSON.stringify(withThroughput()));
+  const partial = {
+    ...withThroughput(600_000),
+    peaksComputedAt: null,
+    peakRecordsDay: null,
+    peakRecordsDayDate: null,
+    peakRecordsWeek: null,
+    peakRecordsWeekStart: null,
+    peakRecordsWeekEnd: null,
+    lifetimeTotals: null,
+    throughput24h: null,
+    throughput7d: null,
+  };
+  const request = new Request('https://rclabs.uk/api/octopus-stats');
+  try {
+    globalThis.fetch = async () => Response.json(partial);
+    const body = await (await onRequestGet({ request, env })).json();
+    expect(body.asOf).toBe(partial.asOf);
+    expect(body.peaksComputedAt).toBe(captured.toISOString());
+    expect(body.lifetimeTotals).toEqual(withThroughput().lifetimeTotals);
+    expect(body.throughput7d).toEqual(withThroughput().throughput7d);
+    globalThis.fetch = async () => {
+      throw new Error('outage');
+    };
+    const retained = await (await onRequestGet({ request, env })).json();
+    expect(retained.lifetimeTotals.recordsTotal).toBe(45_678);
+    expect(retained.throughput7d.series).toHaveLength(168);
   } finally {
     globalThis.fetch = original;
   }

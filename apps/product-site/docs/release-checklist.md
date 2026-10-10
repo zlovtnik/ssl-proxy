@@ -71,6 +71,10 @@ response, never a build fixture. New backup versions use separate reverse-time
 keys, so older requests cannot replace newer stored measurements. Copies are
 refreshed at most once per five-minute measurement interval; original timestamps
 remain visible. Cross-region KV propagation can delay discovery of a new copy.
+Partial responses retain previously measured historical sections with their
+original computation/bucket timestamps. A measured empty/zero response remains
+zero; old live gauges are never merged into a new response. Browser restoration
+stays historical until a successful current gateway read.
 
 - Verify two real responses at least 30 seconds apart have advancing `asOf`
   values. Counts can legitimately remain unchanged.

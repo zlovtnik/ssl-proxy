@@ -4,6 +4,7 @@ import {
   isFresh,
   maxStatsAgeMs,
   parseStats,
+  retainHistory,
   type Stats,
   type ThroughputSeries,
 } from '../data/operational-stats';
@@ -45,15 +46,7 @@ type Mode =
   | 'historical'
   | 'unavailable';
 
-const statusText: Record<Mode, string> = {
-  ssr: 'Production metrics',
-  loading: 'Connecting to production',
-  live: 'Live production data',
-  warmup: 'Production connected · warming up',
-  delayed: 'Live metrics delayed',
-  historical: 'Latest recorded production data',
-  unavailable: 'Waiting for production data',
-};
+const statusText: Record<Mode, string> = octopusMetrics.status;
 
 export default function OctopusOperationalStats() {
   const [stats, setStats] = createSignal<Stats | null>(null);
@@ -121,6 +114,14 @@ export default function OctopusOperationalStats() {
     mode() !== 'loading';
   const windowSeries = (key: 'throughput24h' | 'throughput7d') =>
     windowReady(key) ? stats()![key]! : null;
+  const currentWindow = (key: 'throughput24h' | 'throughput7d') => {
+    const series = windowSeries(key)?.series;
+    return (
+      series &&
+      Date.parse(series[series.length - 1].bucketStart) >=
+        Math.floor(now() / 3_600_000) * 3_600_000 - 3_600_000
+    );
+  };
 
   onMount(() => {
     const savedKey = 'octopus-stats:v2';
@@ -128,7 +129,7 @@ export default function OctopusOperationalStats() {
       const saved = localStorage.getItem(savedKey);
       if (saved) {
         setStats(parseStats(JSON.parse(saved)));
-        setFetchState('failed');
+        setFetchState('historical');
       }
     } catch {
       // Storage can be disabled or contain an invalid previous response.
@@ -153,9 +154,10 @@ export default function OctopusOperationalStats() {
           failStreak = 0;
           setNow(Date.now());
           if (!stats() || Date.parse(data.asOf) >= Date.parse(stats()!.asOf)) {
-            setStats(data);
+            const kept = retainHistory(data, stats() ?? undefined);
+            setStats(kept);
             try {
-              localStorage.setItem(savedKey, JSON.stringify(data));
+              localStorage.setItem(savedKey, JSON.stringify(kept));
             } catch {
               // Persistence failure must not discard a measured response.
             }
@@ -171,7 +173,9 @@ export default function OctopusOperationalStats() {
           failStreak = Math.min(failStreak + 1, 3);
           setNow(Date.now());
           // Keep measured history through failures, including after expiry.
-          setFetchState('failed');
+          setFetchState((state) =>
+            state === 'historical' ? 'historical' : 'failed',
+          );
         }
       } finally {
         clearTimeout(timeout);
@@ -250,14 +254,18 @@ export default function OctopusOperationalStats() {
         }
       >
         <div class="ops-snapshot">
-          <h3>{liveStrip() ? 'Pipeline now' : 'Latest snapshot'}</h3>
+          <h3>
+            {liveStrip()
+              ? octopusMetrics.pipelineTitle
+              : octopusMetrics.snapshotTitle}
+          </h3>
           <Show
             when={liveStrip() !== null}
             fallback={
               <p>
                 {mode() === 'warmup'
                   ? octopusMetrics.warmup
-                  : 'Live collection is delayed. Recorded totals and hourly history remain available below.'}
+                  : octopusMetrics.recordedMessage}
               </p>
             }
           >
@@ -450,9 +458,9 @@ export default function OctopusOperationalStats() {
             </Show>
             <div class="ops-window">
               <h4 id="ops-24h-title">
-                {mode() === 'historical'
-                  ? 'Recorded 24-hour window'
-                  : 'Last 24 hours'}
+                {mode() === 'historical' || !currentWindow('throughput24h')
+                  ? octopusMetrics.recorded24hTitle
+                  : octopusMetrics.current24hTitle}
               </h4>
               <Show
                 when={windowSeries('throughput24h')}
@@ -506,9 +514,9 @@ export default function OctopusOperationalStats() {
             </div>
             <div class="ops-window">
               <h4 id="ops-7d-title">
-                {mode() === 'historical'
-                  ? 'Recorded 7-day window'
-                  : 'Last 7 days'}
+                {mode() === 'historical' || !currentWindow('throughput7d')
+                  ? octopusMetrics.recorded7dTitle
+                  : octopusMetrics.current7dTitle}
               </h4>
               <Show
                 when={windowSeries('throughput7d')}
