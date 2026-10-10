@@ -36,7 +36,7 @@ images:
 - digest: sha256:2c6782a23c90821338a00cd475cbc0f9fdcd6a2e1ae0487847ee07e375d51b8c
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
-- digest: sha256:fcf9438a6b4b5fa070363abca750328c6ed021ce308d6ed8c858426c6f9164be
+- digest: sha256:ffa2d5f4aa49934c75ef545c35e6dff766dec19864cbc7cf1db917fe4ce039b0
   name: stats-reader
   newName: 192.168.1.242:5000/stats-reader
 patches:

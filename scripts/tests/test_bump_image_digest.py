@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +16,18 @@ IMAGE_CONTRACT = REPOSITORY_ROOT / "scripts" / "image_contract.py"
 DIGEST = "sha256:" + "a" * 64
 
 
+def _load_service_slices() -> dict[str, str]:
+    spec = importlib.util.spec_from_file_location("image_contract", IMAGE_CONTRACT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return dict(module.SERVICE_SLICES)
+
+
+SERVICE_SLICES = _load_service_slices()
+
+
 class BumpImageDigestTest(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
@@ -22,18 +36,31 @@ class BumpImageDigestTest(unittest.TestCase):
         (self.root / "scripts").mkdir()
         shutil.copy2(SCRIPT, self.root / "scripts" / SCRIPT.name)
         shutil.copy2(IMAGE_CONTRACT, self.root / "scripts" / IMAGE_CONTRACT.name)
+        # java-coordinator also checks Octopus git identity; the mapping test
+        # only needs that call to succeed against the synthetic fixture.
+        (self.root / "scripts" / "octopus_image_contract.py").write_text(
+            "raise SystemExit(0)\n",
+            encoding="utf-8",
+        )
         for environment in ("prod",):
             for slice_name in ("app-stack", "data-plane"):
                 overlay = self.root / "cyber-stack" / "matrix" / environment / slice_name
                 overlay.mkdir(parents=True)
-                image = "postgres-runtime-schema" if slice_name == "data-plane" else "ssl-proxy"
+                services = [
+                    service
+                    for service, owned_slice in SERVICE_SLICES.items()
+                    if owned_slice == slice_name
+                ]
+                images = "".join(
+                    f"  - name: {service}\n"
+                    f"    newName: registry/{service}\n"
+                    "    digest: sha256:" + "b" * 64 + "\n"
+                    for service in services
+                )
                 (overlay / "kustomization.yaml").write_text(
                     "apiVersion: kustomize.config.k8s.io/v1beta1\n"
                     "kind: Kustomization\n"
-                    "images:\n"
-                    f"  - name: {image}\n"
-                    f"    newName: registry/{image}\n"
-                    "    digest: sha256:" + "b" * 64 + "\n",
+                    "images:\n" + images,
                     encoding="utf-8",
                 )
         self.kustomize = self.root / "fake-kustomize"
@@ -104,6 +131,22 @@ class BumpImageDigestTest(unittest.TestCase):
         app_stack = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
         self.assertIn(f"digest: {DIGEST}", data_plane.read_text())
         self.assertIn("digest: sha256:" + "b" * 64, app_stack.read_text())
+
+    def test_accepts_every_first_party_image_contract_service(self) -> None:
+        for service, slice_name in SERVICE_SLICES.items():
+            with self.subTest(service=service):
+                result = self.run_helper(service, "prod", DIGEST)
+
+                self.assertEqual(0, result.returncode, result.stderr)
+                owner = (
+                    self.root
+                    / "cyber-stack"
+                    / "matrix"
+                    / "prod"
+                    / slice_name
+                    / "kustomization.yaml"
+                )
+                self.assertIn(f"digest: {DIGEST}", owner.read_text())
 
     def test_accepts_kustomize_reordered_image_mapping_keys(self) -> None:
         for relative in ("cyber-stack/matrix/prod/app-stack/kustomization.yaml",):

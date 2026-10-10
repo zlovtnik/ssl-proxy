@@ -35,7 +35,7 @@ case "$service" in
   postgres-runtime-schema)
     slice="data-plane"
     ;;
-  ssl-proxy|java-coordinator|atheros-sensor|atheros-search|atheros-search-ui|schema-migrator-backend|schema-migrator-ui)
+  ssl-proxy|java-coordinator|atheros-sensor|atheros-search|atheros-search-ui|schema-migrator-backend|schema-migrator-ui|stats-reader)
     slice="app-stack"
     ;;
   wg-key-rotator)
