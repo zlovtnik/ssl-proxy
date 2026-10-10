@@ -148,6 +148,11 @@ void Service::publisher() {
   while (wait_until(steady_clock::now() + seconds{config_.publish_interval},
                     stop)) {
     const auto state = cache_.read();
+    // A cold/partial process must not replace durable history with nulls.
+    // Readers continue serving the previously published snapshot while initial
+    // measurements retry, independently of coordinator telemetry availability.
+    if (!state.aggregates || !state.history)
+      continue;
     // Gate publication on the canonical schema proof, also after a schema
     // change. Measurement failures still publish partial last-good data.
     auto proof = repository.verify(steady_clock::now() + seconds{config_.timeout}, stop);

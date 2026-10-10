@@ -77,8 +77,13 @@ void history_and_contract() {
           "complete hour");
   require(std::int64_t(week.at(167)["records"]) == 7, "numeric count");
   auto stale = decode(parser, state, at + hours{1});
-  require(stale["throughput24h"].is_null() && stale["throughput7d"].is_null(),
-          "expired window omitted");
+  require(stale["throughput24h"]["series"].get_array().value().size() == 24 &&
+              stale["throughput7d"]["series"].get_array().value().size() == 168,
+          "last-good history survives hour rollover");
+  require(std::string_view(stale["throughput7d"]["series"].at(167)["bucketStart"]) ==
+              "2026-10-08T11:00:00Z" &&
+              std::int64_t(stale["throughput7d"]["series"].at(167)["records"]) == 7,
+          "historical window retains original buckets and counts");
   require(std::string_view(stale["lifetimeTotals"]["computedAt"]) == iso(at),
           "last-good timestamp retained");
   const auto paths = object_paths(at);

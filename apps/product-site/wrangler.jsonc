@@ -4,4 +4,10 @@
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-10-06",
   "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [
+    {
+      "binding": "METRICS_HISTORY",
+      "id": "915bfacbc0544e26934853e1dc4859b0",
+    },
+  ],
 }

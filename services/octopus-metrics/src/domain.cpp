@@ -247,15 +247,17 @@ std::pmr::string serialize(const State &state, Time at,
     out += value.backpressure ? "true}" : "false}";
   } else
     out += "null";
-  const bool current =
-      state.history && state.history->value.until == floor<hours>(at);
+  // A failed refresh must not erase measured history at the next UTC hour.
+  // Bucket timestamps identify the original window without inventing new data.
+  const bool measured =
+      state.history && state.history->value.until <= floor<hours>(at);
   out += ",\"throughput24h\":";
-  if (current)
+  if (measured)
     series(out, state.history->value, 24);
   else
     out += "null";
   out += ",\"throughput7d\":";
-  if (current)
+  if (measured)
     series(out, state.history->value, 168);
   else
     out += "null";

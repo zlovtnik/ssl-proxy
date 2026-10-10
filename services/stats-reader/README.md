@@ -11,7 +11,7 @@ service's separate account, image and GitOps cutover are ready.
 
 | Route | Behavior |
 |---|---|
-| `GET /public/stats` | Redis `GET stats:current:v2` -> MinIO `stats/latest.json` -> in-process last-good -> `503 {"error":"Metrics unavailable"}` |
+| `GET /public/stats` | Redis `GET stats:current:v2` -> MinIO `stats/latest.json` -> in-process last-good; 503 only when no source has ever supplied a valid snapshot |
 | `GET /ready` | Always `200 ok` once the process is up |
 | `GET /live` | Always `200 ok` once the process is up |
 | `GET /health` | `200 {"redis":bool,"minio":bool}` for operators (not used by Traefik) |

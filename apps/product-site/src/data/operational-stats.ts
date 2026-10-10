@@ -59,6 +59,36 @@ export function isFresh(value: string, now: number, maxAge: number) {
   return age >= -5_000 && age <= maxAge;
 }
 
+// A partial refresh cannot erase already measured historical sections. Keep
+// each section intact, including its original computation/bucket timestamps.
+// Live gauges always come from the new response, never from an older part.
+export function retainHistory(current: Stats, previous?: Stats): Stats {
+  if (!previous) return current;
+  const measuredEmpty = current.lifetimeTotals?.recordsTotal === 0;
+  const lostPeak =
+    (previous.peakRecordsDay !== null && current.peakRecordsDay === null) ||
+    (previous.peakRecordsWeek !== null && current.peakRecordsWeek === null);
+  const keepPeaks =
+    previous.peaksComputedAt !== null &&
+    (current.peaksComputedAt === null || (lostPeak && !measuredEmpty));
+  return {
+    ...current,
+    ...(keepPeaks
+      ? {
+          peaksComputedAt: previous.peaksComputedAt,
+          peakRecordsDay: previous.peakRecordsDay,
+          peakRecordsDayDate: previous.peakRecordsDayDate,
+          peakRecordsWeek: previous.peakRecordsWeek,
+          peakRecordsWeekStart: previous.peakRecordsWeekStart,
+          peakRecordsWeekEnd: previous.peakRecordsWeekEnd,
+        }
+      : {}),
+    lifetimeTotals: current.lifetimeTotals ?? previous.lifetimeTotals,
+    throughput24h: current.throughput24h ?? previous.throughput24h,
+    throughput7d: current.throughput7d ?? previous.throughput7d,
+  };
+}
+
 // A measured series object is full length and contiguous; a measured bucket may
 // honestly be 0. Absent or null means never computed, never an empty zero chart.
 const throughputSeries = (
@@ -88,9 +118,9 @@ export function parseStats(value: unknown, now = Date.now()): Stats {
   if (
     !object(value) ||
     !instant(value.asOf) ||
-    !isFresh(value.asOf, now, maxStatsAgeMs)
+    Date.parse(value.asOf) > now + 5_000
   )
-    throw new Error('Stale metrics');
+    throw new Error('Invalid snapshot timestamp');
   const v = value;
   if (
     !(v.peaksComputedAt === null || instant(v.peaksComputedAt)) ||

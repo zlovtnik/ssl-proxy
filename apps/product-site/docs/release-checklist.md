@@ -62,9 +62,19 @@ The [Pages Function](../functions/api/octopus-stats.ts) serves
 `/api/octopus-stats` and forwards only validated public fields from the
 store-backed reader. Snapshots publish every 30 seconds and peaks refresh on a
 separate 300-second cache. Production hosts are enabled in code; preview hosts
-return 503. There is no build-time metrics configuration or saved measurement
-fallback. The proxy accepts bodies up to 16384 bytes so a full 168-bucket
-payload fits.
+return 503. There is no build-time metrics configuration. The proxy retains
+validated public snapshots in Cloudflare KV and accepts historical timestamps.
+The browser retains its last measured snapshot across reloads. The proxy bounds
+both response size (16384 bytes) and the complete fetch/read (8 seconds).
+The non-expiring `bootstrap` backup is a copy of a real validated runtime
+response, never a build fixture. New backup versions use separate reverse-time
+keys, so older requests cannot replace newer stored measurements. Copies are
+refreshed at most once per five-minute measurement interval; original timestamps
+remain visible. Cross-region KV propagation can delay discovery of a new copy.
+Partial responses retain previously measured historical sections with their
+original computation/bucket timestamps. A measured empty/zero response remains
+zero; old live gauges are never merged into a new response. Browser restoration
+stays historical until a successful current gateway read.
 
 - Verify two real responses at least 30 seconds apart have advancing `asOf`
   values. Counts can legitimately remain unchanged.
@@ -74,29 +84,29 @@ payload fits.
   `throughput7d` holds 168, each with `bucket: hour`.
 - Confirm a missing lifetime or throughput window renders unavailable rather
   than an empty chart of zeros; a measured bucket may honestly be zero.
-- Verify the public gateway targets Service port 8080, which forwards to
-  container port 8081. NetworkPolicy still allows Traefik to container port 8081.
-- Confirm `OCTOPUS_PUBLIC_STATS_ENABLED` and the allowed origins in the rendered
-  deployment. Internal metrics endpoints remain private.
-- The production allowlist includes the exact published Figma reference origin,
-  `https://palm-beauty-99316208.figma.site`, so its direct public-feed request works
-  after promotion. Unpublished Make preview origins are not allowlisted.
+- Verify the public gateway targets the stats reader's Service and container
+  port 8080. NetworkPolicy allows Traefik to that reader port.
+- Confirm `STATS_ALLOWED_ORIGINS` in the reader deployment. The C++ worker's
+  coordinator telemetry bridge remains internal.
 - Compare displayed readings to the coordinator's collected observations.
   Zero is valid only after successful collection. A fresh HTTP timestamp alone
   does not prove the underlying process gauges were sampled.
 - After a restart, the live strip stays unavailable during the five-minute rate
   window. It also becomes unavailable if required collection is over 60 seconds old.
-- Test a failed request, invalid JSON, missing fields, and stale source timestamps.
-  The page must remove the old readings and stop saying live.
+- Test a failed request, invalid JSON, a stalled response body, and old source
+  timestamps. The page must retain recorded history and stop saying live.
+- Reload during an outage and verify measured totals, original dates and hourly
+  windows remain visible. An initial visit with no snapshot at any source still
+  requires the first real publication; caches cannot manufacture measurements.
 - Verify no-JavaScript output contains no measurements, and preview builds do not
   fetch production.
-- Publish through reviewed Git changes and immutable coordinator image promotion,
+- Publish through reviewed Git changes and immutable C++ worker/reader image promotion,
   then repeat these checks against the deployed revision.
 
 The source of historical peaks is `octopus_core.ingestion_evidence.first_seen_at`
-across all paths and dispositions. The processing rate sums successful scheduled
-ledger processing counts across a full five-minute window. The last successful
-check may have processed no records; it is not evidence of fresh traffic.
+across all paths and dispositions. The processing rate counts committed broker
+deliveries over five minutes, including replays and parked records. Pending
+ledger rows and broker backlog are separate gauges.
 
 Screen-reader and participant evaluation remain separate from automated tests.
 See [WCAG 2.2](https://www.w3.org/TR/WCAG22/) for evaluation criteria.

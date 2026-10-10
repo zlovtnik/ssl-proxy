@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { parseStats } from '../src/data/operational-stats';
-import { onRequestGet } from '../functions/api/octopus-stats';
+import { parseStats, retainHistory } from '../src/data/operational-stats';
+import { onRequestGet, snapshotKey } from '../functions/api/octopus-stats';
 import { octopusMetrics } from '../src/data/products';
 
 const captured = new Date('2026-10-09T12:00:00Z');
@@ -47,6 +47,30 @@ const withThroughput = (offset = 0, count = 123) => ({
   throughput24h: hourlySeries(captured, 24, (i) => (i % 5) * 3),
   throughput7d: hourlySeries(captured, 168, (i) => i % 24),
 });
+
+const backup = () => {
+  const values = new Map<string, string>();
+  return {
+    values,
+    env: {
+      METRICS_HISTORY: {
+        list: async () => ({
+          list_complete: true as const,
+          cacheStatus: null,
+          keys: [...values.keys()]
+            .filter((key) => key.startsWith('v2/'))
+            .sort()
+            .slice(0, 3)
+            .map((name) => ({ name })),
+        }),
+        get: async (key: string) => values.get(key) ?? null,
+        put: async (key: string, value: string) => {
+          values.set(key, value);
+        },
+      },
+    },
+  };
+};
 
 test('new responses update every displayed metric; a failed poll keeps the last reading then recovers', async ({
   page,
@@ -113,7 +137,12 @@ test('partial readings explain warmup and missing history without displaying inv
     route.fulfill({
       json: {
         ...reading(),
-        peaksComputedAt: new Date(captured.getTime() - 361_000).toISOString(),
+        peaksComputedAt: null,
+        peakRecordsDay: null,
+        peakRecordsDayDate: null,
+        peakRecordsWeek: null,
+        peakRecordsWeekStart: null,
+        peakRecordsWeekEnd: null,
         liveStrip: null,
       },
     }),
@@ -136,19 +165,19 @@ test('partial readings explain warmup and missing history without displaying inv
   await expect(page.locator('.ops-spark')).toHaveCount(0);
 });
 
-test('repeated cached responses lose live status when the source timestamp expires', async ({
+test('expired responses keep measured history and original timestamps', async ({
   page,
 }) => {
   await page.clock.install({ time: captured });
   await page.route('**/api/octopus-stats', (route) =>
-    route.fulfill({ json: reading() }),
+    route.fulfill({ json: withThroughput() }),
   );
   await page.goto('/octopus/');
   await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
     'data-live',
     'true',
   );
-  // maxStatsAgeMs is 180 seconds; readings expire after that window.
+  // Freshness changes the label, never the availability of measured history.
   await page.clock.runFor(182_000);
   await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
     'data-live',
@@ -156,13 +185,127 @@ test('repeated cached responses lose live status when the source timestamp expir
   );
   await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
     'data-mode',
-    'unavailable',
+    'historical',
   );
-  await expect(page.locator('[data-metric]')).toHaveCount(0);
-  await expect(page.locator('.ops-empty')).toContainText(
-    octopusMetrics.empty.description,
+  await expect(page.locator('[data-metric="day"]')).toHaveText('123 records');
+  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
+    '45,678',
   );
-  await expect(page.locator('[data-ux="ops-stats"] time')).toHaveCount(0);
+  await expect(page.locator('[data-metric="rate"]')).toHaveCount(0);
+  await expect(page.locator('.ops-bar-row')).toHaveCount(24);
+  await expect(page.locator('.ops-spark-bar')).toHaveCount(168);
+  await expect(page.getByRole('status')).toHaveText(
+    'Latest recorded production data',
+  );
+  await expect(page.locator('.ops-snapshot time')).toHaveAttribute(
+    'datetime',
+    captured.toISOString(),
+  );
+});
+
+test('browser restores measured history after reload during an outage', async ({
+  page,
+}) => {
+  await page.clock.install({ time: captured });
+  let failed = false;
+  await page.route('**/api/octopus-stats', (route) =>
+    failed ? route.abort() : route.fulfill({ json: withThroughput() }),
+  );
+  await page.goto('/octopus/');
+  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
+    '45,678',
+  );
+  failed = true;
+  await page.clock.runFor(240_000);
+  await page.reload();
+  await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
+    'data-mode',
+    'historical',
+  );
+  await expect(page.locator('[data-metric="day"]')).toHaveText('123 records');
+  await expect(page.locator('.ops-bar-row')).toHaveCount(24);
+});
+
+test('a recent backup is labelled historical and does not show live gauges', async ({
+  page,
+}) => {
+  await page.clock.install({ time: captured });
+  await page.route('**/api/octopus-stats', (route) =>
+    route.fulfill({
+      json: withThroughput(),
+      headers: { 'X-Metrics-State': 'historical' },
+    }),
+  );
+  await page.goto('/octopus/');
+  await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
+    'data-mode',
+    'historical',
+  );
+  await expect(page.locator('[data-metric="rate"]')).toHaveCount(0);
+  await expect(page.locator('[data-metric="day"]')).toHaveText('123 records');
+  await page.route('**/api/octopus-stats', (route) => route.abort());
+  await page.reload();
+  await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
+    'data-mode',
+    'historical',
+  );
+  await expect(page.locator('[data-metric="rate"]')).toHaveCount(0);
+});
+
+test('a newer partial response retains historical sections across polls and reload', async ({
+  page,
+}) => {
+  await page.clock.install({ time: captured });
+  let calls = 0;
+  const partial = {
+    ...withThroughput(30_000),
+    peaksComputedAt: null,
+    peakRecordsDay: null,
+    peakRecordsDayDate: null,
+    peakRecordsWeek: null,
+    peakRecordsWeekStart: null,
+    peakRecordsWeekEnd: null,
+    lifetimeTotals: null,
+    throughput24h: null,
+    throughput7d: null,
+  };
+  await page.route('**/api/octopus-stats', (route) =>
+    route.fulfill({ json: ++calls === 1 ? withThroughput() : partial }),
+  );
+  await page.goto('/octopus/');
+  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
+    '45,678',
+  );
+  await page.clock.runFor(30_000);
+  await expect(page.locator('[data-metric="day"]')).toHaveText('123 records');
+  await expect(page.locator('.ops-bar-row')).toHaveCount(24);
+  await expect(page.locator('.ops-spark-bar')).toHaveCount(168);
+  await expect(page.locator('.ops-history time').last()).toHaveAttribute(
+    'datetime',
+    captured.toISOString(),
+  );
+  await page.reload();
+  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
+    '45,678',
+  );
+  await expect(page.locator('.ops-bar-row')).toHaveCount(24);
+});
+
+test('fresh C++ history remains visible while live telemetry starts or recovers', async ({
+  page,
+}) => {
+  await page.clock.install({ time: captured });
+  await page.route('**/api/octopus-stats', (route) =>
+    route.fulfill({ json: { ...withThroughput(), liveStrip: null } }),
+  );
+  await page.goto('/octopus/');
+  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
+    '45,678',
+  );
+  await expect(
+    page.getByText(octopusMetrics.recordedMessage, { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.ops-bar-row')).toHaveCount(24);
 });
 
 test('a failed feed shows a workflow path and automatically recovers to measured data', async ({
@@ -359,12 +502,16 @@ test('response validation rejects wrong series lengths and broken hours', () => 
     expect(() => parseStats(invalid, captured.getTime())).toThrow();
 });
 
-test('response validation rejects stale asOf and strips unknown keys', () => {
-  // Fresh inside the 180-second window, stale beyond it.
+test('response validation accepts historical snapshots and strips unknown keys', () => {
   expect(() =>
     parseStats(reading(0), captured.getTime() + 180_000),
   ).not.toThrow();
-  expect(() => parseStats(reading(0), captured.getTime() + 181_000)).toThrow();
+  expect(() =>
+    parseStats(reading(0), captured.getTime() + 181_000),
+  ).not.toThrow();
+  expect(
+    parseStats(withThroughput(), captured.getTime() + 30 * 86400_000).asOf,
+  ).toBe(captured.toISOString());
   const parsed = parseStats(
     {
       ...withThroughput(),
@@ -410,6 +557,31 @@ test('response validation rejects stale asOf and strips unknown keys', () => {
   );
 });
 
+test('retaining history preserves a newly measured empty dataset as zero', () => {
+  const at = new Date(captured.getTime() + 600_000);
+  const measured = parseStats(
+    {
+      ...withThroughput(600_000),
+      peakRecordsDay: null,
+      peakRecordsDayDate: null,
+      peakRecordsWeek: null,
+      peakRecordsWeekStart: null,
+      peakRecordsWeekEnd: null,
+      lifetimeTotals: {
+        recordsTotal: 0,
+        daysCounted: 0,
+        computedAt: at.toISOString(),
+      },
+      throughput24h: hourlySeries(at, 24, () => 0),
+      throughput7d: hourlySeries(at, 168, () => 0),
+    },
+    at.getTime(),
+  );
+  expect(
+    retainHistory(measured, parseStats(withThroughput(), captured.getTime())),
+  ).toEqual(measured);
+});
+
 test('Pages proxy passes only measured public fields and fails closed', async () => {
   const original = globalThis.fetch;
   const request = new Request('https://rclabs.uk/api/octopus-stats');
@@ -444,9 +616,154 @@ test('Pages proxy passes only measured public fields and fails closed', async ()
     globalThis.fetch = async () =>
       new Response('upstream failed', { status: 500 });
     expect((await onRequestGet({ request })).status).toBe(503);
+    globalThis.fetch = async () => Response.json(withThroughput());
+    const historical = await onRequestGet({ request });
+    expect(historical.status).toBe(200);
+    expect(historical.headers.get('x-metrics-state')).toBe('historical');
+    expect((await historical.json()).asOf).toBe(captured.toISOString());
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('Pages proxy retains the edge snapshot through upstream failures and regressions', async () => {
+  const originalFetch = globalThis.fetch;
+  const { env } = backup();
+  const request = new Request('https://rclabs.uk/api/octopus-stats');
+  try {
+    globalThis.fetch = async () => Response.json(withThroughput());
+    expect((await onRequestGet({ request, env })).status).toBe(200);
+    for (const fail of [
+      async () => new Response('failed', { status: 503 }),
+      async () => {
+        throw new Error('connection failed');
+      },
+      async () => new Response('invalid JSON'),
+      async () => new Response('x'.repeat(16385)),
+      async () => Response.json(withThroughput(-86400_000)),
+    ]) {
+      globalThis.fetch = fail;
+      const response = await onRequestGet({ request, env });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('x-metrics-state')).toBe('historical');
+      const body = await response.json();
+      expect(body.asOf).toBe(captured.toISOString());
+      expect(body.lifetimeTotals.recordsTotal).toBe(45_678);
+      expect(body.throughput7d.series).toHaveLength(168);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('late older requests cannot overwrite newer durable history', async () => {
+  const original = globalThis.fetch;
+  const { env, values } = backup();
+  values.set(
+    snapshotKey(captured.toISOString()),
+    JSON.stringify(withThroughput()),
+  );
+  const request = new Request('https://rclabs.uk/api/octopus-stats');
+  let release: (response: Response) => void = () => {};
+  let calls = 0;
+  try {
     globalThis.fetch = async () =>
-      Response.json({ ...measured, asOf: '2020-01-01T00:00:00Z' });
-    expect((await onRequestGet({ request })).status).toBe(503);
+      ++calls === 1
+        ? new Promise<Response>((resolve) => {
+            release = resolve;
+          })
+        : Response.json(withThroughput(600_000, 300));
+    const slow = onRequestGet({ request, env });
+    const fast = onRequestGet({ request, env });
+    await fast;
+    release(Response.json(withThroughput(300_000, 200)));
+    await slow;
+    globalThis.fetch = async () => {
+      throw new Error('gateway outage');
+    };
+    const retained = await (await onRequestGet({ request, env })).json();
+    expect(retained.asOf).toBe(withThroughput(600_000).asOf);
+    expect(retained.peakRecordsDay).toBe(300);
+    expect(values.size).toBe(3);
+    expect(
+      snapshotKey('2026-10-08T12:30:00.123456789Z') <
+        snapshotKey('2026-10-08T12:30:00.123Z'),
+    ).toBe(true);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('API and durable backup retain original history through a newer partial snapshot', async () => {
+  const original = globalThis.fetch;
+  const { env, values } = backup();
+  values.set('bootstrap', JSON.stringify(withThroughput()));
+  const partial = {
+    ...withThroughput(600_000),
+    peaksComputedAt: null,
+    peakRecordsDay: null,
+    peakRecordsDayDate: null,
+    peakRecordsWeek: null,
+    peakRecordsWeekStart: null,
+    peakRecordsWeekEnd: null,
+    lifetimeTotals: null,
+    throughput24h: null,
+    throughput7d: null,
+  };
+  const request = new Request('https://rclabs.uk/api/octopus-stats');
+  try {
+    globalThis.fetch = async () => Response.json(partial);
+    const body = await (await onRequestGet({ request, env })).json();
+    expect(body.asOf).toBe(partial.asOf);
+    expect(body.peaksComputedAt).toBe(captured.toISOString());
+    expect(body.lifetimeTotals).toEqual(withThroughput().lifetimeTotals);
+    expect(body.throughput7d).toEqual(withThroughput().throughput7d);
+    globalThis.fetch = async () => {
+      throw new Error('outage');
+    };
+    const retained = await (await onRequestGet({ request, env })).json();
+    expect(retained.lifetimeTotals.recordsTotal).toBe(45_678);
+    expect(retained.throughput7d.series).toHaveLength(168);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('permanent recorded history covers backup listing failure', async () => {
+  const original = globalThis.fetch;
+  const { env, values } = backup();
+  values.set('bootstrap', JSON.stringify(withThroughput()));
+  env.METRICS_HISTORY.list = async () => {
+    throw new Error('listing unavailable');
+  };
+  try {
+    globalThis.fetch = async () => {
+      throw new Error('gateway outage');
+    };
+    const response = await onRequestGet({
+      request: new Request('https://rclabs.uk/api/octopus-stats'),
+      env,
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).lifetimeTotals.recordsTotal).toBe(45_678);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('a stalled backup read cannot prevent a gateway snapshot response', async () => {
+  const original = globalThis.fetch;
+  const { env, values } = backup();
+  values.set('bootstrap', JSON.stringify(withThroughput()));
+  env.METRICS_HISTORY.get = async () => new Promise<string>(() => {});
+  try {
+    globalThis.fetch = async () => Response.json(withThroughput());
+    const response = await onRequestGet({
+      request: new Request('https://rclabs.uk/api/octopus-stats'),
+      env,
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).throughput7d.series).toHaveLength(168);
   } finally {
     globalThis.fetch = original;
   }
@@ -484,5 +801,43 @@ test('Pages proxy accepts a full-size snapshot inside the raised body cap', asyn
     expect((await onRequestGet({ request })).status).toBe(503);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+test('Pages proxy returns history when response headers or body stall', async () => {
+  const originalFetch = globalThis.fetch;
+  const { env, values } = backup();
+  values.set('bootstrap', JSON.stringify(withThroughput()));
+  const request = new Request('https://rclabs.uk/api/octopus-stats');
+  try {
+    for (const stalledBody of [false, true]) {
+      let aborted = false;
+      globalThis.fetch = async (_input, init) => {
+        if (stalledBody) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                init!.signal!.addEventListener('abort', () => {
+                  aborted = true;
+                  controller.error(new Error('Aborted'));
+                });
+              },
+            }),
+          );
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init!.signal!.addEventListener('abort', () => {
+            aborted = true;
+            reject(new Error('Aborted'));
+          });
+        });
+      };
+      const response = await onRequestGet({ request, env });
+      expect(aborted).toBe(true);
+      expect(response.status).toBe(200);
+      expect((await response.json()).asOf).toBe(captured.toISOString());
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

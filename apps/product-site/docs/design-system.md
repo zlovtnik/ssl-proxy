@@ -69,8 +69,9 @@ emphasis keeps all three workflow steps visible. Both audience cards are
 available without JavaScript; hydration enables the Engineering/Operations
 toggle using `hidden`, `inert`, and `aria-hidden`. Metrics show a compact
 explanation and workflow link until validated runtime data arrives. Warmup and
-missing history use section-level explanations. No count-up animation or numeric fallback
-is permitted. Named `data-ux` wrappers identify islands for tests.
+missing history use section-level explanations. Saved measured history keeps its
+original timestamps and remains visible during outages. Invented numeric values
+and count-up animation are prohibited. Named `data-ux` wrappers identify islands for tests.
 
 Native disclosures stay in document flow. Long SQL, identifiers, and explanations
 wrap within their panel. [Layout regressions](../tests/layout.spec.ts) open
@@ -93,8 +94,9 @@ serves the homepage and catalogue. [Layout](../src/layouts/Layout.astro) owns sh
 navigation and consent. [OperationalEvidence](../src/components/OperationalEvidence.astro)
 places measurement definitions in a native disclosure.
 [OctopusOperationalStats](../src/components/OctopusOperationalStats.tsx) polls the
-same-origin runtime feed every 30 seconds, with separate freshness checks for
-pipeline readings and historical totals. The widget uses one inset surface,
+same-origin runtime feed every 30 seconds. Freshness controls the live label;
+historical totals and windows retain their original timestamps through outages
+and partial refreshes. The widget uses one inset surface,
 tabular numbers, explicit status text, and quiet dividers.
 [octopus.css](../src/styles/octopus.css) composes shared tokens.
 

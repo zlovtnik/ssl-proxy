@@ -12,10 +12,26 @@ export const octopusCaveat =
   'Delivery can repeat. Octopus records progress and uses durable deduplication to handle replay. Records outside the configured streams are not covered.';
 
 export const octopusMetrics = {
+  status: {
+    ssr: 'Production metrics',
+    loading: 'Connecting to production',
+    live: 'Live production data',
+    warmup: 'Production connected · warming up',
+    delayed: 'Live metrics delayed',
+    historical: 'Latest recorded production data',
+    unavailable: 'Waiting for production data',
+  },
+  pipelineTitle: 'Pipeline now',
+  snapshotTitle: 'Latest snapshot',
+  recorded24hTitle: 'Recorded 24-hour window',
+  recorded7dTitle: 'Recorded 7-day window',
+  current24hTitle: 'Last 24 hours',
+  current7dTitle: 'Last 7 days',
+  recordedMessage: 'Recorded totals and hourly history remain available while live collection starts or recovers.',
   label: 'PIPELINE OBSERVABILITY',
   title: 'Spot backlog. Investigate stalled work.',
   summary:
-    'Check processing, queued work, and recorded history from the production coordinator to see where investigation should begin.',
+    'Check processing, queued work, and recorded production history to see where investigation should begin.',
   noScript:
     'Enable JavaScript to load current metrics. No saved measurements are shown.',
   empty: {
@@ -31,15 +47,14 @@ export const octopusMetrics = {
   },
   warmup:
     'Production is connected. Processing and backlog readings appear once the five-minute rate window and collection are ready.',
-  missingHistory:
-    'Historical peaks need a fresh computation. Peaks appear when fresh history is published.',
+  missingHistory: 'Historical peaks have not been recorded in this snapshot.',
   missingCheck: 'No successful check recorded',
   missingThroughput:
     'Lifetime totals and hourly history have not been published in this reading.',
   methodTitle: 'What these numbers mean',
   method: [
-    'Pipeline readings refresh every 30 seconds. Missing or expired readings show an explanation and a workflow link; a brief poll failure keeps the last successful reading, labelled delayed, until it expires. The page retries automatically. No example values or build-time snapshots are used.',
-    'The processing rate covers the responding coordinator\'s scheduled ingest-ledger processor, averaged over five minutes. It is not the rate of all incoming streams. A successful processing check may find no work. The pipeline section explains warmup until the rate window and collection are ready.',
+    'Pipeline readings refresh every 30 seconds. When live collection is delayed, the latest recorded totals and hourly history remain visible with their original measurement times. The page retries automatically and keeps a validated public snapshot in this browser for later visits. No example values or build-time snapshots are used.',
+    'The processing rate covers successfully committed broker deliveries at the responding coordinator, averaged over five minutes, including replays and parked records. Pending ledger rows and broker backlog are separate measurements. Live gauges appear once the rate window and collection are ready.',
     'Historical peaks count rows in the production ingestion ledger across all paths and outcomes. They are not unique business events or a capacity benchmark. Days use UTC; weeks run Monday to Sunday. Current periods are counted so far. History is refreshed separately, with its own measurement time.',
     'Lifetime totals and hourly throughput windows count rows in the same ingestion ledger. The last-24-hours window holds 24 measured hourly totals and the last-7-days window holds 168. A measured hour may honestly be zero; a window that was never computed stays unavailable instead of showing zeros.',
   ],
