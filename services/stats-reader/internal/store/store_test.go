@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 const (
@@ -120,6 +121,53 @@ func TestSnapshotLastGoodWhenBothFail(t *testing.T) {
 	}
 	if string(got) != string(good) {
 		t.Fatalf("got %s, want last-good %s", got, good)
+	}
+}
+
+func TestSnapshotCannotRegressLastGood(t *testing.T) {
+	good := []byte(`{"asOf":"2026-01-03T00:00:00.123456789Z"}`)
+	r := &fakeRedis{value: good}
+	st := newStore(r, &fakeObjects{})
+	if _, err := st.Snapshot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	r.value = []byte(`{"asOf":"2026-01-03T00:00:00.123Z"}`)
+	got, err := st.Snapshot(context.Background())
+	if err != nil || string(got) != string(good) {
+		t.Fatalf("older store snapshot displaced last-good: %s, %v", got, err)
+	}
+}
+
+type stalledRedis struct{ fakeRedis }
+
+func (*stalledRedis) Get(ctx context.Context, _ string) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestSnapshotTimeoutStillReachesHistoricalStore(t *testing.T) {
+	want := []byte(`{"asOf":"2026-01-03T00:00:00Z"}`)
+	st := New(&stalledRedis{}, &fakeObjects{value: want}, testKey, testBucket, testObject)
+	started := time.Now()
+	got, err := st.Snapshot(context.Background())
+	if err != nil || string(got) != string(want) {
+		t.Fatalf("timeout did not fall back to history: %s, %v", got, err)
+	}
+	if time.Since(started) > sourceTimeout+time.Second {
+		t.Fatal("historical fallback exceeded source deadline")
+	}
+}
+
+func TestSnapshotInvalidTimestampFallsBack(t *testing.T) {
+	want := []byte(`{"asOf":"2026-01-03T00:00:00Z"}`)
+	for _, invalid := range []string{
+		`{"asOf":"invalid"}`,
+		`{"asOf":"2999-01-01T00:00:00Z"}`,
+	} {
+		got, err := newStore(&fakeRedis{value: []byte(invalid)}, &fakeObjects{value: want}).Snapshot(context.Background())
+		if err != nil || string(got) != string(want) {
+			t.Fatalf("invalid timestamp prevented fallback: %s, %v", got, err)
+		}
 	}
 }
 

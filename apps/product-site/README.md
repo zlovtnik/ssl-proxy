@@ -84,13 +84,16 @@ Set PUBLIC_GA4_MEASUREMENT_ID in the production Pages build environment after
 creating the GA4 web stream. It is a public measurement ID, not a credential.
 Leave it unset in local and preview builds.
 Octopus fetches `/api/octopus-stats` every 30 seconds. The
-[Pages Function](functions/api/octopus-stats.ts) requests the coordinator's public
-stats endpoint at runtime, with no build-time measurements or URL setup.
+[Pages Function](functions/api/octopus-stats.ts) requests the public store-only
+stats reader at runtime, with no build-time measurements or URL setup.
 Only the production hostnames can use this proxy; local and Pages preview
 hosts return unavailable and never fetch production. Browser tests intercept
 this route with isolated responses. No-JavaScript visitors see unavailable
-readings and an explanation. Upstream failures, invalid responses and stale
-timestamps cannot fall back to saved values.
+readings and an explanation. Valid historical snapshots remain available with
+their original timestamps. Gateway failures use the last validated edge snapshot;
+browser failures use the last measured reading, including after reload. Values
+are never invented, and an empty cache before the first measurement cannot supply
+data. The C++ worker is the sole snapshot producer.
 The sitemap, canonical URLs, social URLs, and robots response use that origin.
 Do not ship localhost metadata.
 

@@ -113,7 +113,12 @@ test('partial readings explain warmup and missing history without displaying inv
     route.fulfill({
       json: {
         ...reading(),
-        peaksComputedAt: new Date(captured.getTime() - 361_000).toISOString(),
+        peaksComputedAt: null,
+        peakRecordsDay: null,
+        peakRecordsDayDate: null,
+        peakRecordsWeek: null,
+        peakRecordsWeekStart: null,
+        peakRecordsWeekEnd: null,
         liveStrip: null,
       },
     }),
@@ -136,19 +141,19 @@ test('partial readings explain warmup and missing history without displaying inv
   await expect(page.locator('.ops-spark')).toHaveCount(0);
 });
 
-test('repeated cached responses lose live status when the source timestamp expires', async ({
+test('expired responses keep measured history and original timestamps', async ({
   page,
 }) => {
   await page.clock.install({ time: captured });
   await page.route('**/api/octopus-stats', (route) =>
-    route.fulfill({ json: reading() }),
+    route.fulfill({ json: withThroughput() }),
   );
   await page.goto('/octopus/');
   await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
     'data-live',
     'true',
   );
-  // maxStatsAgeMs is 180 seconds; readings expire after that window.
+  // Freshness changes the label, never the availability of measured history.
   await page.clock.runFor(182_000);
   await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
     'data-live',
@@ -156,13 +161,45 @@ test('repeated cached responses lose live status when the source timestamp expir
   );
   await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
     'data-mode',
-    'unavailable',
+    'historical',
   );
-  await expect(page.locator('[data-metric]')).toHaveCount(0);
-  await expect(page.locator('.ops-empty')).toContainText(
-    octopusMetrics.empty.description,
+  await expect(page.locator('[data-metric="day"]')).toHaveText('123 records');
+  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
+    '45,678',
   );
-  await expect(page.locator('[data-ux="ops-stats"] time')).toHaveCount(0);
+  await expect(page.locator('[data-metric="rate"]')).toHaveCount(0);
+  await expect(page.locator('.ops-bar-row')).toHaveCount(24);
+  await expect(page.locator('.ops-spark-bar')).toHaveCount(168);
+  await expect(page.getByRole('status')).toHaveText(
+    'Latest recorded production data',
+  );
+  await expect(page.locator('.ops-snapshot time')).toHaveAttribute(
+    'datetime',
+    captured.toISOString(),
+  );
+});
+
+test('browser restores measured history after reload during an outage', async ({
+  page,
+}) => {
+  await page.clock.install({ time: captured });
+  let failed = false;
+  await page.route('**/api/octopus-stats', (route) =>
+    failed ? route.abort() : route.fulfill({ json: withThroughput() }),
+  );
+  await page.goto('/octopus/');
+  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
+    '45,678',
+  );
+  failed = true;
+  await page.clock.runFor(240_000);
+  await page.reload();
+  await expect(page.locator('[data-ux="ops-stats"]')).toHaveAttribute(
+    'data-mode',
+    'historical',
+  );
+  await expect(page.locator('[data-metric="day"]')).toHaveText('123 records');
+  await expect(page.locator('.ops-bar-row')).toHaveCount(24);
 });
 
 test('a failed feed shows a workflow path and automatically recovers to measured data', async ({
@@ -359,12 +396,16 @@ test('response validation rejects wrong series lengths and broken hours', () => 
     expect(() => parseStats(invalid, captured.getTime())).toThrow();
 });
 
-test('response validation rejects stale asOf and strips unknown keys', () => {
-  // Fresh inside the 180-second window, stale beyond it.
+test('response validation accepts historical snapshots and strips unknown keys', () => {
   expect(() =>
     parseStats(reading(0), captured.getTime() + 180_000),
   ).not.toThrow();
-  expect(() => parseStats(reading(0), captured.getTime() + 181_000)).toThrow();
+  expect(() =>
+    parseStats(reading(0), captured.getTime() + 181_000),
+  ).not.toThrow();
+  expect(
+    parseStats(withThroughput(), captured.getTime() + 30 * 86400_000).asOf,
+  ).toBe(captured.toISOString());
   const parsed = parseStats(
     {
       ...withThroughput(),
@@ -444,11 +485,58 @@ test('Pages proxy passes only measured public fields and fails closed', async ()
     globalThis.fetch = async () =>
       new Response('upstream failed', { status: 500 });
     expect((await onRequestGet({ request })).status).toBe(503);
-    globalThis.fetch = async () =>
-      Response.json({ ...measured, asOf: '2020-01-01T00:00:00Z' });
-    expect((await onRequestGet({ request })).status).toBe(503);
+    globalThis.fetch = async () => Response.json(withThroughput());
+    const historical = await onRequestGet({ request });
+    expect(historical.status).toBe(200);
+    expect(historical.headers.get('x-metrics-state')).toBe('historical');
+    expect((await historical.json()).asOf).toBe(captured.toISOString());
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+test('Pages proxy retains the edge snapshot through upstream failures and regressions', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+  let kept: Response | undefined;
+  Object.defineProperty(globalThis, 'caches', {
+    configurable: true,
+    value: {
+      open: async () => ({
+        match: async () => kept?.clone(),
+        put: async (_key: string, response: Response) => {
+          kept = response.clone();
+        },
+      }),
+    },
+  });
+  const request = new Request('https://rclabs.uk/api/octopus-stats');
+  try {
+    globalThis.fetch = async () => Response.json(withThroughput());
+    expect((await onRequestGet({ request })).status).toBe(200);
+    for (const fail of [
+      async () => new Response('failed', { status: 503 }),
+      async () => {
+        throw new Error('connection failed');
+      },
+      async () => new Response('invalid JSON'),
+      async () => new Response('x'.repeat(16385)),
+      async () => Response.json(withThroughput(-86400_000)),
+    ]) {
+      globalThis.fetch = fail;
+      const response = await onRequestGet({ request });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('x-metrics-state')).toBe('historical');
+      const body = await response.json();
+      expect(body.asOf).toBe(captured.toISOString());
+      expect(body.lifetimeTotals.recordsTotal).toBe(45_678);
+      expect(body.throughput7d.series).toHaveLength(168);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCaches)
+      Object.defineProperty(globalThis, 'caches', originalCaches);
+    else Reflect.deleteProperty(globalThis, 'caches');
   }
 });
 
@@ -484,5 +572,53 @@ test('Pages proxy accepts a full-size snapshot inside the raised body cap', asyn
     expect((await onRequestGet({ request })).status).toBe(503);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+test('Pages proxy returns history when response headers or body stall', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+  Object.defineProperty(globalThis, 'caches', {
+    configurable: true,
+    value: {
+      open: async () => ({
+        match: async () => Response.json(withThroughput()),
+      }),
+    },
+  });
+  const request = new Request('https://rclabs.uk/api/octopus-stats');
+  try {
+    for (const stalledBody of [false, true]) {
+      let aborted = false;
+      globalThis.fetch = async (_input, init) => {
+        if (stalledBody) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                init!.signal!.addEventListener('abort', () => {
+                  aborted = true;
+                  controller.error(new Error('Aborted'));
+                });
+              },
+            }),
+          );
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init!.signal!.addEventListener('abort', () => {
+            aborted = true;
+            reject(new Error('Aborted'));
+          });
+        });
+      };
+      const response = await onRequestGet({ request });
+      expect(aborted).toBe(true);
+      expect(response.status).toBe(200);
+      expect((await response.json()).asOf).toBe(captured.toISOString());
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCaches)
+      Object.defineProperty(globalThis, 'caches', originalCaches);
+    else Reflect.deleteProperty(globalThis, 'caches');
   }
 });

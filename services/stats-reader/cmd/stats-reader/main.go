@@ -26,8 +26,13 @@ func main() {
 	cfg := config.Load()
 
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.RedisAddr,
-		Password: cfg.RedisPassword,
+		Addr:                  cfg.RedisAddr,
+		Password:              cfg.RedisPassword,
+		ContextTimeoutEnabled: true,
+		DialTimeout:           2 * time.Second,
+		ReadTimeout:           2 * time.Second,
+		WriteTimeout:          2 * time.Second,
+		MaxRetries:            -1,
 	})
 	defer rdb.Close()
 

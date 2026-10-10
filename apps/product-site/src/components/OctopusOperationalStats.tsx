@@ -2,7 +2,6 @@ import { createSignal, onMount, onCleanup, Show, For } from 'solid-js';
 import { octopusMetrics } from '../data/products';
 import {
   isFresh,
-  maxPeaksAgeMs,
   maxStatsAgeMs,
   parseStats,
   type Stats,
@@ -37,15 +36,23 @@ const seriesMax = (series: ThroughputSeries) =>
 const fill = (records: number, max: number) =>
   max > 0 ? `${Math.round((records / max) * 100)}%` : '0%';
 
-type Mode = 'ssr' | 'loading' | 'live' | 'warmup' | 'delayed' | 'unavailable';
+type Mode =
+  | 'ssr'
+  | 'loading'
+  | 'live'
+  | 'warmup'
+  | 'delayed'
+  | 'historical'
+  | 'unavailable';
 
 const statusText: Record<Mode, string> = {
-  ssr: 'Live metrics unavailable',
+  ssr: 'Production metrics',
   loading: 'Connecting to production',
   live: 'Live production data',
   warmup: 'Production connected · warming up',
   delayed: 'Live metrics delayed',
-  unavailable: 'Live metrics unavailable',
+  historical: 'Latest recorded production data',
+  unavailable: 'Waiting for production data',
 };
 
 export default function OctopusOperationalStats() {
@@ -58,9 +65,7 @@ export default function OctopusOperationalStats() {
   const asOfFresh = () =>
     stats() !== null && isFresh(stats()!.asOf, now(), maxStatsAgeMs);
   const peaksReady = () =>
-    asOfFresh() &&
-    stats()!.peaksComputedAt !== null &&
-    isFresh(stats()!.peaksComputedAt!, now(), maxPeaksAgeMs);
+    stats() !== null && stats()!.peaksComputedAt !== null;
   const liveStrip = () =>
     asOfFresh() && stats()!.liveStrip !== null ? stats()!.liveStrip : null;
   const weekInProgress = () =>
@@ -72,8 +77,10 @@ export default function OctopusOperationalStats() {
   const mode = (): Mode => {
     if (fetchState() === 'idle') return 'ssr';
     if (fetchState() === 'loading' && stats() === null) return 'loading';
-    if (!asOfFresh()) return 'unavailable';
-    if (liveStrip() === null) return 'warmup';
+    if (stats() === null) return 'unavailable';
+    if (!asOfFresh()) return 'historical';
+    if (liveStrip() === null)
+      return peaksReady() || lifetimeReady() ? 'historical' : 'warmup';
     return fetchState() === 'failed' ? 'delayed' : 'live';
   };
 
@@ -87,7 +94,7 @@ export default function OctopusOperationalStats() {
     if (m === 'warmup') return 'Warming up';
     return value();
   };
-  // Historical peaks have their own freshness; missing stays unavailable.
+  // Historical measurements remain useful after live collection stops.
   const peakCell = (measured: boolean, value: () => string) => {
     const m = mode();
     if (m === 'ssr') return 'Unavailable';
@@ -96,7 +103,7 @@ export default function OctopusOperationalStats() {
       ? value()
       : 'Unavailable';
   };
-  // Lifetime and throughput ride the snapshot asOf gate; null stays unavailable.
+  // Keep the measured history and its timestamps; null stays unavailable.
   const snapshotCell = (ready: boolean, value: () => string) => {
     const m = mode();
     if (m === 'ssr') return 'Unavailable';
@@ -104,9 +111,8 @@ export default function OctopusOperationalStats() {
     return ready && stats() !== null ? value() : 'Unavailable';
   };
   const lifetimeReady = () =>
-    asOfFresh() && stats() !== null && stats()!.lifetimeTotals !== null;
+    stats() !== null && stats()!.lifetimeTotals !== null;
   const windowReady = (key: 'throughput24h' | 'throughput7d') =>
-    asOfFresh() &&
     stats() !== null &&
     stats()![key] !== null &&
     mode() !== 'ssr' &&
@@ -115,6 +121,16 @@ export default function OctopusOperationalStats() {
     windowReady(key) ? stats()![key]! : null;
 
   onMount(() => {
+    const savedKey = 'octopus-stats:v2';
+    try {
+      const saved = localStorage.getItem(savedKey);
+      if (saved) {
+        setStats(parseStats(JSON.parse(saved)));
+        setFetchState('failed');
+      }
+    } catch {
+      // Storage can be disabled or contain an invalid previous response.
+    }
     let disposed = false;
     let controller: AbortController | undefined;
     let failStreak = 0;
@@ -134,14 +150,21 @@ export default function OctopusOperationalStats() {
         if (!disposed) {
           failStreak = 0;
           setNow(Date.now());
-          setStats(data);
+          if (!stats() || Date.parse(data.asOf) >= Date.parse(stats()!.asOf)) {
+            setStats(data);
+            try {
+              localStorage.setItem(savedKey, JSON.stringify(data));
+            } catch {
+              // Persistence failure must not discard a measured response.
+            }
+          }
           setFetchState('ok');
         }
       } catch {
         if (!disposed) {
           failStreak = Math.min(failStreak + 1, 3);
           setNow(Date.now());
-          // Retain the last good reading until its freshness window expires.
+          // Keep measured history through failures, including after expiry.
           setFetchState('failed');
         }
       } finally {
@@ -198,7 +221,7 @@ export default function OctopusOperationalStats() {
         <p class="fine-print">Refreshes every 30 seconds</p>
       </div>
       <Show
-        when={asOfFresh()}
+        when={stats() !== null}
         fallback={
           <div class="ops-empty">
             <h3>
@@ -221,10 +244,16 @@ export default function OctopusOperationalStats() {
         }
       >
         <div class="ops-snapshot">
-          <h3>Pipeline now</h3>
+          <h3>{liveStrip() ? 'Pipeline now' : 'Latest snapshot'}</h3>
           <Show
             when={liveStrip() !== null}
-            fallback={<p>{octopusMetrics.warmup}</p>}
+            fallback={
+              <p>
+                {mode() === 'warmup'
+                  ? octopusMetrics.warmup
+                  : 'Live collection is delayed. Recorded totals and hourly history remain available below.'}
+              </p>
+            }
           >
             <dl class="ops-metrics">
               <div>
@@ -295,11 +324,13 @@ export default function OctopusOperationalStats() {
               </div>
             </dl>
           </Show>
-          <Show when={asOfFresh() && mode() !== 'ssr' && mode() !== 'loading'}>
+          <Show
+            when={stats() !== null && mode() !== 'ssr' && mode() !== 'loading'}
+          >
             <p class="fine-print">
               Measured{' '}
               <time datetime={stats()!.asOf}>{timestamp(stats()!.asOf)}</time>
-              <Show when={mode() === 'delayed'}>
+              <Show when={mode() === 'delayed' || mode() === 'historical'}>
                 {' '}
                 · last successful reading, not live
               </Show>
@@ -412,7 +443,11 @@ export default function OctopusOperationalStats() {
               </p>
             </Show>
             <div class="ops-window">
-              <h4 id="ops-24h-title">Last 24 hours</h4>
+              <h4 id="ops-24h-title">
+                {mode() === 'historical'
+                  ? 'Recorded 24-hour window'
+                  : 'Last 24 hours'}
+              </h4>
               <Show
                 when={windowSeries('throughput24h')}
                 fallback={
@@ -464,7 +499,11 @@ export default function OctopusOperationalStats() {
               </Show>
             </div>
             <div class="ops-window">
-              <h4 id="ops-7d-title">Last 7 days</h4>
+              <h4 id="ops-7d-title">
+                {mode() === 'historical'
+                  ? 'Recorded 7-day window'
+                  : 'Last 7 days'}
+              </h4>
               <Show
                 when={windowSeries('throughput7d')}
                 fallback={

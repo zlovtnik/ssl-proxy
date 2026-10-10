@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/redis/go-redis/v9"
@@ -15,6 +16,9 @@ import (
 
 // ErrUnavailable is returned when no source can produce a snapshot.
 var ErrUnavailable = errors.New("metrics unavailable")
+
+const sourceTimeout = 2 * time.Second
+const maxSnapshotBytes = 16384
 
 // Redis is the hot snapshot source.
 type Redis interface {
@@ -37,8 +41,9 @@ type Store struct {
 	bucket    string
 	objectKey string
 
-	mu       sync.RWMutex
-	lastGood []byte
+	mu         sync.RWMutex
+	lastGood   []byte
+	lastGoodAt time.Time
 }
 
 // New builds a Store. objectKey is the full object path inside bucket.
@@ -55,16 +60,20 @@ func New(redis Redis, objects Objects, redisKey, bucket, objectKey string) *Stor
 // Snapshot returns the freshest valid snapshot bytes available. A source
 // hit only counts when the payload parses and carries asOf.
 func (s *Store) Snapshot(ctx context.Context) ([]byte, error) {
-	if raw, err := s.redis.Get(ctx, s.redisKey); err == nil {
-		if _, vErr := validate(raw); vErr == nil {
-			s.setLastGood(raw)
-			return raw, nil
+	redisCtx, cancelRedis := context.WithTimeout(ctx, sourceTimeout)
+	raw, err := s.redis.Get(redisCtx, s.redisKey)
+	cancelRedis()
+	if err == nil {
+		if at, vErr := validate(raw); vErr == nil {
+			return s.setLastGood(raw, at), nil
 		}
 	}
-	if raw, err := s.objects.GetObject(ctx, s.bucket, s.objectKey); err == nil {
-		if _, vErr := validate(raw); vErr == nil {
-			s.setLastGood(raw)
-			return raw, nil
+	objectCtx, cancelObject := context.WithTimeout(ctx, sourceTimeout)
+	raw, err = s.objects.GetObject(objectCtx, s.bucket, s.objectKey)
+	cancelObject()
+	if err == nil {
+		if at, vErr := validate(raw); vErr == nil {
+			return s.setLastGood(raw, at), nil
 		}
 	}
 	if raw := s.getLastGood(); raw != nil {
@@ -83,12 +92,18 @@ func (s *Store) Health(ctx context.Context) (redisOK, minioOK bool) {
 	return redisOK, minioOK
 }
 
-func (s *Store) setLastGood(raw []byte) {
+func (s *Store) setLastGood(raw []byte, at time.Time) []byte {
 	kept := make([]byte, len(raw))
 	copy(kept, raw)
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	// A slow request or an older store must not regress a newer saved snapshot.
+	if s.lastGood != nil && at.Before(s.lastGoodAt) {
+		return append([]byte(nil), s.lastGood...)
+	}
 	s.lastGood = kept
-	s.mu.Unlock()
+	s.lastGoodAt = at
+	return append([]byte(nil), kept...)
 }
 
 func (s *Store) getLastGood() []byte {
@@ -104,16 +119,23 @@ func (s *Store) getLastGood() []byte {
 
 // validate reports whether raw is a snapshot object we are willing to
 // serve: it must parse and carry a non-empty string asOf.
-func validate(raw []byte) (map[string]any, error) {
+func validate(raw []byte) (time.Time, error) {
+	if len(raw) > maxSnapshotBytes {
+		return time.Time{}, errors.New("snapshot too large")
+	}
 	var obj map[string]any
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, err
+		return time.Time{}, err
 	}
 	asOf, ok := obj["asOf"].(string)
 	if !ok || asOf == "" {
-		return nil, errors.New("snapshot missing asOf")
+		return time.Time{}, errors.New("snapshot missing asOf")
 	}
-	return obj, nil
+	at, err := time.Parse(time.RFC3339Nano, asOf)
+	if err != nil || at.After(time.Now().Add(5*time.Second)) {
+		return time.Time{}, errors.New("invalid snapshot timestamp")
+	}
+	return at, nil
 }
 
 // RedisClient adapts go-redis to the Redis interface.
@@ -157,7 +179,11 @@ func (m *MinioObjects) GetObject(ctx context.Context, bucket, key string) ([]byt
 		return nil, err
 	}
 	defer obj.Close()
-	return io.ReadAll(obj)
+	raw, err := io.ReadAll(io.LimitReader(obj, maxSnapshotBytes+1))
+	if err == nil && len(raw) > maxSnapshotBytes {
+		return nil, errors.New("snapshot too large")
+	}
+	return raw, err
 }
 
 // BucketExists reports whether bucket is present.

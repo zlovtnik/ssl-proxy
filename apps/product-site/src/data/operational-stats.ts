@@ -88,9 +88,9 @@ export function parseStats(value: unknown, now = Date.now()): Stats {
   if (
     !object(value) ||
     !instant(value.asOf) ||
-    !isFresh(value.asOf, now, maxStatsAgeMs)
+    Date.parse(value.asOf) > now + 5_000
   )
-    throw new Error('Stale metrics');
+    throw new Error('Invalid snapshot timestamp');
   const v = value;
   if (
     !(v.peaksComputedAt === null || instant(v.peaksComputedAt)) ||
