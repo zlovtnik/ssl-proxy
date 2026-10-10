@@ -45,6 +45,8 @@ if args[0] == "rm":
     sys.exit(int(os.getenv("MOCK_RM_STATUS", "0")))
 if args[:2] == ["context", "inspect"]:
     sys.exit(int(os.getenv("MOCK_CONTEXT_STATUS", "0")))
+if args[0] == "info":
+    print(os.getenv("MOCK_DOCKER_ARCH", "x86_64"))
 if args[:2] == ["buildx", "prune"]:
     sys.exit(int(os.getenv("MOCK_PRUNE_STATUS", "0")))
 '''
@@ -216,6 +218,17 @@ class JenkinsCiScriptsTest(unittest.TestCase):
         self.assertIn("host", run)
         self.assertIn("/var/run/docker.sock:/var/run/docker.sock", run)
         self.assertIn("TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1", run)
+        self.assertIn("seccomp=unconfined", run)
+        self.assertNotIn("--privileged", run)
+
+    def test_metrics_arm_container_keeps_default_seccomp(self) -> None:
+        (self.root / "services/octopus-metrics").mkdir(parents=True)
+        (self.root / "sql/postgres/octopus_core").mkdir(parents=True)
+        result = self.run_script("octopus-metrics", SHOULD_RUN_OCTOPUS_METRICS="true",
+                                 MOCK_DOCKER_ARCH="aarch64")
+        self.assertEqual(0, result.returncode, result.stderr)
+        run = next(call["args"] for call in self.calls() if call["args"][0] == "run")
+        self.assertNotIn("--security-opt", run)
 
     def test_metrics_candidate_publication_records_digest(self) -> None:
         (self.root / "scripts/publish_images.py").write_text("# No active image inputs\n")

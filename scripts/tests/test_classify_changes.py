@@ -65,6 +65,7 @@ class ClassifyChangesTest(unittest.TestCase):
         for path in (
             "services/octopus", "sql/postgres/octopus_core/grants/metrics_read_only.sql.tmpl",
             "scripts/ci/octopus-metrics.sh", "scripts/ci/tasks/octopus-metrics-1.sh",
+            "scripts/ci/tasks/metrics-tsan-test.sh",
         ):
             with self.subTest(path=path):
                 result = classify_paths({path}, self.bumped("services/octopus")

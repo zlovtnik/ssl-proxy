@@ -140,6 +140,16 @@ image-input changes select `publish-octopus-metrics`; schema/grant and coordinat
 gitlink changes also select adapter validation. The existing umbrella job owns
 this service, so no standalone job or controller plugin is needed.
 
+On Linux x86-64 the shared
+[TSan runner](../scripts/ci/tasks/metrics-tsan-test.sh) applies `setarch -R`
+to the race-test process tree. GCC's runtime can otherwise exit before `main`
+with `ThreadSanitizer: unexpected memory mapping` on high-entropy ASLR kernels.
+The disposable x86-64 metrics validation container uses `seccomp=unconfined`
+to permit the required `personality` call; other stages retain their existing
+filters. This test-container exception does not enter runtime images or
+Kubernetes manifests. Neither Jenkins nor GitHub CI changes host sysctls.
+The runner propagates all failures and does not suppress race reports.
+
 For a local Docker Desktop check, run the same test stage with
 `SHOULD_RUN_OCTOPUS_METRICS=true METRICS_CI_NETWORK=bridge
 TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal bash scripts/ci/octopus-metrics.sh`

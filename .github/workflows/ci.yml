@@ -28,7 +28,7 @@ jobs:
       - name: Install C++ and isolated integration-test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-14 cmake ninja-build pkg-config libpq-dev libcurl4-openssl-dev libhiredis-dev libsimdjson-dev
+          sudo apt-get install -y g++-14 cmake ninja-build pkg-config libpq-dev libcurl4-openssl-dev libhiredis-dev libsimdjson-dev util-linux
           python -m pip install -r services/octopus-metrics/tests/requirements.txt
       - name: Build and test memory safety and adapters
         env:
@@ -44,7 +44,7 @@ jobs:
         run: |
           cmake -S services/octopus-metrics -B /tmp/metrics-tsan -G Ninja -DMETRICS_TSAN=ON
           cmake --build /tmp/metrics-tsan --parallel 2
-          ctest --test-dir /tmp/metrics-tsan --output-on-failure
+          sh scripts/ci/tasks/metrics-tsan-test.sh /tmp/metrics-tsan
       - name: Build the dedicated service image
         run: docker build -f services/octopus-metrics/Dockerfile -t octopus-metrics:test .
 

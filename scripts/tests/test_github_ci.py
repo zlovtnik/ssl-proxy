@@ -7,6 +7,14 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class GitHubCiTest(unittest.TestCase):
+    def test_metrics_race_checks_use_process_local_layout_helper(self) -> None:
+        workflow = (REPOSITORY_ROOT / ".github/workflows/ci.yml").read_text()
+        metrics = workflow[workflow.index("  octopus-metrics:") : workflow.index("  atheros-search-contracts:")]
+        self.assertIn("-DMETRICS_TSAN=ON", metrics)
+        self.assertIn("sh scripts/ci/tasks/metrics-tsan-test.sh /tmp/metrics-tsan", metrics)
+        self.assertNotIn("sysctl", metrics)
+        self.assertNotIn("continue-on-error", metrics)
+
     def test_search_contract_job_requires_database_and_pinned_revision(self) -> None:
         workflow = (REPOSITORY_ROOT / ".github/workflows/ci.yml").read_text()
         search = workflow[workflow.index("  atheros-search-contracts:") : workflow.index("  documentation:")]

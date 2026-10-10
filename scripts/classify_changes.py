@@ -78,6 +78,7 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
     metrics_tests = metrics_image or bumped["services/octopus"] or changed(
         "sql/postgres/octopus_core/", "Jenkinsfile", "scripts/classify_changes.py",
         "scripts/ci/octopus-metrics.sh", "scripts/ci/tasks/octopus-metrics-1.sh",
+        "scripts/ci/tasks/metrics-tsan-test.sh",
         "scripts/ci/common.sh",
     )
     tests = {

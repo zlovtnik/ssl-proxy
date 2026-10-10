@@ -202,7 +202,16 @@ On Homebrew systems add `-DPostgreSQL_ROOT=/opt/homebrew/opt/libpq` if discovery
 requires it. The root shortcut is `make octopus-metrics-test`.
 
 For memory checks configure with `-DMETRICS_SANITIZE=ON`. For data races use a
-separate build tree with `-DMETRICS_TSAN=ON`. The
+separate build tree with `-DMETRICS_TSAN=ON`. For Linux x86-64 CI, the
+[TSan runner](../../scripts/ci/tasks/metrics-tsan-test.sh) uses `setarch -R`
+only for CTest and its instrumented children. This avoids GCC TSan startup
+collisions with high-entropy ASLR. Docker's default seccomp filter blocks the
+needed `personality` call, so the disposable x86-64 Jenkins metrics test
+container uses `seccomp=unconfined`. Host sysctls, runtime images, and production
+pod security settings remain unchanged. Race reports and permission errors
+still fail CI; there is no retry or unsanitized fallback. See the
+[upstream runtime issue](https://github.com/google/sanitizers/issues/1716).
+The
 [core tests](tests/core_test.cpp) cover timestamp/count validation, missing/zero
 semantics, UTC windows, expiration, out-of-order cache updates, MPMC contention,
 overload coalescing, and cancellation. The
