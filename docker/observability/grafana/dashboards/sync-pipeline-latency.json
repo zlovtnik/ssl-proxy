@@ -28,7 +28,7 @@
       "id": 1,
       "targets": [
         {
-          "expr": "max(coordinator_redpanda_consumer_lag_records{job=\"java-coordinator\"}) by (role, topic, consumer_group)",
+          "expr": "max(coordinator_redpanda_consumer_lag_records{job=\"java-coordinator\"}) by (consumer_group, topic)",
           "legendFormat": "{{role}} {{topic}}",
           "refId": "A"
         }
@@ -89,12 +89,12 @@
       "id": 3,
       "targets": [
         {
-          "expr": "sum(rate(coordinator_redpanda_lag_refresh_failures_total{job=\"java-coordinator\"}[5m])) by (role)",
+          "expr": "sum(rate(coordinator_redpanda_lag_refresh_failures_total{job=\"java-coordinator\"}[5m])) by (consumer_group)",
           "legendFormat": "lag refresh failures {{role}}",
           "refId": "A"
         },
         {
-          "expr": "max(coordinator_redpanda_lag_stale_seconds{job=\"java-coordinator\"}) by (role, topic)",
+          "expr": "max(coordinator_redpanda_lag_stale_seconds{job=\"java-coordinator\"}) by (consumer_group, topic)",
           "legendFormat": "stale seconds {{role}} {{topic}}",
           "refId": "B"
         },

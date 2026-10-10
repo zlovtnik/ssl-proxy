@@ -42,7 +42,7 @@ scrape_configs:
       - targets: ["ssl-proxy:3002"]
 
   - job_name: java-coordinator
-    metrics_path: /actuator/prometheus
+    metrics_path: /metrics
     static_configs:
       - targets: ["java-coordinator:8081"]
         labels:

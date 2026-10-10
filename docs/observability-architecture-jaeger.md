@@ -45,8 +45,12 @@ ConfigMaps. Declared scrape targets include:
 - the Pushgateway and span-metrics exporter;
 - Octopus under its `java-coordinator` Kubernetes identity.
 
-Octopus exposes Micrometer measurements on `/metrics` and the compatibility
-route `/actuator/prometheus`.
+Octopus exposes Prometheus text exposition (format 0.0.4) on `/metrics` and the
+compatibility route `/actuator/prometheus`. Traces include HTTP server spans
+(health/metrics scrape routes excluded), Kafka consume/publish spans with W3C
+header propagation, and PostgreSQL client spans. Logs carry `trace_id`/`span_id`
+via MDC whenever a span is active. Durable outbox→original-consume span links
+are deferred until the outbox row can persist `traceparent`.
 
 ## Traces
 
@@ -65,7 +69,7 @@ move to v2 requires an explicit configuration and stored-data migration.
 |---|---|---|---|
 | Rust proxy/frontdoor | Structured pod logs | Proxy/frontdoor Prometheus routes | OTLP configuration is wired |
 | Atheros Sensor | Structured pod logs | Prometheus server on `ATH_SENSOR_METRICS_PORT` | OTLP configuration is wired |
-| Octopus | Structured logs | Micrometer exposition | OTLP SDK spans around Kafka and PostgreSQL durable boundaries |
+| Octopus | Structured logs with `trace_id`/`span_id` | Prometheus text 0.0.4 via `PrometheusMeterRegistry` | OTLP SDK spans for HTTP server, Kafka (W3C propagated) and PostgreSQL |
 | Atheros Search | Structured logs | Dedicated Prometheus server | HTTP/gRPC hooks exist, but no SDK exporter/provider is initialized |
 | Redpanda, MinIO and nodes | Platform logs | Native endpoints/exporters | Not expected |
 

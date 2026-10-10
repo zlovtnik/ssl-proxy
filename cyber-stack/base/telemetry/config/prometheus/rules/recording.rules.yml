@@ -21,9 +21,9 @@ groups:
       - record: service:http_latency:p95_5m
         expr: histogram_quantile(0.95, sum by (le, service, operation) (rate(http_server_request_duration_seconds_bucket[5m])))
       - record: octopus:ingest_processed:rate5m
-        expr: sum(rate(coordinator_ingest_processed_total_count[5m]))
+        expr: sum(rate(coordinator_ingest_processed_total[5m]))
       - record: octopus:pending_ledger:current
-        expr: max(coordinator_pending_ledger_count_value)
+        expr: max(coordinator_pending_ledger_count)
       - record: athsearch:requests:rate5m
         expr: sum by (kind, mode, status) (rate(athsearch_search_requests_total[5m]))
       - record: athsearch:latency:p95_5m

@@ -99,3 +99,12 @@ groups:
           diagnostic: "Pipeline freshness cannot be established while the coordinator lag refresh is stale."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbook.md#data-plane-checks"
+      - alert: CoordinatorRedpandaLagRefreshFailures
+        expr: sum by (consumer_group) (increase(coordinator_redpanda_lag_refresh_failures_total{service="octopus"}[5m])) > 0
+        for: 5m
+        labels: {severity: warning, service: octopus}
+        annotations:
+          summary: "Coordinator Redpanda lag metric refresh is failing"
+          diagnostic: "The consumer metrics sampler cannot read Kafka client metrics; lag gauges will go stale."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbook.md#data-plane-checks"

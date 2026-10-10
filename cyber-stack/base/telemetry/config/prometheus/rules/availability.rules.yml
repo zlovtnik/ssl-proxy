@@ -29,7 +29,7 @@ groups:
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#probe-failed"
       - alert: OctopusProcessorTerminalFailure
-        expr: coordinator_processor_lifecycle_value{state="failed_terminal"} == 1
+        expr: coordinator_processor_lifecycle{state="failed_terminal"} == 1
         for: 2m
         labels: {severity: critical, service: octopus}
         annotations:
@@ -37,6 +37,15 @@ groups:
           diagnostic: "The processor cannot recover automatically; inspect octopus_core.processor_state.last_error and processor_runs.error_text."
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#probe-failed"
+      - alert: CoordinatorConsumerRouteDown
+        expr: max by (role, route) (coordinator_route_running{service="octopus"}) == 0
+        for: 5m
+        labels: {severity: warning, service: octopus}
+        annotations:
+          summary: "Octopus route {{ $labels.route }} is not running"
+          diagnostic: "The processor route is suspended or failed; check coordinator_route_suspended and processor lifecycle state."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbook.md#data-plane-checks"
       - alert: TelemetryPipelineUnavailable
         expr: |
           absent(up{service="prometheus"}) or

@@ -3,22 +3,27 @@ import { allProducts, contact, demoLink, email } from '../data/products';
 import { ArrowUpRight } from '@lucide/astro';
 interface Props {
   product?: string;
-  intro?: { headline: readonly string[]; supporting: string };
+  intro?: {
+    headline: readonly string[];
+    supporting: string;
+    eyebrow?: string;
+    link?: string;
+  };
 }
 const { product = allProducts, intro = contact } = Astro.props;
 ---
 
 <!--email_off-->
 <section class="contact-banner" aria-labelledby="contact-title">
-  <p class="eyebrow">HAVE A USE CASE IN MIND?</p>
+  <p class="eyebrow">{intro.eyebrow ?? contact.eyebrow}</p>
   <h2 id="contact-title">{intro.headline.join(' ')}</h2>
   <p>{intro.supporting}</p>
   <a class="button primary" href={demoLink(product)}>
-    {contact.link} <ArrowUpRight size={18} aria-hidden="true" />
+    {intro.link ?? contact.link} <ArrowUpRight size={18} aria-hidden="true" />
   </a>
   <p class="fine-print">
-    Opens your email app, or write to <a href={`mailto:${email}`}>{email}</a>. A
-    meeting is scheduled only after we agree on a time.
+    {contact.emailHint} <a href={`mailto:${email}`}>{email}</a>.
+    {' '}{contact.nextStep}
   </p>
 </section>
 <!--/email_off-->

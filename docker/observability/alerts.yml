@@ -42,7 +42,7 @@ groups:
           description: "Producer offset growth is outpacing consumer commits by more than 1000 records/sec."
 
       - alert: CoordinatorRedpandaLagHigh
-        expr: max by (role, topic, consumer_group) (coordinator_redpanda_consumer_lag_records{job="java-coordinator"}) > 5000
+        expr: max by (consumer_group, topic) (coordinator_redpanda_consumer_lag_records{job="java-coordinator"}) > 5000
         for: 10m
         labels:
           severity: critical
@@ -52,7 +52,7 @@ groups:
           description: "Coordinator consumer group {{ $labels.consumer_group }} has more than 5000 pending records on {{ $labels.topic }}."
 
       - alert: CoordinatorRedpandaLagMetricsStale
-        expr: max by (role, topic, consumer_group) (coordinator_redpanda_lag_stale_seconds{job="java-coordinator"}) > 60
+        expr: max by (consumer_group, topic) (coordinator_redpanda_lag_stale_seconds{job="java-coordinator"}) > 60
         for: 2m
         labels:
           severity: critical
@@ -62,7 +62,7 @@ groups:
           description: "Coordinator lag metrics for {{ $labels.consumer_group }} on {{ $labels.topic }} have not refreshed successfully for more than 60 seconds."
 
       - alert: CoordinatorRedpandaLagRefreshFailures
-        expr: sum by (role) (increase(coordinator_redpanda_lag_refresh_failures_total{job="java-coordinator"}[5m])) > 0
+        expr: sum by (consumer_group) (increase(coordinator_redpanda_lag_refresh_failures_total{job="java-coordinator"}[5m])) > 0
         for: 5m
         labels:
           severity: critical

@@ -11,6 +11,7 @@ import {
   sampleProducts,
   octopusCaveat,
   octopusContact,
+  octopusMetrics,
   guides,
   guidePath,
 } from '../src/data/products';
@@ -47,13 +48,14 @@ test('Octopus never publishes saved metrics without JavaScript', async ({ browse
     await page.getByRole('link', { name: 'View live metrics', exact: true }).click();
     await expect(page).toHaveURL('http://127.0.0.1:4323/octopus/#operational-evidence');
     const evidence = page.locator('#operational-evidence');
-    await expect(evidence.getByRole('heading', { name: 'See the pipeline as it runs.' })).toBeVisible();
+    await expect(evidence.getByRole('heading', { name: octopusMetrics.title })).toBeVisible();
     // noscript is present in the document; Playwright innerText drops it.
     expect(await page.content()).toContain(
       'Enable JavaScript to load current metrics.',
     );
-    await expect(evidence.locator('[data-metric]')).toHaveCount(10);
-    for (const value of await evidence.locator('[data-metric]').all()) await expect(value).toHaveText('Unavailable');
+    await expect(evidence.locator('[data-metric]')).toHaveCount(0);
+    await expect(evidence.getByRole('heading', { name: octopusMetrics.empty.title })).toBeVisible();
+    await expect(evidence.getByRole('link', { name: octopusMetrics.empty.link })).toHaveAttribute('href', octopusMetrics.empty.href);
     await expect(evidence.locator('time')).toHaveCount(0);
     await expect(page.locator('#demo, .product-demo')).toHaveCount(0);
     await expect(page.locator('[data-ux="pipeline"]')).toHaveCount(1);
@@ -1186,7 +1188,7 @@ test('every route that offers a commercial action uses the shared contact patter
       (product?.id === 'octopus' ? octopusContact : contact).headline.join(' '),
     );
     const href = await banner
-      .getByRole('link', { name: contact.link })
+      .getByRole('link', { name: product?.id === 'octopus' ? octopusContact.link : contact.link })
       .getAttribute('href');
     const request = new URL(href!, 'https://example.invalid');
     expect(request.pathname, route).toBe(email);
@@ -1200,7 +1202,7 @@ test('every route that offers a commercial action uses the shared contact patter
       'href',
       `mailto:${email}`,
     );
-    await expect(banner).toContainText('after we agree on a time');
+    await expect(banner).toContainText(`${email}. ${contact.nextStep}`);
   }
 });
 

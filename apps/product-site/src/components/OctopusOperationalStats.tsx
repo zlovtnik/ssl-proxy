@@ -1,4 +1,5 @@
 import { createSignal, onMount, onCleanup, Show, For } from 'solid-js';
+import { octopusMetrics } from '../data/products';
 import {
   isFresh,
   maxPeaksAgeMs,
@@ -194,243 +195,296 @@ export default function OctopusOperationalStats() {
         </p>
         <p class="fine-print">Refreshes every 30 seconds</p>
       </div>
-      <div class="ops-snapshot">
-        <h3>Pipeline now</h3>
-        <dl class="ops-metrics">
-          <div>
-            <dt>
-              Ledger processing / second
-              <span class="fine-print">Average over the last 5 minutes</span>
-            </dt>
-            <dd data-metric="rate">
-              {liveCell(
-                () =>
-                  `${rate.format(liveStrip()!.ingestProcessedRatePerSec)} records/s`,
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt>
-              Records waiting
-              <span class="fine-print">Pending or being processed</span>
-            </dt>
-            <dd data-metric="pending">
-              {liveCell(() => number.format(liveStrip()!.pendingLedgerCount))}
-            </dd>
-          </div>
-          <div>
-            <dt>Last successful processing check</dt>
-            <dd data-metric="success">
-              <Show
-                when={
-                  (mode() === 'live' || mode() === 'delayed') &&
-                  liveStrip()?.lastIngestSuccessAt
-                }
-                fallback={liveCell(() => 'Unavailable')}
-              >
-                <time datetime={liveStrip()!.lastIngestSuccessAt!}>
-                  {timestamp(liveStrip()!.lastIngestSuccessAt!)}
-                </time>
-              </Show>
-            </dd>
-          </div>
-          <div>
-            <dt>Intake control</dt>
-            <dd data-metric="backpressure">
-              {liveCell(() =>
-                liveStrip()!.backpressureActive
-                  ? 'Paused to drain backlog'
-                  : 'Accepting work',
-              )}
-            </dd>
-          </div>
-        </dl>
-        <Show when={asOfFresh() && mode() !== 'ssr' && mode() !== 'loading'}>
-          <p class="fine-print">
-            Measured{' '}
-            <time datetime={stats()!.asOf}>{timestamp(stats()!.asOf)}</time>
-            <Show when={mode() === 'delayed'}>
-              {' '}
-              · last successful reading, not live
-            </Show>
-          </p>
-        </Show>
-      </div>
-      <div class="ops-history">
-        <h3>Busiest recorded periods</h3>
-        <div class="ops-peaks">
-          <article class="ops-card" aria-labelledby="ops-day-title">
-            <h4 id="ops-day-title">Peak day</h4>
-            <p class="ops-count" data-metric="day">
-              {peakCell(
-                () => `${number.format(stats()!.peakRecordsDay!)} records`,
-              )}
+      <Show
+        when={asOfFresh()}
+        fallback={
+          <div class="ops-empty">
+            <h3>
+              {mode() === 'loading'
+                ? octopusMetrics.empty.loadingTitle
+                : octopusMetrics.empty.title}
+            </h3>
+            <p>
+              {mode() === 'loading'
+                ? octopusMetrics.empty.loadingDescription
+                : octopusMetrics.empty.description}
             </p>
-            <Show when={peaksReady() && stats()!.peakRecordsDayDate}>
-              {(value) => (
-                <p>
-                  <time datetime={value()}>{date(value())}</time> UTC
-                </p>
-              )}
+            <Show when={mode() !== 'ssr'}>
+              <p class="fine-print">{octopusMetrics.empty.retry}</p>
             </Show>
-          </article>
-          <article class="ops-card" aria-labelledby="ops-week-title">
-            <h4 id="ops-week-title">Peak week</h4>
-            <p class="ops-count" data-metric="week">
-              {peakCell(
-                () => `${number.format(stats()!.peakRecordsWeek!)} records`,
-              )}
-            </p>
-            <Show when={peaksReady() && stats()!.peakRecordsWeekStart}>
-              {(value) => (
-                <p>
-                  <time datetime={value()}>{date(value())}</time> to{' '}
-                  <time datetime={stats()!.peakRecordsWeekEnd!}>
-                    {date(stats()!.peakRecordsWeekEnd!)}
-                  </time>{' '}
-                  UTC
-                </p>
-              )}
-            </Show>
-            <Show when={weekInProgress()}>
-              <p class="fine-print">This week, so far</p>
-            </Show>
-          </article>
-        </div>
-        <Show when={peaksReady()}>
-          <p class="fine-print">
-            History checked{' '}
-            <time datetime={stats()!.peaksComputedAt!}>
-              {timestamp(stats()!.peaksComputedAt!)}
-            </time>
-          </p>
-        </Show>
-      </div>
-      <div class="ops-throughput">
-        <h3>Throughput</h3>
-        <dl class="ops-metrics">
-          <div>
-            <dt>
-              Records recorded
-              <span class="fine-print">Lifetime ingestion ledger total</span>
-            </dt>
-            <dd data-metric="lifetime-records">
-              {snapshotCell(lifetimeReady(), () =>
-                number.format(stats()!.lifetimeTotals!.recordsTotal),
-              )}
-            </dd>
+            <a class="text-link" href={octopusMetrics.empty.href}>
+              {octopusMetrics.empty.link}
+            </a>
           </div>
-          <div>
-            <dt>
-              Days counted
-              <span class="fine-print">Distinct UTC days with ledger rows</span>
-            </dt>
-            <dd data-metric="lifetime-days">
-              {snapshotCell(lifetimeReady(), () =>
-                number.format(stats()!.lifetimeTotals!.daysCounted),
-              )}
-            </dd>
-          </div>
-        </dl>
-        <Show when={lifetimeReady()}>
-          <p class="fine-print">
-            Totals computed{' '}
-            <time datetime={stats()!.lifetimeTotals!.computedAt}>
-              {timestamp(stats()!.lifetimeTotals!.computedAt)}
-            </time>
-          </p>
-        </Show>
-        <div class="ops-window">
-          <h4 id="ops-24h-title">Last 24 hours</h4>
+        }
+      >
+        <div class="ops-snapshot">
+          <h3>Pipeline now</h3>
           <Show
-            when={windowSeries('throughput24h')}
-            fallback={
-              <p class="ops-count" data-metric="throughput-24h">
-                {snapshotCell(false, () => 'Unavailable')}
-              </p>
-            }
+            when={liveStrip() !== null}
+            fallback={<p>{octopusMetrics.warmup}</p>}
           >
-            {(series) => {
-              const data = series();
-              const max = seriesMax(data);
-              const first = data.series[0].bucketStart;
-              const last = data.series[data.series.length - 1].bucketStart;
-              return (
-                <div class="ops-chart">
-                  <ul
-                    class="ops-bars"
-                    aria-label="Hourly ledger-row totals for the last 24 hours"
+            <dl class="ops-metrics">
+              <div>
+                <dt>
+                  Ledger processing / second
+                  <span class="fine-print">
+                    Average over the last 5 minutes
+                  </span>
+                </dt>
+                <dd data-metric="rate">
+                  {liveCell(
+                    () =>
+                      `${rate.format(liveStrip()!.ingestProcessedRatePerSec)} records/s`,
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>
+                  Records waiting
+                  <span class="fine-print">Pending or being processed</span>
+                </dt>
+                <dd data-metric="pending">
+                  {liveCell(() =>
+                    number.format(liveStrip()!.pendingLedgerCount),
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Last successful processing check</dt>
+                <dd data-metric="success">
+                  <Show
+                    when={
+                      (mode() === 'live' || mode() === 'delayed') &&
+                      liveStrip()?.lastIngestSuccessAt
+                    }
+                    fallback={liveCell(() => octopusMetrics.missingCheck)}
                   >
-                    <For each={data.series}>
-                      {(point) => (
-                        <li class="ops-bar-row">
-                          <span class="ops-bar-label">
-                            <time datetime={point.bucketStart}>
-                              {hourLabel(point.bucketStart)}
-                            </time>
-                          </span>
-                          <span class="ops-bar-track" aria-hidden="true">
-                            <span
-                              class="ops-bar-fill"
-                              style={{ width: fill(point.records, max) }}
-                            />
-                          </span>
-                          <span class="ops-bar-count">
-                            {number.format(point.records)}
-                          </span>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                  <p class="fine-print">
-                    <time datetime={first}>{timestamp(first)}</time> to{' '}
-                    <time datetime={last}>{timestamp(last)}</time> UTC · peak{' '}
-                    {number.format(max)} records in one hour
-                  </p>
-                </div>
-              );
-            }}
+                    <time datetime={liveStrip()!.lastIngestSuccessAt!}>
+                      {timestamp(liveStrip()!.lastIngestSuccessAt!)}
+                    </time>
+                  </Show>
+                </dd>
+              </div>
+              <div>
+                <dt>Intake control</dt>
+                <dd data-metric="backpressure">
+                  {liveCell(() =>
+                    liveStrip()!.backpressureActive
+                      ? 'Paused to drain backlog'
+                      : 'Accepting work',
+                  )}
+                </dd>
+              </div>
+            </dl>
+          </Show>
+          <Show when={asOfFresh() && mode() !== 'ssr' && mode() !== 'loading'}>
+            <p class="fine-print">
+              Measured{' '}
+              <time datetime={stats()!.asOf}>{timestamp(stats()!.asOf)}</time>
+              <Show when={mode() === 'delayed'}>
+                {' '}
+                · last successful reading, not live
+              </Show>
+            </p>
           </Show>
         </div>
-        <div class="ops-window">
-          <h4 id="ops-7d-title">Last 7 days</h4>
+        <div class="ops-history">
+          <h3>Busiest recorded periods</h3>
           <Show
-            when={windowSeries('throughput7d')}
-            fallback={
-              <p class="ops-count" data-metric="throughput-7d">
-                {snapshotCell(false, () => 'Unavailable')}
-              </p>
-            }
+            when={peaksReady()}
+            fallback={<p>{octopusMetrics.missingHistory}</p>}
           >
-            {(series) => {
-              const data = series();
-              const max = seriesMax(data);
-              const first = data.series[0].bucketStart;
-              const last = data.series[data.series.length - 1].bucketStart;
-              const label = `Hourly ledger-row totals for the last 7 days: ${data.series.length} buckets from ${timestamp(first)} to ${timestamp(last)}. Peak ${number.format(max)} records in one hour.`;
-              return (
-                <div class="ops-chart">
-                  <div class="ops-spark" role="img" aria-label={label}>
-                    <For each={data.series}>
-                      {(point) => (
-                        <span
-                          class="ops-spark-bar"
-                          style={{ height: fill(point.records, max) }}
-                        />
-                      )}
-                    </For>
-                  </div>
-                  <p class="fine-print">
-                    <time datetime={first}>{timestamp(first)}</time> to{' '}
-                    <time datetime={last}>{timestamp(last)}</time> UTC · peak{' '}
-                    {number.format(max)} records in one hour
-                  </p>
-                </div>
-              );
-            }}
+            <div class="ops-peaks">
+              <article class="ops-card" aria-labelledby="ops-day-title">
+                <h4 id="ops-day-title">Peak day</h4>
+                <p class="ops-count" data-metric="day">
+                  {peakCell(
+                    () => `${number.format(stats()!.peakRecordsDay!)} records`,
+                  )}
+                </p>
+                <Show when={peaksReady() && stats()!.peakRecordsDayDate}>
+                  {(value) => (
+                    <p>
+                      <time datetime={value()}>{date(value())}</time> UTC
+                    </p>
+                  )}
+                </Show>
+              </article>
+              <article class="ops-card" aria-labelledby="ops-week-title">
+                <h4 id="ops-week-title">Peak week</h4>
+                <p class="ops-count" data-metric="week">
+                  {peakCell(
+                    () => `${number.format(stats()!.peakRecordsWeek!)} records`,
+                  )}
+                </p>
+                <Show when={peaksReady() && stats()!.peakRecordsWeekStart}>
+                  {(value) => (
+                    <p>
+                      <time datetime={value()}>{date(value())}</time> to{' '}
+                      <time datetime={stats()!.peakRecordsWeekEnd!}>
+                        {date(stats()!.peakRecordsWeekEnd!)}
+                      </time>{' '}
+                      UTC
+                    </p>
+                  )}
+                </Show>
+                <Show when={weekInProgress()}>
+                  <p class="fine-print">This week, so far</p>
+                </Show>
+              </article>
+            </div>
+            <Show when={peaksReady()}>
+              <p class="fine-print">
+                History checked{' '}
+                <time datetime={stats()!.peaksComputedAt!}>
+                  {timestamp(stats()!.peaksComputedAt!)}
+                </time>
+              </p>
+            </Show>
           </Show>
         </div>
-      </div>
+        <Show
+          when={
+            lifetimeReady() ||
+            windowReady('throughput24h') ||
+            windowReady('throughput7d')
+          }
+          fallback={
+            <p class="fine-print">{octopusMetrics.missingThroughput}</p>
+          }
+        >
+          <div class="ops-throughput">
+            <h3>Throughput</h3>
+            <dl class="ops-metrics">
+              <div>
+                <dt>
+                  Records recorded
+                  <span class="fine-print">
+                    Lifetime ingestion ledger total
+                  </span>
+                </dt>
+                <dd data-metric="lifetime-records">
+                  {snapshotCell(lifetimeReady(), () =>
+                    number.format(stats()!.lifetimeTotals!.recordsTotal),
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>
+                  Days counted
+                  <span class="fine-print">
+                    Distinct UTC days with ledger rows
+                  </span>
+                </dt>
+                <dd data-metric="lifetime-days">
+                  {snapshotCell(lifetimeReady(), () =>
+                    number.format(stats()!.lifetimeTotals!.daysCounted),
+                  )}
+                </dd>
+              </div>
+            </dl>
+            <Show when={lifetimeReady()}>
+              <p class="fine-print">
+                Totals computed{' '}
+                <time datetime={stats()!.lifetimeTotals!.computedAt}>
+                  {timestamp(stats()!.lifetimeTotals!.computedAt)}
+                </time>
+              </p>
+            </Show>
+            <div class="ops-window">
+              <h4 id="ops-24h-title">Last 24 hours</h4>
+              <Show
+                when={windowSeries('throughput24h')}
+                fallback={
+                  <p class="ops-count" data-metric="throughput-24h">
+                    {snapshotCell(false, () => 'Unavailable')}
+                  </p>
+                }
+              >
+                {(series) => {
+                  const data = series();
+                  const max = seriesMax(data);
+                  const first = data.series[0].bucketStart;
+                  const last = data.series[data.series.length - 1].bucketStart;
+                  return (
+                    <div class="ops-chart">
+                      <ul
+                        class="ops-bars"
+                        aria-label="Hourly ledger-row totals for the last 24 hours"
+                      >
+                        <For each={data.series}>
+                          {(point) => (
+                            <li class="ops-bar-row">
+                              <span class="ops-bar-label">
+                                <time datetime={point.bucketStart}>
+                                  {hourLabel(point.bucketStart)}
+                                </time>
+                              </span>
+                              <span class="ops-bar-track" aria-hidden="true">
+                                <span
+                                  class="ops-bar-fill"
+                                  style={{ width: fill(point.records, max) }}
+                                />
+                              </span>
+                              <span class="ops-bar-count">
+                                {number.format(point.records)}
+                              </span>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                      <p class="fine-print">
+                        <time datetime={first}>{timestamp(first)}</time> to{' '}
+                        <time datetime={last}>{timestamp(last)}</time> UTC ·
+                        peak {number.format(max)} records in one hour
+                      </p>
+                    </div>
+                  );
+                }}
+              </Show>
+            </div>
+            <div class="ops-window">
+              <h4 id="ops-7d-title">Last 7 days</h4>
+              <Show
+                when={windowSeries('throughput7d')}
+                fallback={
+                  <p class="ops-count" data-metric="throughput-7d">
+                    {snapshotCell(false, () => 'Unavailable')}
+                  </p>
+                }
+              >
+                {(series) => {
+                  const data = series();
+                  const max = seriesMax(data);
+                  const first = data.series[0].bucketStart;
+                  const last = data.series[data.series.length - 1].bucketStart;
+                  const label = `Hourly ledger-row totals for the last 7 days: ${data.series.length} buckets from ${timestamp(first)} to ${timestamp(last)}. Peak ${number.format(max)} records in one hour.`;
+                  return (
+                    <div class="ops-chart">
+                      <div class="ops-spark" role="img" aria-label={label}>
+                        <For each={data.series}>
+                          {(point) => (
+                            <span
+                              class="ops-spark-bar"
+                              style={{ height: fill(point.records, max) }}
+                            />
+                          )}
+                        </For>
+                      </div>
+                      <p class="fine-print">
+                        <time datetime={first}>{timestamp(first)}</time> to{' '}
+                        <time datetime={last}>{timestamp(last)}</time> UTC ·
+                        peak {number.format(max)} records in one hour
+                      </p>
+                    </div>
+                  );
+                }}
+              </Show>
+            </div>
+          </div>
+        </Show>
+      </Show>
     </div>
   );
 }

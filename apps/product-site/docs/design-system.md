@@ -67,8 +67,9 @@ is used.
 Octopus UX islands follow the same progressive-enhancement rules. Pipeline
 emphasis keeps all three workflow steps visible. Both audience cards are
 available without JavaScript; hydration enables the Engineering/Operations
-toggle using `hidden`, `inert`, and `aria-hidden`. Metrics render unavailable
-until validated runtime data arrives. No count-up animation or numeric fallback
+toggle using `hidden`, `inert`, and `aria-hidden`. Metrics show a compact
+explanation and workflow link until validated runtime data arrives. Warmup and
+missing history use section-level explanations. No count-up animation or numeric fallback
 is permitted. Named `data-ux` wrappers identify islands for tests.
 
 Native disclosures stay in document flow. Long SQL, identifiers, and explanations

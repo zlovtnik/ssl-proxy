@@ -25,8 +25,11 @@ Its production activity section follows the hero, with current readings before
 historical peaks and a disclosure for measurement definitions.
 The same-origin runtime feed refreshes every 30 seconds. Never embed measurements
 in the build. Loading, unavailable, stale, and live states must be distinct;
-failed requests immediately remove old readings. No-JavaScript rendering
-shows unavailable values. Pipeline and audience controls progressively enhance
+failed requests retain the last fresh reading with a delayed label until it
+expires. Missing or expired snapshots show one explanation and a workflow link
+instead of a grid of unavailable values. Partial snapshots explain warmup and
+missing history without inventing counts. No-JavaScript rendering shows the
+workflow link and an instruction to enable JavaScript. Pipeline and audience controls progressively enhance
 static product copy.
 
 The six technical guides under `/guides/` explain separate investigation and
@@ -74,6 +77,11 @@ Keep these statements in the model, product page, and relevant sample:
 Calls to action use `mailto:` links for `rafael@rclabs.uk`. Subjects are
 `Use-case discussion: [product]`. The contact page keeps the address visible
 with a copy fallback. Email begins a discussion; it does not schedule a meeting.
+The Octopus contact invites a pipeline setup discussion with an engineer about
+stream topology, state bottlenecks, and recovery. Do not promise instant booking,
+zero-loss recovery, or an uptime guarantee. Engineering copy focuses on source
+lineage, replay, and persistent job state; Operations copy focuses on processing,
+backlog, intake control, throughput, and measurement freshness.
 
 ## Adding or changing copy
 

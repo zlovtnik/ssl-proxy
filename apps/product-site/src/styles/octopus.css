@@ -208,6 +208,9 @@
 .ops-feed-header p {
   margin: 0;
 }
+.ops-empty p {
+  max-width: 64ch;
+}
 .ops-history,
 .ops-throughput {
   border-top: 1px solid var(--divider);

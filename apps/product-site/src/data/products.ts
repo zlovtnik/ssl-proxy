@@ -12,22 +12,45 @@ export const octopusCaveat =
   'Delivery can repeat. Octopus records progress and uses durable deduplication to handle replay. Records outside the configured streams are not covered.';
 
 export const octopusMetrics = {
-  label: 'PRODUCTION ACTIVITY',
-  title: 'See the pipeline as it runs.',
-  summary: 'Current processing, queued work, and recorded history from the production coordinator.',
-  noScript: 'Enable JavaScript to load current metrics. No saved measurements are shown.',
+  label: 'PIPELINE OBSERVABILITY',
+  title: 'Spot backlog. Investigate stalled work.',
+  summary:
+    'Check processing, queued work, and recorded history from the production coordinator to see where investigation should begin.',
+  noScript:
+    'Enable JavaScript to load current metrics. No saved measurements are shown.',
+  empty: {
+    title: 'Waiting for a production reading',
+    loadingTitle: 'Loading production metrics',
+    description:
+      'A fresh reading is needed to show processing and backlog. The public feed cannot currently confirm pipeline activity; this does not establish whether processing has stopped.',
+    loadingDescription:
+      'Fetching the latest production reading. Metrics appear once the response is validated.',
+    retry: 'This page retries automatically while it is open.',
+    link: 'Explore the receive, process, and record workflow',
+    href: '#workflow-title',
+  },
+  warmup:
+    'Production is connected. Processing and backlog readings appear once the five-minute rate window and collection are ready.',
+  missingHistory:
+    'Historical peaks need a fresh computation. Peaks appear when fresh history is published.',
+  missingCheck: 'No successful check recorded',
+  missingThroughput:
+    'Lifetime totals and hourly history have not been published in this reading.',
   methodTitle: 'What these numbers mean',
   method: [
-    'Pipeline readings refresh every 30 seconds. Missing, failed, or expired readings show as unavailable; a brief poll failure keeps the last successful reading until it expires. No example values or build-time snapshots are used.',
-    'The processing rate covers the responding coordinator\'s scheduled ingest-ledger processor, averaged over five minutes. It is not the rate of all incoming streams. A successful processing check may find no work. Live cells show Warming up until the rate window and collection are ready.',
+    'Pipeline readings refresh every 30 seconds. Missing or expired readings show an explanation and a workflow link; a brief poll failure keeps the last successful reading, labelled delayed, until it expires. The page retries automatically. No example values or build-time snapshots are used.',
+    'The processing rate covers the responding coordinator\'s scheduled ingest-ledger processor, averaged over five minutes. It is not the rate of all incoming streams. A successful processing check may find no work. The pipeline section explains warmup until the rate window and collection are ready.',
     'Historical peaks count rows in the production ingestion ledger across all paths and outcomes. They are not unique business events or a capacity benchmark. Days use UTC; weeks run Monday to Sunday. Current periods are counted so far. History is refreshed separately, with its own measurement time.',
     'Lifetime totals and hourly throughput windows count rows in the same ingestion ledger. The last-24-hours window holds 24 measured hourly totals and the last-7-days window holds 168. A measured hour may honestly be zero; a window that was never computed stays unavailable instead of showing zeros.',
   ],
 } as const;
 
 export const octopusContact = {
-  headline: ['Discuss your', 'pipeline.'],
-  supporting: 'Tell us what needs to move, where progress gets hard to see, and which operational constraints matter.',
+  eyebrow: 'EVENT PROCESSING / STATE RECOVERY',
+  headline: ['Discuss your', 'pipeline setup.'],
+  supporting:
+    'Walk through your stream topology, state bottlenecks, and recovery challenges with an engineer. Tell us your failure modes and operational goals so we can discuss the next step.',
+  link: 'Talk with an engineer',
 } as const;
 
 export const home = {
@@ -884,9 +907,9 @@ export const products = [
     path: '/octopus/',
     homeTitle: 'Octopus',
     label: 'OCTOPUS / DATA PIPELINE COORDINATOR',
-    headline: ['Keep data moving.', 'Keep track of every step.'],
+    headline: ['Trace pipeline work.', 'Recover with context.'],
     summary:
-      'Octopus takes incoming events through queued jobs, batches, and database loads. It stores progress in PostgreSQL so your team can see what ran, what is waiting, and where to investigate.',
+      'Investigate stalled work and resume after restarts with a durable record of events, jobs, and database loads. Octopus stores progress in PostgreSQL and uses deduplication to handle repeated delivery.',
     problem:
       'For platform and data teams running event pipelines that need to recover from failures and account for repeated delivery.',
     promise: 'A clear record of the work moving through your pipeline.',
@@ -894,7 +917,7 @@ export const products = [
       label: 'View live metrics',
       href: '#operational-evidence',
     },
-    secondaryCta: { label: 'Discuss your use case', href: '/demo/#octopus' },
+    secondaryCta: { label: 'Discuss your pipeline setup', href: '#contact-title' },
     sections: {
       workflow: {
         ...workflowSection,
@@ -905,7 +928,7 @@ export const products = [
         ...audienceSection,
         label: 'BUILT FOR YOUR TEAM',
         title: 'Understand the pipeline. Run it with context.',
-        note: 'Follow an event through processing or check the state of queued work.',
+        note: 'Engineering traces delivery and recovery state. Operations checks throughput, backlog, and the freshness of reported activity.',
       },
       evidence: {
         ...evidenceSection,
@@ -924,8 +947,9 @@ export const products = [
         title: 'For engineers',
         proposition: 'Trace a record from stream to result.',
         points: [
-          'Find the consumer group, topic, partition, and offset behind an ingestion record.',
-          'Follow deduplication, job claims, batches, and database load results in persistent state.',
+          'Start incident triage at the source: find the consumer group, topic, partition, and offset behind an ingestion record.',
+          'Inspect durable deduplication and committed offsets to understand replay after a restart.',
+          'Follow job claims, batches, and database load results through the Scala, Cats Effect, and FS2 coordinator.',
         ],
       },
       {
@@ -933,8 +957,9 @@ export const products = [
         title: 'For operators',
         proposition: 'See what is moving and what is waiting.',
         points: [
-          'Check processing rate, queued records, and whether intake has paused to let the backlog drain.',
-          'Compare recorded activity by day and week, with the measurement time visible.',
+          'Check processing rate and queued records to identify a growing backlog.',
+          'See whether intake is accepting work or paused to let the backlog drain.',
+          'Compare hourly throughput and recorded peaks, with timestamps that distinguish fresh readings from delayed data.',
         ],
       },
     ],
@@ -973,15 +998,15 @@ export const products = [
     features: [
       [
         'Know where a record came from',
-        'Each ingestion record keeps its consumer group, topic, partition, and offset. Replayed records keep their original first-seen time.',
+        'Start incident triage with the consumer group, topic, partition, and offset stored on each ingestion record. Replayed records keep their original first-seen time so you can trace the original delivery.',
       ],
       [
         'Resume from saved progress',
-        'Consumers restart from committed offsets. Deduplication handles repeated delivery; new groups begin at the earliest records still retained.',
+        'Recover after a restart using committed consumer offsets and durable deduplication for repeated delivery. New groups begin at the earliest records still retained.',
       ],
       [
-        'Keep track of work in flight',
-        'Time-limited claims coordinate workers. Stored jobs, batches, and outgoing messages preserve the state of each load.',
+        'Coordinate work in flight',
+        'Time-limited claims coordinate workers competing for queued work. Inspect stored jobs, batches, and outgoing messages to see the state of each load when processing stalls.',
       ],
       [
         'Maintain the data used downstream',
@@ -1019,13 +1044,16 @@ export const sampleProducts = products.filter(
 );
 
 export const contact = {
+  eyebrow: 'HAVE A USE CASE IN MIND?',
   headline: ['Discuss your', 'use case.'],
   supporting:
     "Tell us what you need to investigate, change, route, or ingest, your environment, and the constraints that matter. We'll agree on the next step by email.",
   cta: 'Discuss your use case',
   // Short form for a mailto link that already sits under the headline, so the
   // same words never appear twice in one block.
-  link: 'Write to us',
+  link: 'Email an engineer',
+  emailHint: 'Opens your email app, or email',
+  nextStep: 'Start by email; we can arrange a technical call together.',
 } as const;
 
 export const allProducts = products.map((product) => product.name).join(', ');

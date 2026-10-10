@@ -30,6 +30,20 @@ Render the affected environment and verify that its generated Prometheus
 ConfigMap has a content hash and the expected scrape job. Confirm that the
 workload references the same hash-named ConfigMap.
 
+## Coordinator lag metrics stale
+
+Check that the Octopus consumer metrics sampler is running
+(`consumer_metrics` log events) and that `coordinator_redpanda_lag_refresh_failures_total`
+is not increasing. A stale series means fetch-position lag cannot be trusted;
+see [Data-plane checks](../runbook.md#data-plane-checks).
+
+## Coordinator consumer route down
+
+Inspect `coordinator_route_suspended` and `coordinator_processor_lifecycle`
+for the named route. A suspended route is backing off; a failed terminal
+processor needs operator intervention described in
+[Octopus health fails](../runbook.md#octopus-health-fails).
+
 ## Workload unavailable
 
 Compare desired and ready replicas, pod conditions, and namespace events.

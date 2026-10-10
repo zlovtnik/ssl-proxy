@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { parseStats } from '../src/data/operational-stats';
 import { onRequestGet } from '../functions/api/octopus-stats';
+import { octopusMetrics } from '../src/data/products';
 
 const captured = new Date('2026-10-09T12:00:00Z');
 const hourMs = 3_600_000;
@@ -100,7 +101,7 @@ test('new responses update every displayed metric; a failed poll keeps the last 
   await expect(page.locator('[data-metric="day"]')).toHaveText('492 records');
 });
 
-test('old peaks expire independently and missing readings never become zero', async ({
+test('partial readings explain warmup and missing history without displaying invented metrics', async ({
   page,
 }) => {
   await page.clock.install({ time: captured });
@@ -117,25 +118,16 @@ test('old peaks expire independently and missing readings never become zero', as
   await expect(page.getByRole('status')).toHaveText(
     'Production connected · warming up',
   );
-  await expect(page.locator('[data-metric="day"]')).toHaveText('Unavailable');
-  await expect(page.locator('[data-metric="week"]')).toHaveText('Unavailable');
-  await expect(page.locator('[data-metric="rate"]')).toHaveText('Warming up');
-  await expect(page.locator('[data-metric="pending"]')).toHaveText(
-    'Warming up',
-  );
-  // Missing totals and series stay unavailable, never an empty zero chart.
-  await expect(page.locator('[data-metric="lifetime-records"]')).toHaveText(
-    'Unavailable',
-  );
-  await expect(page.locator('[data-metric="lifetime-days"]')).toHaveText(
-    'Unavailable',
-  );
-  await expect(page.locator('[data-metric="throughput-24h"]')).toHaveText(
-    'Unavailable',
-  );
-  await expect(page.locator('[data-metric="throughput-7d"]')).toHaveText(
-    'Unavailable',
-  );
+  await expect(
+    page.getByText(octopusMetrics.warmup, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(octopusMetrics.missingHistory, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(octopusMetrics.missingThroughput, { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('[data-metric]')).toHaveCount(0);
   await expect(page.locator('.ops-bars')).toHaveCount(0);
   await expect(page.locator('.ops-spark')).toHaveCount(0);
 });
@@ -162,9 +154,36 @@ test('repeated cached responses lose live status when the source timestamp expir
     'data-mode',
     'unavailable',
   );
-  await expect(page.locator('[data-metric="pending"]')).toHaveText(
-    'Unavailable',
+  await expect(page.locator('[data-metric]')).toHaveCount(0);
+  await expect(page.locator('.ops-empty')).toContainText(
+    octopusMetrics.empty.description,
   );
+  await expect(page.locator('[data-ux="ops-stats"] time')).toHaveCount(0);
+});
+
+test('a failed feed shows a workflow path and automatically recovers to measured data', async ({
+  page,
+}) => {
+  await page.clock.install({ time: captured });
+  let calls = 0;
+  await page.route('**/api/octopus-stats', (route) => {
+    calls++;
+    return calls === 1
+      ? route.fulfill({ status: 503, json: { error: 'unavailable' } })
+      : route.fulfill({ json: withThroughput(5_000) });
+  });
+  await page.goto('/octopus/');
+  const widget = page.locator('[data-ux="ops-stats"]');
+  await expect(widget).toHaveAttribute('data-mode', 'unavailable');
+  await expect(widget.locator('[data-metric], time')).toHaveCount(0);
+  await expect(widget).toContainText(octopusMetrics.empty.retry);
+  await widget.getByRole('link', { name: octopusMetrics.empty.link }).click();
+  await expect(page.locator('#workflow-title')).toBeInViewport();
+  await page.clock.runFor(5_000);
+  await expect(widget).toHaveAttribute('data-mode', 'live');
+  await expect(widget.locator('.ops-empty')).toHaveCount(0);
+  await expect(widget.locator('[data-metric="day"]')).toHaveText('123 records');
+  await expect(widget.locator('.ops-bar-row')).toHaveCount(24);
 });
 
 test('response validation rejects missing fields, invalid numbers, dates and timestamps', () => {
