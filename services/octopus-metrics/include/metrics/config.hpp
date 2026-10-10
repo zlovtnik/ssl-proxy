@@ -24,7 +24,7 @@ struct Config {
   std::string minio_bucket = "ssl-proxy-stats";
   std::string minio_prefix = "stats/";
   std::string live_url =
-      "http://ssl-proxy-java-coordinator:8080/internal/metrics/live";
+      "http://ssl-proxy-java-coordinator-live:8080/internal/metrics/live";
   int workers = 3;
   int http_port = 9092;
   int peaks_interval = 300;

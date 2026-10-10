@@ -173,7 +173,7 @@ All listed values are validated at startup. Secrets come from deployment inputs.
 | `STATS_LIVE_INTERVAL_SECONDS` | `15` | Coordinator sample cadence, 1-60 |
 | `STATS_PUBLISH_INTERVAL_SECONDS` | `30` | Snapshot publish cadence, 1-3600 |
 | `STATS_JOB_TIMEOUT_SECONDS` | `60` | Per I/O operation budget, 1-300 |
-| `STATS_OCTOPUS_LIVE_URL` | `http://ssl-proxy-java-coordinator:8080/internal/metrics/live` | Service port 8080 targets pod port 8081; no URL credentials or redirects |
+| `STATS_OCTOPUS_LIVE_URL` | `http://ssl-proxy-java-coordinator-live:8080/internal/metrics/live` | Dedicated internal service publishes unready pod addresses; port 8080 targets pod port 8081; no URL credentials or redirects |
 | `REDIS_ADDR` | `ssl-proxy-redis-runtime:6379` | Plain host:port; bracketed IPv6 accepted; URI schemes rejected |
 | `REDIS_PASSWORD` | empty | Optional internal Redis AUTH secret |
 | `STATS_REDIS_KEY` | `stats:current:v2` | Validated snapshot key |
@@ -263,6 +263,12 @@ resource requests/limits, and network policies for the live bridge, PgBouncer,
 Redis, MinIO, and DNS. Recreate updates avoid duplicate SQL refreshes. Readiness
 depends on successful publication; liveness does not depend on external stores.
 Initial sizing must be measured under retained-evidence load before promotion.
+
+The base also owns `ssl-proxy-java-coordinator-live`, an internal telemetry
+Service with `publishNotReadyAddresses: true`. It selects coordinator pods even
+while their processing readiness fails, so ingestion health cannot hide live
+diagnostic measurements. The regular coordinator Service keeps its readiness
+gate; network policies still restrict access to pod port 8081.
 
 This base is not yet included in either environment's canonical app-stack.
 No registry digest is fabricated, and the current platform-input contract does

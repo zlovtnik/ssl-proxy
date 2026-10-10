@@ -78,7 +78,7 @@ spec:
             - name: STATS_JOB_TIMEOUT_SECONDS
               value: "60"
             - name: STATS_OCTOPUS_LIVE_URL
-              value: "http://ssl-proxy-java-coordinator:8080/internal/metrics/live"
+              value: "http://ssl-proxy-java-coordinator-live:8080/internal/metrics/live"
             - name: REDIS_ADDR
               value: "ssl-proxy-redis-runtime:6379"
             - name: REDIS_PASSWORD
@@ -176,4 +176,22 @@ spec:
     - name: http
       port: 9092
       targetPort: http
+      protocol: TCP
+---
+# Telemetry must remain reachable when coordinator processing readiness fails.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-java-coordinator-live
+  namespace: ssl-proxy
+spec:
+  type: ClusterIP
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: java-coordinator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8081
       protocol: TCP

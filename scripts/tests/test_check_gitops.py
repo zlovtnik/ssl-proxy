@@ -1246,16 +1246,23 @@ class PublicStatsDeliveryTest(unittest.TestCase):
         service = next(document for document in definitions if document["kind"] == "Service")
         self.assertEqual(8080, service["spec"]["ports"][0]["port"])
 
-    def test_materializer_live_url_uses_service_port_instead_of_pod_port(self) -> None:
+    def test_materializer_live_source_survives_coordinator_readiness_failure(self) -> None:
         coordinator = documents(
             (REPOSITORY_ROOT / "cyber-stack/base/java-coordinator/deployment.yaml").read_text()
         )
-        service = next(document for document in coordinator if document["kind"] == "Service")
-        url = f"http://{service['metadata']['name']}:{service['spec']['ports'][0]['port']}/internal/metrics/live"
+        regular_service = next(document for document in coordinator if document["kind"] == "Service")
+        self.assertFalse(regular_service["spec"].get("publishNotReadyAddresses", False))
         worker = documents(
             (REPOSITORY_ROOT / "cyber-stack/base/octopus-metrics/deployment.yaml").read_text()
         )
         deployment = next(document for document in worker if document["kind"] == "Deployment")
+        service = next(document for document in worker
+            if document["kind"] == "Service" and document["metadata"]["name"] == "ssl-proxy-java-coordinator-live")
+        self.assertTrue(service["spec"]["publishNotReadyAddresses"])
+        self.assertEqual("ClusterIP", service["spec"]["type"])
+        self.assertEqual(regular_service["spec"]["selector"], service["spec"]["selector"])
+        self.assertEqual(8081, service["spec"]["ports"][0]["targetPort"])
+        url = f"http://{service['metadata']['name']}:{service['spec']['ports'][0]['port']}/internal/metrics/live"
         env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
         self.assertEqual(url, next(entry["value"] for entry in env if entry["name"] == "STATS_OCTOPUS_LIVE_URL"))
         config = (REPOSITORY_ROOT / "services/octopus-metrics/include/metrics/config.hpp").read_text()
