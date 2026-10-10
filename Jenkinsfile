@@ -3,7 +3,7 @@ pipeline {
 
   options {
     buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '10'))
-    disableConcurrentBuilds(abortPrevious: true)
+    disableConcurrentBuilds()
     skipDefaultCheckout(true)
     timestamps()
     timeout(time: 180, unit: 'MINUTES')
@@ -21,7 +21,7 @@ pipeline {
   }
 
   parameters {
-    booleanParam(name: 'FULL_BUILD', defaultValue: false, description: 'Validate and publish every image candidate. Production digest pins remain a reviewed Git change.')
+    booleanParam(name: 'FULL_BUILD', defaultValue: true, description: 'Validate and publish every image candidate. Uncheck only for changes since the last successful build. Production digest pins remain a reviewed Git change.')
   }
 
   stages {
@@ -42,6 +42,10 @@ pipeline {
           if (env.IS_MAIN != 'true') {
             error('Image publication is restricted to origin/main')
           }
+          env.CI_SOURCE_REVISION = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+          env.CI_PREVIOUS_SUCCESSFUL_REVISION = currentBuild.previousSuccessfulBuild?.buildVariables?.get('CI_SOURCE_REVISION') ?: ''
+          env.FULL_BUILD = params.FULL_BUILD.toString()
+          echo "Build selection: FULL_BUILD=${env.FULL_BUILD}, previous successful revision=${env.CI_PREVIOUS_SUCCESSFUL_REVISION ?: 'unavailable; full selection required'}"
         }
       }
     }

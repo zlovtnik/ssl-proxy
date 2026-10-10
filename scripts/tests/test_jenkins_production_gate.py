@@ -202,11 +202,14 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn("make jenkins-plugin-audit", validation)
         self.assertNotIn("catchError", validation)
 
-    def test_pipeline_aborts_superseded_builds(self) -> None:
+    def test_pipeline_queues_newer_builds_and_defaults_to_full_publication(self) -> None:
         pipeline = pipeline_source()
 
-        self.assertIn("disableConcurrentBuilds(abortPrevious: true)", pipeline)
-        self.assertNotIn("disableConcurrentBuilds()", pipeline)
+        self.assertIn("disableConcurrentBuilds()", pipeline)
+        self.assertNotIn("abortPrevious: true", pipeline)
+        self.assertIn("name: 'FULL_BUILD', defaultValue: true", pipeline)
+        self.assertIn("currentBuild.previousSuccessfulBuild?.buildVariables?.get('CI_SOURCE_REVISION')", pipeline)
+        self.assertIn("env.CI_SOURCE_REVISION =", pipeline)
 
     def test_pipeline_verifies_octopus_pin_before_buildx_preflight(self) -> None:
         pipeline = pipeline_source()

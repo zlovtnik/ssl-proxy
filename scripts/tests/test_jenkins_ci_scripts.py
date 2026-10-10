@@ -199,11 +199,49 @@ class JenkinsCiScriptsTest(unittest.TestCase):
             f"Path({str(selector_log)!r}).write_text(json.dumps(sys.argv[1:]))\n"
         )
         result = self.run_script("classify-changes", FULL_BUILD="true",
-                                 GIT_PREVIOUS_SUCCESSFUL_COMMIT="invalid-base")
+                                 CI_PREVIOUS_SUCCESSFUL_REVISION="invalid-base")
         self.assertEqual(0, result.returncode, result.stderr)
         args = json.loads(selector_log.read_text())
         self.assertIn("--full", args)
         self.assertNotIn("--base", args)
+
+    def test_missing_successful_baseline_does_not_drop_earlier_commits(self) -> None:
+        selector_log = self.root / "selector.json"
+        (self.root / "scripts/classify_changes.py").write_text(
+            "import json, sys\nfrom pathlib import Path\n"
+            f"Path({str(selector_log)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        )
+        # The Git plugin may point at the aborted run. The Pipeline's own
+        # completed-success marker is the only permitted incremental baseline.
+        result = self.run_script("classify-changes", FULL_BUILD="false",
+            CI_PREVIOUS_SUCCESSFUL_REVISION="", GIT_PREVIOUS_SUCCESSFUL_COMMIT="aborted")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("--full", json.loads(selector_log.read_text()))
+
+    def test_incremental_selection_uses_completed_success_revision(self) -> None:
+        selector_log = self.root / "selector.json"
+        (self.root / "scripts/classify_changes.py").write_text(
+            "import json, sys\nfrom pathlib import Path\n"
+            f"Path({str(selector_log)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        )
+        result = self.run_script("classify-changes", FULL_BUILD="false",
+            CI_PREVIOUS_SUCCESSFUL_REVISION="completed", GIT_PREVIOUS_SUCCESSFUL_COMMIT="aborted")
+        self.assertEqual(0, result.returncode, result.stderr)
+        args = json.loads(selector_log.read_text())
+        self.assertEqual("completed", args[args.index("--base") + 1])
+        self.assertNotIn("--full", args)
+
+    def test_unavailable_success_revision_selects_full_build(self) -> None:
+        selector_log = self.root / "selector.json"
+        (self.root / "scripts/classify_changes.py").write_text(
+            "import json, sys\nfrom pathlib import Path\n"
+            f"Path({str(selector_log)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        )
+        self.executable("git", "import sys\nsys.exit(1)\n")
+        result = self.run_script("classify-changes", FULL_BUILD="false",
+            CI_PREVIOUS_SUCCESSFUL_REVISION="missing")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("--full", json.loads(selector_log.read_text()))
 
     def test_change_flags_and_delegation_skip_container_tests(self) -> None:
         for script, flag in (("platform-sync", "PLATFORM_SYNC"), ("stats-reader", "STATS_READER"),
@@ -271,9 +309,15 @@ Path("artifacts/octopus-metrics-buildx.json").write_text(json.dumps(
                 self.assertEqual(0, result.returncode, result.stderr)
                 manifest = json.loads((self.root / "artifacts/release.json").read_text())
                 self.assertEqual([], manifest["images"])
+                self.assertEqual("octopus-metrics", manifest["candidateImages"][0]["service"])
+                self.assertEqual("sha256:" + "a" * 64, manifest["candidateImages"][0]["digest"])
+                self.assertTrue(manifest["candidateImages"][0]["activationRequired"])
                 self.assertIn("Publishing 0 Kubernetes images", result.stdout)
-                self.assertEqual("No digest updates are required.\n",
-                                 (self.root / "artifacts/commands.txt").read_text())
+                report = (self.root / "artifacts/commands.txt").read_text()
+                self.assertIn("candidates below require activation", report)
+                self.assertIn("registry.example:5000/octopus-metrics@sha256:" + "a" * 64, report)
+                self.assertNotIn("make bump-digest-octopus-metrics", report)
+                self.assertIn(report, result.stdout)
                 args = json.loads(publish_log.read_text())
                 self.assertIn("publish-octopus-metrics", args)
                 self.assertIn("PUBLISH_REPOSITORY=registry.example:5000/octopus-metrics", args)
@@ -349,7 +393,8 @@ Path("artifacts/octopus-metrics-buildx.json").write_text(json.dumps(
             pipeline = (ROOT / repository / "Jenkinsfile").read_text()
             self.assertNotIn("'''", pipeline)
             self.assertIn("timeout(time: 5, unit: 'MINUTES')", pipeline)
-            self.assertIn("disableConcurrentBuilds(abortPrevious: true)", pipeline)
+            self.assertIn("disableConcurrentBuilds()" if repository == "" else
+                          "disableConcurrentBuilds(abortPrevious: true)", pipeline)
 
 
 if __name__ == "__main__":

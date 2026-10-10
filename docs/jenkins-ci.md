@@ -87,18 +87,19 @@ is explicitly intended and backed up.
 ## Pipeline behavior
 
 The managed pipeline polls `main` every five minutes and supports manual builds.
-When a new run is scheduled, Jenkins aborts any active run before starting it.
-This prevents an obsolete checkout from publishing after newer `main` work has
-started. The pipeline does not expose or require a GitHub webhook or write
+When a new run is scheduled, Jenkins queues it until the active run completes.
+Full builds finish publishing and reporting all their image digests even when
+more commits arrive. Serial execution keeps older runs from publishing after
+newer runs. The pipeline does not expose or require a GitHub webhook or write
 credential. Before checkout, Jenkins deletes the CI-owned workspace so reports
 or other untracked files from an interrupted build cannot fail the source
 integrity gate. Docker and BuildKit caches live outside that workspace. Every
 run has a 180-minute hard timeout.
 
-Select the `FULL_BUILD` parameter to validate and publish every image candidate,
-including the unactivated Octopus Metrics image. Its default is false, so an
-ordinary successful run may validate a CI-only change without publishing an
-image. Publication still does not change production digest pins. The archived
+The `FULL_BUILD` parameter defaults to true: an ordinary run validates and
+publishes every image candidate, including the unactivated Octopus Metrics
+image. Uncheck it explicitly to select changes since the last completed
+successful run. Publication still does not change production digest pins. The archived
 `changed-paths.json` is the authoritative selection report for each build.
 
 Containerized validation extracts the streamed checkout without preserving the
@@ -108,12 +109,13 @@ remains enabled without a global `safe.directory` exception.
 
 Each run:
 
-1. checks out the superproject, compares the last successful Jenkins commit
+1. checks out the superproject, records `CI_SOURCE_REVISION`, and compares the
+   prior successful Pipeline's recorded revision
    to `HEAD` with `scripts/classify_changes.py`, and archives
    `artifacts/changed-paths.json`. If that base is missing from a shallow
-   clone, Jenkins deepens the fetch; if it is still unavailable, classification
-   falls back to `HEAD^` rather than selecting every suite. Only a true first
-   commit (no parent) or an explicit `FULL_BUILD=true` selects all checks and images;
+   clone, Jenkins deepens the fetch. If the recorded baseline is unavailable or
+   is not an ancestor, classification selects a full build. It never falls back
+   to the latest commit's parent, which could omit changes from an aborted run;
 2. checks out pinned submodules and requires the Octopus checkout to match its
    pin with both worktrees clean. Delivery documentation validation still
    inspects every pinned submodule, so this checkout remains necessary;
@@ -127,9 +129,10 @@ Each run:
    concurrent workers, using a 12-character commit tag plus the mutable
    `latest` channel. Redpanda maintenance and Octopus Metrics
    publish candidate images separately until their first reviewed stack pins; and
-6. archives the release manifest and prints a final report containing only the
+6. archives the release manifest and prints a final report containing the
    `make bump-digest-<service> ENV=prod DIGEST=<digest>` commands required by
-   newly published digests.
+   newly published deployed images, plus digests and activation requirements
+   for candidates without a production pin.
 
 `services/octopus` is a Git submodule in this checkout. Its gitlink bump
 selects `java-coordinator`; ordinary `services/octopus/**` paths are not
@@ -347,8 +350,11 @@ executor to another machine.
 
 Jenkins publishes immutable image digests but does not mutate Kubernetes or
 Git. The final console section and archived
-`artifacts/bump-digest-commands.txt` list only the commands required to accept
-new digests. Run the desired commands in a clean checkout, inspect the rendered
+`artifacts/bump-digest-commands.txt` list the commands required to accept
+new digests. Candidates without deployed pins appear in the manifest's
+`candidateImages` array and the report's activation section; they cannot use a
+bump target until their base and image contract are added. Run the desired
+commands in a clean checkout, inspect the rendered
 production diff, commit it to `main`, and push when ready. Argo CD then
 reconciles the three production Applications. Images whose commands are not run
 remain published but unused by production.

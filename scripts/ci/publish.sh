@@ -13,9 +13,6 @@ env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
   --platform linux/amd64 --registry-plain-http "$REGISTRY_PLAIN_HTTP" \
   --max-workers 3 --manifest-out "$RELEASE_MANIFEST" \
   --commands-out "$BUMP_COMMANDS_REPORT" --make-command make
-echo
-echo '=== Manual production digest update report ==='
-cat "$BUMP_COMMANDS_REPORT"
 if [ "$SHOULD_PUBLISH_REDPANDA_MAINT" = true ]; then
   env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
     DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make --no-print-directory publish-redpanda-maint \
@@ -42,3 +39,46 @@ if [ "$SHOULD_PUBLISH_OCTOPUS_METRICS" = true ]; then
 else
   echo 'skipped: no octopus-metrics changes'
 fi
+
+# Candidate images have no deployed pin or bump target yet. Record their real
+# digests beside the deployable images and explain that in the final report.
+python3 - "$RELEASE_MANIFEST" "$BUMP_COMMANDS_REPORT" "$REGISTRY" \
+  "$SHOULD_PUBLISH_REDPANDA_MAINT" "$SHOULD_PUBLISH_OCTOPUS_METRICS" <<'PY'
+import json
+import sys
+from pathlib import Path
+from scripts.image_contract import load_buildx_digest
+
+manifest_path, report_path = map(Path, sys.argv[1:3])
+registry, redpanda, metrics = sys.argv[3:]
+manifest = json.loads(manifest_path.read_text())
+candidates = []
+for service, slice_name, selected in (
+    ("redpanda-maint", "data-plane", redpanda),
+    ("octopus-metrics", "app-stack", metrics),
+):
+    if selected == "true":
+        candidates.append({
+            "service": service,
+            "slice": slice_name,
+            "repository": f"{registry}/{service}",
+            "digest": load_buildx_digest(Path(f"artifacts/{service}-buildx.json")),
+            "sourceRevision": manifest["sourceRevision"],
+            "activationRequired": True,
+        })
+manifest["candidateImages"] = candidates
+manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+report = report_path.read_text().rstrip()
+if candidates:
+    if report == "No digest updates are required.":
+        report = "No digest updates for currently deployed services; candidates below require activation."
+    report += "\n\nPublished candidates requiring activation:\n"
+    report += "\n".join(
+        f"{entry['service']}: {entry['repository']}@{entry['digest']} ({entry['slice']})"
+        for entry in candidates
+    )
+    report += "\nProvision the required platform inputs, then add the base and digest pin in reviewed Git."
+report_path.write_text(report + "\n")
+PY
+printf '\nManual production digest update report\n'
+cat "$BUMP_COMMANDS_REPORT"
