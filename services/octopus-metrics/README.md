@@ -27,7 +27,7 @@ The diagnostic coordinator stats endpoint and ingest instrumentation remain.
 | `StatsMaterializer` | Seven separate `Ref` reads could combine values from different refresh generations. Timestamp guards protected some caches, but the live cache used unguarded `set`. | One brief cache mutex copies a coherent immutable state; every part update rejects older measurement timestamps. SQL and stores execute outside the lock. |
 | `fillHourly` | Persistent lists, per-bucket timestamp strings, a map, and last-write-wins duplicate handling allocated repeatedly. | Stack-bounded row array, strict timestamp/count validation, duplicate rejection, contiguous 168-count array with implicit UTC bucket positions. The 24-hour series is a slice of the same measurement. |
 | `StatsStores` | JSON was encoded and copied into bytes for each store/object. `SETEX` and unconditional object writes permitted an older publisher to overwrite a newer snapshot; the unused Redis lock did not prevent this. `rediss` was stripped without enabling TLS. | Serialize once into a fixed 32 KiB PMR arena, reuse the bytes for all writes, Redis atomic Lua timestamp comparison, MinIO ETag conditional writes. Unsupported Redis URI schemes fail configuration instead of losing their transport meaning. |
-| Live-strip source | Rates and freshness are coordinator-process readings. Sampling a load-balanced coordinator is not a fleet sum. | Read-only `/internal/metrics/live` bridge preserves the original per-process rate, warm-up, and freshness gates. Configure a specific source for stable pod semantics; fleet aggregation needs a separate contract decision. |
+| Live-strip source | The scheduled ledger pass may process zero while locked consumers persist records directly. Sampling a load-balanced coordinator is not a fleet sum. | Read-only `/internal/metrics/live` reports successfully committed broker deliveries and optional broker fetch-position lag separately from pending ledger rows. Warm-up and freshness gates remain. Configure a specific source for stable pod semantics; fleet aggregation needs a separate contract decision. |
 
 The principal remaining throughput cost is exact PostgreSQL aggregation over
 all retained ingestion evidence. Changing language does not remove that scan.
@@ -118,7 +118,7 @@ Top-level fields are `asOf`, `peaksComputedAt`, `peakRecordsDay`,
 `peakRecordsWeekEnd`, `liveStrip`, `lifetimeTotals`, `throughput24h`, and
 `throughput7d`. Existing nested keys, Redis key, and object paths are preserved.
 
-Counts cover ingestion evidence rows of every disposition, as before. Peak ties
+Historical counts cover ingestion evidence rows of every disposition, as before. Peak ties
 select the earliest UTC day/week. Weeks begin Monday and end Sunday. A successful
 empty ledger yields null peaks, zero lifetime counts, and dense measured-zero
 history. Failed initial reads stay null; later failures retain last-good parts
@@ -126,6 +126,14 @@ and their original timestamps. History is omitted after its complete-hour
 window expires. Live data is omitted after 60 seconds or when the source reports
 unavailable telemetry. Source timestamps may lead the local clock by up to five
 seconds; larger future offsets or malformed timestamps are rejected.
+
+Live `ingestProcessedRatePerSec` is the five-minute average of successfully
+committed broker deliveries, including replay and parked records; it is separate
+from historical evidence counts. `pendingLedgerCount` covers pending/processing
+ledger rows. Optional `brokerLagCount` covers fresh fetch-position lag across the
+source coordinator's consumers and excludes already-fetched records. Older
+bridges omit it; missing or null remains null, never zero. Store readers must
+allowlist this field before the source revision is promoted.
 
 Redis's Lua comparison normalizes fractional UTC timestamps before comparing.
 MinIO reads the current object and ETag, compares `asOf`, then uses `If-Match` or

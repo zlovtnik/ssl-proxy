@@ -39,6 +39,7 @@ var topLevelKeys = []string{
 var liveStripKeys = []string{
 	"ingestProcessedRatePerSec",
 	"pendingLedgerCount",
+	"brokerLagCount",
 	"lastIngestSuccessAt",
 	"backpressureActive",
 }

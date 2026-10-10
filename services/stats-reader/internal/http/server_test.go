@@ -228,6 +228,7 @@ func TestAllowlistStripsExtraKeys(t *testing.T) {
 		"peakRecordsDay": 3,
 		"liveStrip": {
 			"pendingLedgerCount": 1,
+			"brokerLagCount": 16300000,
 			"debugDump": "raw"
 		},
 		"throughput24h": {
@@ -261,6 +262,9 @@ func TestAllowlistStripsExtraKeys(t *testing.T) {
 	}
 	if strip["pendingLedgerCount"] != float64(1) {
 		t.Fatalf("pendingLedgerCount = %v", strip["pendingLedgerCount"])
+	}
+	if strip["brokerLagCount"] != float64(16300000) {
+		t.Fatalf("brokerLagCount = %v", strip["brokerLagCount"])
 	}
 	if _, ok := strip["debugDump"]; ok {
 		t.Fatalf("debugDump survived allowlist: %v", strip)

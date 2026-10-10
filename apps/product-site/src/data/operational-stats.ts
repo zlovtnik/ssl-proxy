@@ -25,6 +25,7 @@ export interface Stats {
   liveStrip: {
     ingestProcessedRatePerSec: number;
     pendingLedgerCount: number;
+    brokerLagCount: number | null;
     lastIngestSuccessAt: string | null;
     backpressureActive: boolean;
   } | null;
@@ -119,6 +120,11 @@ export function parseStats(value: unknown, now = Date.now()): Stats {
       !Number.isFinite(live.ingestProcessedRatePerSec) ||
       live.ingestProcessedRatePerSec < 0 ||
       !count(live.pendingLedgerCount) ||
+      !(
+        live.brokerLagCount === undefined ||
+        live.brokerLagCount === null ||
+        count(live.brokerLagCount)
+      ) ||
       typeof live.backpressureActive !== 'boolean' ||
       !(
         live.lastIngestSuccessAt === null ||
@@ -168,6 +174,7 @@ export function parseStats(value: unknown, now = Date.now()): Stats {
         : {
             ingestProcessedRatePerSec: strip.ingestProcessedRatePerSec,
             pendingLedgerCount: strip.pendingLedgerCount,
+            brokerLagCount: strip.brokerLagCount ?? null,
             lastIngestSuccessAt: strip.lastIngestSuccessAt,
             backpressureActive: strip.backpressureActive,
           },

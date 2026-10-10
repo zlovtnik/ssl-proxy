@@ -101,6 +101,16 @@ void live_contract() {
   const auto live = parse_live(payload, at);
   require(live.has_value() && live->value && live->value->pending == 9,
           "live decoder");
+  require(!live->value->broker_lag, "older bridge keeps broker lag unknown");
+  const auto broker = parse_live(
+      R"({"asOf":"2026-10-08T12:30:00Z","liveStrip":{"ingestProcessedRatePerSec":2.5,"pendingLedgerCount":0,"brokerLagCount":16300000,"lastIngestSuccessAt":null,"backpressureActive":false}})", at);
+  require(broker && broker->value && broker->value->broker_lag == 16300000,
+          "broker backlog independent from empty ledger");
+  for (const auto count : {"null", "0", "-1", "1.5", "\"9\""}) {
+    const auto json = std::string{R"({"asOf":"2026-10-08T12:30:00Z","liveStrip":{"ingestProcessedRatePerSec":2.5,"pendingLedgerCount":0,"lastIngestSuccessAt":null,"backpressureActive":false,"brokerLagCount":)"} + count + "}}";
+    require(parse_live(json, at).has_value() == (std::string_view{count} == "null" || std::string_view{count} == "0"),
+            "optional broker lag remains strict");
+  }
   require(parse_live(payload, at + seconds{60}).has_value(), "decoder accepts staleness boundary");
   require(!parse_live(payload, at + seconds{60} + milliseconds{1}), "decoder rejects stale sample");
   require(parse_live(payload, at - seconds{1}).has_value(), "decoder tolerates future clock offset");
@@ -114,6 +124,10 @@ void live_contract() {
           at),
       "negative rate rejected");
   State state;
+  state.live = *broker;
+  simdjson::dom::parser broker_parser;
+  require(std::int64_t(decode(broker_parser, state, at)["liveStrip"]["brokerLagCount"]) == 16300000,
+          "snapshot preserves broker backlog");
   state.live = *live;
   simdjson::dom::parser parser;
   require(!decode(parser, state, at + seconds{60})["liveStrip"].is_null(),

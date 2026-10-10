@@ -64,6 +64,7 @@ struct Live {
   std::int64_t pending{};
   std::optional<Time> last_success;
   bool backpressure{};
+  std::optional<std::int64_t> broker_lag = std::nullopt;
 };
 template <class T> struct Measured {
   T value;

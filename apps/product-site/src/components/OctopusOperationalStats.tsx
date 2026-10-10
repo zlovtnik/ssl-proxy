@@ -88,11 +88,13 @@ export default function OctopusOperationalStats() {
     return value();
   };
   // Historical peaks have their own freshness; missing stays unavailable.
-  const peakCell = (value: () => string) => {
+  const peakCell = (measured: boolean, value: () => string) => {
     const m = mode();
     if (m === 'ssr') return 'Unavailable';
     if (m === 'loading') return '—';
-    return peaksReady() && stats() !== null ? value() : 'Unavailable';
+    return peaksReady() && stats() !== null && measured
+      ? value()
+      : 'Unavailable';
   };
   // Lifetime and throughput ride the snapshot asOf gate; null stays unavailable.
   const snapshotCell = (ready: boolean, value: () => string) => {
@@ -227,7 +229,7 @@ export default function OctopusOperationalStats() {
             <dl class="ops-metrics">
               <div>
                 <dt>
-                  Ledger processing / second
+                  Broker records processed / second
                   <span class="fine-print">
                     Average over the last 5 minutes
                   </span>
@@ -241,12 +243,27 @@ export default function OctopusOperationalStats() {
               </div>
               <div>
                 <dt>
-                  Records waiting
+                  Ledger records waiting
                   <span class="fine-print">Pending or being processed</span>
                 </dt>
                 <dd data-metric="pending">
                   {liveCell(() =>
                     number.format(liveStrip()!.pendingLedgerCount),
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>
+                  Broker records waiting
+                  <span class="fine-print">
+                    Waiting to be fetched by this coordinator
+                  </span>
+                </dt>
+                <dd data-metric="broker-pending">
+                  {liveCell(() =>
+                    liveStrip()!.brokerLagCount === null
+                      ? 'Unavailable'
+                      : number.format(liveStrip()!.brokerLagCount!),
                   )}
                 </dd>
               </div>
@@ -300,6 +317,7 @@ export default function OctopusOperationalStats() {
                 <h4 id="ops-day-title">Peak day</h4>
                 <p class="ops-count" data-metric="day">
                   {peakCell(
+                    stats()!.peakRecordsDay !== null,
                     () => `${number.format(stats()!.peakRecordsDay!)} records`,
                   )}
                 </p>
@@ -315,6 +333,7 @@ export default function OctopusOperationalStats() {
                 <h4 id="ops-week-title">Peak week</h4>
                 <p class="ops-count" data-metric="week">
                   {peakCell(
+                    stats()!.peakRecordsWeek !== null,
                     () => `${number.format(stats()!.peakRecordsWeek!)} records`,
                   )}
                 </p>

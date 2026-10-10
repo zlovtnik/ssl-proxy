@@ -219,7 +219,8 @@ class AdapterContracts(unittest.TestCase):
             def do_GET(self):
                 at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                 body = json.dumps({"asOf": at, "liveStrip": {"ingestProcessedRatePerSec": 2.5,
-                    "pendingLedgerCount": 9, "lastIngestSuccessAt": None, "backpressureActive": False}}).encode()
+                    "pendingLedgerCount": 9, "brokerLagCount": 16300000,
+                    "lastIngestSuccessAt": None, "backpressureActive": False}}).encode()
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -251,6 +252,8 @@ class AdapterContracts(unittest.TestCase):
                     if json.loads(self.redis.get("stats:current:v2") or "{}").get("liveStrip") else None)
                 self.assertEqual(snapshot["lifetimeTotals"]["recordsTotal"], 13)
                 self.assertEqual(snapshot["liveStrip"]["pendingLedgerCount"], 9)
+                self.assertEqual(snapshot["liveStrip"]["ingestProcessedRatePerSec"], 2.5)
+                self.assertEqual(snapshot["liveStrip"]["brokerLagCount"], 16300000)
                 self.assertEqual(len(snapshot["throughput24h"]["series"]), 24)
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=1) as response:
                     self.assertIn(b"octopus_metrics_publish_total", response.read())

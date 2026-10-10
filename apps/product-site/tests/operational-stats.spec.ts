@@ -17,6 +17,7 @@ const reading = (offset = 0, count = 123) => ({
   liveStrip: {
     ingestProcessedRatePerSec: count / 10,
     pendingLedgerCount: count,
+    brokerLagCount: count * 100,
     lastIngestSuccessAt: captured.toISOString(),
     backpressureActive: count > 200,
   },
@@ -82,6 +83,9 @@ test('new responses update every displayed metric; a failed poll keeps the last 
     '24.6 records/s',
   );
   await expect(page.locator('[data-metric="pending"]')).toHaveText('246');
+  await expect(page.locator('[data-metric="broker-pending"]')).toHaveText(
+    '24,600',
+  );
   await expect(page.locator('[data-metric="backpressure"]')).toHaveText(
     'Paused to drain backlog',
   );
@@ -197,6 +201,8 @@ test('response validation rejects missing fields, invalid numbers, dates and tim
     { ...valid, peakRecordsDayDate: '2026-02-30' },
     { ...valid, peakRecordsWeekEnd: '2026-10-12' },
     { ...valid, liveStrip: {} },
+    { ...valid, liveStrip: { ...valid.liveStrip, brokerLagCount: -1 } },
+    { ...valid, liveStrip: { ...valid.liveStrip, brokerLagCount: '10' } },
     {
       ...valid,
       liveStrip: { ...valid.liveStrip, ingestProcessedRatePerSec: NaN },
@@ -207,6 +213,45 @@ test('response validation rejects missing fields, invalid numbers, dates and tim
     },
   ])
     expect(() => parseStats(invalid, captured.getTime())).toThrow();
+});
+
+test('missing weekly peak and broker backlog are unavailable, while a measured zero stays zero', async ({
+  page,
+}) => {
+  await page.clock.install({ time: captured });
+  await page.route('**/api/octopus-stats', (route) =>
+    route.fulfill({
+      json: {
+        ...reading(),
+        peakRecordsWeek: null,
+        peakRecordsWeekStart: null,
+        peakRecordsWeekEnd: null,
+        liveStrip: {
+          ...reading().liveStrip,
+          pendingLedgerCount: 0,
+          brokerLagCount: null,
+        },
+      },
+    }),
+  );
+  await page.goto('/octopus/');
+  await expect(page.locator('[data-metric="week"]')).toHaveText('Unavailable');
+  await expect(page.locator('[data-metric="broker-pending"]')).toHaveText(
+    'Unavailable',
+  );
+  await expect(page.locator('[data-metric="pending"]')).toHaveText('0');
+  await expect(page.locator('[data-metric="rate"]')).toHaveText(
+    '12.3 records/s',
+  );
+});
+
+test('older live snapshots without broker lag keep that measurement unknown', () => {
+  const payload = reading();
+  const { brokerLagCount: _unused, ...legacy } = payload.liveStrip;
+  expect(
+    parseStats({ ...payload, liveStrip: legacy }, captured.getTime()).liveStrip!
+      .brokerLagCount,
+  ).toBeNull();
 });
 
 test('lifetime totals and hourly throughput series parse when measured', () => {

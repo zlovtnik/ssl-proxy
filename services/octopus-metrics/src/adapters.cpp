@@ -534,6 +534,16 @@ Result<Measured<std::optional<Live>>> parse_live(std::string_view json,
       value.last_success = *last;
     }
     value.backpressure = strip["backpressureActive"].get_bool();
+    auto lag = strip["brokerLagCount"];
+    if (lag.error() != simdjson::NO_SUCH_FIELD) {
+      if (lag.error())
+        return std::unexpected(Error::invalid_data);
+      if (!lag.is_null()) {
+        value.broker_lag = lag.get_int64();
+        if (*value.broker_lag < 0)
+          return std::unexpected(Error::invalid_data);
+      }
+    }
     if (!std::isfinite(value.rate) || value.rate < 0 || value.pending < 0)
       return std::unexpected(Error::invalid_data);
     return Measured<std::optional<Live>>{value, *at};

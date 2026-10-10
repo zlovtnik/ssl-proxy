@@ -233,6 +233,11 @@ std::pmr::string serialize(const State &state, Time at,
     number(out, value.rate);
     out += ",\"pendingLedgerCount\":";
     number(out, value.pending);
+    out += ",\"brokerLagCount\":";
+    if (value.broker_lag)
+      number(out, *value.broker_lag);
+    else
+      out += "null";
     out += ",\"lastIngestSuccessAt\":";
     if (value.last_success)
       quoted(out, *value.last_success);
