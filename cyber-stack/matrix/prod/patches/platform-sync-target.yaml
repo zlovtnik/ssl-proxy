@@ -12,11 +12,13 @@ rules:
   - cloudflared-tunnel-credentials
   - minio-credentials
   - observability-credentials
+  - octopus-metrics-store
   - pgbouncer-listener-tls
   - pgbouncer-runtime-users
   - postgres-atheros-search
   - postgres-keycloak
   - postgres-octopus
+  - postgres-octopus-metrics
   - postgres-runtime-tls
   - postgres-schema-migrator
   - postgres-schema-owner

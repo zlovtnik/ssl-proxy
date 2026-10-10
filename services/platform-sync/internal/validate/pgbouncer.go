@@ -48,7 +48,7 @@ func validatePgBouncer(c *contract.Contract, data map[string]map[string][]byte) 
 		users[username] = password
 	}
 
-	requiredSecrets := []string{"postgres-atheros-search", "postgres-octopus", "postgres-schema-migrator"}
+	requiredSecrets := []string{"postgres-atheros-search", "postgres-octopus", "postgres-octopus-metrics", "postgres-schema-migrator"}
 	for _, secretName := range requiredSecrets {
 		account, ok := c.Validation.Postgres.Accounts[secretName]
 		if !ok || account == "" {

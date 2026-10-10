@@ -281,7 +281,7 @@ class JenkinsCiScriptsTest(unittest.TestCase):
         run = next(call["args"] for call in self.calls() if call["args"][0] == "run")
         self.assertNotIn("--security-opt", run)
 
-    def test_metrics_candidate_publication_records_digest(self) -> None:
+    def test_metrics_publication_records_reviewed_digest_update(self) -> None:
         # Run the real selector/publisher; mock only the external Make boundary.
         for name in ("publish_images.py", "image_contract.py", "classify_changes.py"):
             shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
@@ -294,8 +294,8 @@ class JenkinsCiScriptsTest(unittest.TestCase):
 import json, sys
 from pathlib import Path
 Path({str(publish_log)!r}).write_text(json.dumps(sys.argv[1:]))
-Path("artifacts/octopus-metrics-buildx.json").write_text(json.dumps(
-    {{"containerimage.digest": "sha256:" + "a" * 64}}))
+metadata = next(arg.split("=", 1)[1] for arg in sys.argv[1:] if arg.startswith("PUBLISH_METADATA_FILE="))
+Path(metadata).write_text(json.dumps({{"containerimage.digest": "sha256:" + "a" * 64}}))
 ''')
         self.env.pop("CHANGED_SERVICES", None)
         # setUp stubs cat for the inotify probe; the final report must print the
@@ -315,20 +315,17 @@ Path("artifacts/octopus-metrics-buildx.json").write_text(json.dumps(
                                          SHOULD_PUBLISH_OCTOPUS_METRICS="true")
                 self.assertEqual(0, result.returncode, result.stderr)
                 manifest = json.loads((self.root / "artifacts/release.json").read_text())
-                self.assertEqual([], manifest["images"])
-                self.assertEqual("octopus-metrics", manifest["candidateImages"][0]["service"])
-                self.assertEqual("sha256:" + "a" * 64, manifest["candidateImages"][0]["digest"])
-                self.assertTrue(manifest["candidateImages"][0]["activationRequired"])
-                self.assertIn("Publishing 0 Kubernetes images", result.stdout)
+                self.assertEqual([], manifest["candidateImages"])
+                self.assertEqual("octopus-metrics", manifest["images"][0]["service"])
+                self.assertEqual("sha256:" + "a" * 64, manifest["images"][0]["digest"])
+                self.assertIn("Publishing 1 Kubernetes images", result.stdout)
                 report = (self.root / "artifacts/commands.txt").read_text()
-                self.assertIn("candidates below require activation", report)
-                self.assertIn("registry.example:5000/octopus-metrics@sha256:" + "a" * 64, report)
-                self.assertNotIn("make bump-digest-octopus-metrics", report)
+                self.assertIn("make bump-digest-octopus-metrics", report)
                 self.assertIn(report, result.stdout)
                 args = json.loads(publish_log.read_text())
                 self.assertIn("publish-octopus-metrics", args)
-                self.assertIn("PUBLISH_REPOSITORY=registry.example:5000/octopus-metrics", args)
-                self.assertIn("PUBLISH_METADATA_FILE=artifacts/octopus-metrics-buildx.json", args)
+                self.assertIn("PUBLISH_REPOSITORY=192.168.1.242:5000/octopus-metrics", args)
+                self.assertTrue(any(arg.startswith("PUBLISH_METADATA_FILE=") for arg in args))
                 self.assertIn("sha256:" + "a" * 64, result.stdout)
                 self.assertEqual([], self.calls())
 

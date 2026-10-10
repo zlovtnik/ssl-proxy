@@ -9,6 +9,8 @@ spec:
       containers:
         - name: schema
           env:
+            - name: POSTGRES_OCTOPUS_METRICS_ACCOUNT
+              value: "octopus_metrics"
             - name: POSTGRES_HOST
               value: null
               valueFrom:

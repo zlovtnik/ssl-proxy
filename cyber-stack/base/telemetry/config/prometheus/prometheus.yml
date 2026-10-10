@@ -24,6 +24,12 @@ scrape_configs:
       - targets: ["ssl-proxy-java-coordinator:8080"]
         labels: {service: octopus}
 
+  - job_name: ssl-proxy-octopus-metrics
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ssl-proxy-octopus-metrics:9092"]
+        labels: {service: octopus-metrics}
+
   - job_name: ssl-proxy-atheros-search
     static_configs:
       - targets: ["ssl-proxy-atheros-search:9090"]

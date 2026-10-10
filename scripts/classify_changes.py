@@ -83,6 +83,8 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         "scripts/ci/tasks/metrics-tsan-test.sh",
         "scripts/ci/common.sh",
     )
+    if metrics_image:
+        services.add("octopus-metrics")
     tests = {
         "platform_sync": changed("services/platform-sync/"),
         "stats_reader": changed("services/stats-reader/", "Makefile"),

@@ -58,7 +58,7 @@ class ClassifyChangesTest(unittest.TestCase):
                 self.assertTrue(result["tests"]["octopus_metrics"])
                 self.assertTrue(result["publishOctopusMetrics"])
                 self.assertIn("SHOULD_PUBLISH_OCTOPUS_METRICS=true", env_lines(result))
-                self.assertNotIn("octopus-metrics", result["changedServices"])
+                self.assertIn("octopus-metrics", result["changedServices"])
 
     def test_metrics_contract_inputs_test_without_republishing_binary(self) -> None:
         for path in (
@@ -104,7 +104,7 @@ class ClassifyChangesTest(unittest.TestCase):
 
     def test_first_commit_selects_everything(self) -> None:
         result = classify_paths(set(), self.bumped(*SUBMODULE_IMAGES), full=True)
-        self.assertEqual(9, len(result["changedServices"]))
+        self.assertEqual(10, len(result["changedServices"]))
         self.assertTrue(all(result["tests"].values()))
         self.assertTrue(result["publishRedpandaMaint"])
         self.assertTrue(result["publishOctopusMetrics"])
@@ -140,7 +140,7 @@ class ClassifyChangesTest(unittest.TestCase):
             self.assertEqual(["postgres-runtime-schema"], result["changedServices"])
             self.assertEqual(2, len(result["changedMainPaths"]))
             first_build = classify_repository(root, base="missing")
-            self.assertEqual(9, len(first_build["changedServices"]))
+            self.assertEqual(10, len(first_build["changedServices"]))
             self.assertIn("services/platform-sync/main.go", first_build["changedMainPaths"])
 
 

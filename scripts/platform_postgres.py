@@ -57,6 +57,7 @@ class Account:
 ACCOUNTS = (
     Account("postgres-schema-owner", "schema_owner", "schema_owner.password", False),
     Account("postgres-octopus", "octopus_runtime", "octopus_runtime.password", True),
+    Account("postgres-octopus-metrics", "octopus_metrics", "octopus_metrics.password", True),
     Account(
         "postgres-atheros-search",
         "atheros_search_runtime",
@@ -73,6 +74,7 @@ ACCOUNTS = (
 )
 ACCOUNTS_BY_ROLE = {account.role: account for account in ACCOUNTS}
 ROLLOUT_TARGETS = {
+    "octopus_metrics": ("postgres-pgbouncer", "ssl-proxy-octopus-metrics"),
     "octopus_runtime": ("postgres-pgbouncer", "ssl-proxy-java-coordinator"),
     "atheros_search_runtime": (
         "postgres-pgbouncer",
@@ -87,6 +89,7 @@ ROLLOUT_TARGETS = {
 }
 
 ROLE_SEARCH_PATHS = {
+    "octopus_metrics": "octopus_core",
     "octopus_runtime": "octopus_core, atheros_search",
     "atheros_search_runtime": "atheros_search",
     "schema_migrator_runtime": "schema_migrator",
@@ -454,6 +457,7 @@ def schema_environment(contract: PostgresContract, owner_password: bytes) -> dic
         "POSTGRES_SCHEMA_OWNER_USER": "schema_owner",
         "POSTGRES_SCHEMA_OWNER_PASSWORD": owner_password,
         "POSTGRES_OCTOPUS_ACCOUNT": "octopus_runtime",
+        "POSTGRES_OCTOPUS_METRICS_ACCOUNT": "octopus_metrics",
         "POSTGRES_ATHEROS_SEARCH_ACCOUNT": "atheros_search_runtime",
         "POSTGRES_SCHEMA_MIGRATOR_ACCOUNT": "schema_migrator_runtime",
         "POSTGRES_KEYCLOAK_ACCOUNT": "keycloak_runtime",
@@ -1054,7 +1058,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--rollout-timeout", type=int, default=600)
     commands = result.add_subparsers(dest="command", required=True)
     commands.add_parser("check", help="run read-only prerequisite checks")
-    commands.add_parser("stage-secrets", help="stage all five Vault passwords in the Docker secret volume")
+    commands.add_parser("stage-secrets", help="stage all six Vault passwords in the Docker secret volume")
     reset = commands.add_parser("reset", help="delete and recreate the exact PostgreSQL data volume")
     reset.add_argument("--confirm")
     reset.add_argument("--preserve-keycloak", action="store_true",

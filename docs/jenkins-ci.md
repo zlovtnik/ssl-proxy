@@ -164,12 +164,12 @@ For a local Docker Desktop check, run the same test stage with
 TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal bash scripts/ci/octopus-metrics.sh`
 on one shell line. Linux Jenkins uses host networking and `127.0.0.1` by default.
 
-Until activation, its candidate digest is archived in
-`artifacts/octopus-metrics-buildx.json` and printed for a reviewed initial
+The worker's published digest is recorded in
+`artifacts/release-manifest.json` with manual digest update commands for the
 app-stack mapping. The [Kubernetes base](../cyber-stack/base/octopus-metrics/)
-is prepared but absent from production/staging slices. The dedicated read-only
-account, password Secret, scoped S3 Secret, paired coordinator revision, and
-initial digest pin are still required. The
+is included in the canonical app-stack slices with a digest pin. The dedicated
+read-only account and scoped S3 credentials must be provisioned in Vault before
+activation; platform-sync verifies the metrics role and PgBouncer userlist. The
 [service README](../services/octopus-metrics/README.md) lists the complete
 activation changes. Candidate publication alone does not deploy the service.
 
