@@ -55,6 +55,8 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         services.add("ssl-proxy")
     if changed("services/atheros-sensor/"):
         services.add("atheros-sensor")
+    if changed("services/stats-reader/"):
+        services.add("stats-reader")
     if changed("sql/postgres/", "k8s/postgres-schema-executor/"):
         services.add("postgres-runtime-schema")
     if changed("docker/redpanda/", "scripts/octopus_image_contract.py"):
@@ -97,7 +99,6 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         "submoduleBumped": bumped,
         "changedServices": [service for service in FIRST_PARTY_SERVICES if service in services],
         "publishRedpandaMaint": changed("cyber-stack/base/redpanda-maintenance/"),
-        "publishStatsReader": changed("services/stats-reader/", "Makefile"),
         "publishOctopusMetrics": metrics_image,
         "tests": tests,
     }
@@ -134,7 +135,6 @@ def env_lines(result: dict) -> str:
     for name, value in result["tests"].items():
         lines.append(f"SHOULD_RUN_{name.upper()}={str(value).lower()}")
     lines.append(f"SHOULD_PUBLISH_REDPANDA_MAINT={str(result['publishRedpandaMaint']).lower()}")
-    lines.append(f"SHOULD_PUBLISH_STATS_READER={str(result['publishStatsReader']).lower()}")
     lines.append(f"SHOULD_PUBLISH_OCTOPUS_METRICS={str(result['publishOctopusMetrics']).lower()}")
     for path, bumped in result["submoduleBumped"].items():
         key = path.upper().replace("/", "_").replace("-", "_")

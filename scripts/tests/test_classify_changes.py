@@ -41,13 +41,12 @@ class ClassifyChangesTest(unittest.TestCase):
         self.assertTrue(result["tests"]["sensor"])
         self.assertIn("SHOULD_RUN_OCTOPUS=false", env_lines(result))
 
-    def test_stats_reader_changes_test_and_publish_bootstrap_image(self) -> None:
+    def test_stats_reader_changes_select_deployable_image(self) -> None:
         for path in ("services/stats-reader/internal/http/server.go", "Makefile"):
             with self.subTest(path=path):
                 result = classify_paths({path}, self.bumped(), full=False)
                 self.assertTrue(result["tests"]["stats_reader"])
-                self.assertTrue(result["publishStatsReader"])
-                self.assertIn("SHOULD_PUBLISH_STATS_READER=true", env_lines(result))
+                self.assertIn("stats-reader", result["changedServices"])
 
     def test_metrics_binary_inputs_test_and_publish_bootstrap_image(self) -> None:
         for path in (
@@ -105,10 +104,9 @@ class ClassifyChangesTest(unittest.TestCase):
 
     def test_first_commit_selects_everything(self) -> None:
         result = classify_paths(set(), self.bumped(*SUBMODULE_IMAGES), full=True)
-        self.assertEqual(8, len(result["changedServices"]))
+        self.assertEqual(9, len(result["changedServices"]))
         self.assertTrue(all(result["tests"].values()))
         self.assertTrue(result["publishRedpandaMaint"])
-        self.assertTrue(result["publishStatsReader"])
         self.assertTrue(result["publishOctopusMetrics"])
 
     def test_repository_range_includes_every_commit_since_successful_build(self) -> None:
@@ -142,7 +140,7 @@ class ClassifyChangesTest(unittest.TestCase):
             self.assertEqual(["postgres-runtime-schema"], result["changedServices"])
             self.assertEqual(2, len(result["changedMainPaths"]))
             first_build = classify_repository(root, base="missing")
-            self.assertEqual(8, len(first_build["changedServices"]))
+            self.assertEqual(9, len(first_build["changedServices"]))
             self.assertIn("services/platform-sync/main.go", first_build["changedMainPaths"])
 
 

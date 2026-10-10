@@ -22,7 +22,7 @@ local Kustomize context.
 
 The private Jenkins `ssl-proxy-images` pipeline publishes `main` after its
 delivery checks pass through the unchanged registry-directed `publish-all`
-interface. For an authorized manual rebuild of the eight Kubernetes images,
+interface. For an authorized manual rebuild of the nine Kubernetes images,
 publish to the repositories selected by the canonical environment without
 changing Git or cluster state:
 

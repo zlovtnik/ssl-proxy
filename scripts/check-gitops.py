@@ -85,6 +85,7 @@ FIRST_PARTY_IMAGES = (
     "schema-migrator-ui",
     "postgres-runtime-schema",
     "octopus-metrics",
+    "stats-reader",
 )
 
 JAEGER_V2_IMAGE = (
@@ -1371,7 +1372,7 @@ def _check_public_gateway(rendered: Documents | str, relative: str) -> list[str]
         ),
         (
             f"Host(`{hostname}`) && Path(`/public/stats`)",
-            "ssl-proxy-java-coordinator",
+            "ssl-proxy-stats-reader",
             8080,
         ),
     ]

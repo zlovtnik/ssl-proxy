@@ -1232,5 +1232,35 @@ metadata:
         self.assertEqual(["namespace.yaml: namespace deletion must require confirmation"], errors)
 
 
+class PublicStatsDeliveryTest(unittest.TestCase):
+    def test_reader_is_independent_of_coordinator_and_database_readiness(self) -> None:
+        definitions = documents(
+            (REPOSITORY_ROOT / "cyber-stack/base/stats-reader/deployment.yaml").read_text()
+        )
+        deployment = next(document for document in definitions if document["kind"] == "Deployment")
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        env_names = {entry["name"] for entry in container["env"]}
+        self.assertFalse(any(name.startswith(("POSTGRES_", "SYNC_")) for name in env_names))
+        self.assertEqual("/ready", container["readinessProbe"]["httpGet"]["path"])
+        self.assertNotIn("initContainers", deployment["spec"]["template"]["spec"])
+        service = next(document for document in definitions if document["kind"] == "Service")
+        self.assertEqual(8080, service["spec"]["ports"][0]["port"])
+
+    def test_materializer_live_url_uses_service_port_instead_of_pod_port(self) -> None:
+        coordinator = documents(
+            (REPOSITORY_ROOT / "cyber-stack/base/java-coordinator/deployment.yaml").read_text()
+        )
+        service = next(document for document in coordinator if document["kind"] == "Service")
+        url = f"http://{service['metadata']['name']}:{service['spec']['ports'][0]['port']}/internal/metrics/live"
+        worker = documents(
+            (REPOSITORY_ROOT / "cyber-stack/base/octopus-metrics/deployment.yaml").read_text()
+        )
+        deployment = next(document for document in worker if document["kind"] == "Deployment")
+        env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        self.assertEqual(url, next(entry["value"] for entry in env if entry["name"] == "STATS_OCTOPUS_LIVE_URL"))
+        config = (REPOSITORY_ROOT / "services/octopus-metrics/include/metrics/config.hpp").read_text()
+        self.assertIn(f'"{url}"', config)
+
+
 if __name__ == "__main__":
     unittest.main()

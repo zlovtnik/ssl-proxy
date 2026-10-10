@@ -27,6 +27,7 @@ SERVICE_SLICES = (
     ("atheros-search-ui", "app-stack"),
     ("schema-migrator-backend", "app-stack"),
     ("schema-migrator-ui", "app-stack"),
+    ("stats-reader", "app-stack"),
     ("postgres-runtime-schema", "data-plane"),
 )
 FIRST_PARTY_SERVICES = tuple(service for service, _slice in SERVICE_SLICES)
@@ -161,7 +162,7 @@ def _validate_entry(
 
 
 def load_image_contracts(repository_root: Path, environment: str) -> tuple[ImageContract, ...]:
-    """Load the eight deployable image repositories and pins from Kustomize."""
+    """Load the deployable image repositories and pins from Kustomize."""
 
     environment = validate_environment(environment)
     matrix = repository_root.resolve() / "cyber-stack" / "matrix" / environment

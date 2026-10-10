@@ -192,6 +192,19 @@ class JenkinsCiScriptsTest(unittest.TestCase):
             self.assertEqual([], self.calls())
         self.assertEqual(0, self.run_script("registry-check").returncode)
 
+    def test_explicit_full_build_selects_all_before_incremental_lookup(self) -> None:
+        selector_log = self.root / "selector.json"
+        (self.root / "scripts/classify_changes.py").write_text(
+            "import json, sys\nfrom pathlib import Path\n"
+            f"Path({str(selector_log)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        )
+        result = self.run_script("classify-changes", FULL_BUILD="true",
+                                 GIT_PREVIOUS_SUCCESSFUL_COMMIT="invalid-base")
+        self.assertEqual(0, result.returncode, result.stderr)
+        args = json.loads(selector_log.read_text())
+        self.assertIn("--full", args)
+        self.assertNotIn("--base", args)
+
     def test_change_flags_and_delegation_skip_container_tests(self) -> None:
         for script, flag in (("platform-sync", "PLATFORM_SYNC"), ("stats-reader", "STATS_READER"),
                              ("octopus-metrics", "OCTOPUS_METRICS"),
@@ -254,7 +267,6 @@ Path("artifacts/octopus-metrics-buildx.json").write_text(json.dumps(
                                          REGISTRY_PLAIN_HTTP="1", RELEASE_MANIFEST="artifacts/release.json",
                                          BUMP_COMMANDS_REPORT="artifacts/commands.txt",
                                          SHOULD_PUBLISH_REDPANDA_MAINT="false",
-                                         SHOULD_PUBLISH_STATS_READER="false",
                                          SHOULD_PUBLISH_OCTOPUS_METRICS="true")
                 self.assertEqual(0, result.returncode, result.stderr)
                 manifest = json.loads((self.root / "artifacts/release.json").read_text())

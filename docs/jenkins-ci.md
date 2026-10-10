@@ -1,6 +1,6 @@
 # Jenkins Image CI
 
-Jenkins provides the private build-and-publish loop for the repository's eight
+Jenkins provides the private build-and-publish loop for the repository's nine
 Kubernetes image contracts. The checked-in controller configuration creates one
 `ssl-proxy-images` pipeline from the root `Jenkinsfile`; the root Makefile
 remains the authoritative image inventory and build contract.
@@ -95,6 +95,12 @@ or other untracked files from an interrupted build cannot fail the source
 integrity gate. Docker and BuildKit caches live outside that workspace. Every
 run has a 180-minute hard timeout.
 
+Select the `FULL_BUILD` parameter to validate and publish every image candidate,
+including the unactivated Octopus Metrics image. Its default is false, so an
+ordinary successful run may validate a CI-only change without publishing an
+image. Publication still does not change production digest pins. The archived
+`changed-paths.json` is the authoritative selection report for each build.
+
 Containerized validation extracts the streamed checkout without preserving the
 Jenkins host UID. The root-run validation process therefore owns its temporary
 `/workspace` checkout, including submodules, and Git's dubious-ownership check
@@ -107,7 +113,7 @@ Each run:
    `artifacts/changed-paths.json`. If that base is missing from a shallow
    clone, Jenkins deepens the fetch; if it is still unavailable, classification
    falls back to `HEAD^` rather than selecting every suite. Only a true first
-   commit (no parent) selects all checks and images;
+   commit (no parent) or an explicit `FULL_BUILD=true` selects all checks and images;
 2. checks out pinned submodules and requires the Octopus checkout to match its
    pin with both worktrees clean. Delivery documentation validation still
    inspects every pinned submodule, so this checkout remains necessary;
@@ -119,7 +125,7 @@ Each run:
    checks when an image is selected;
 5. publishes only the selected Kubernetes image contracts with at most three
    concurrent workers, using a 12-character commit tag plus the mutable
-   `latest` channel. Redpanda maintenance, Stats Reader, and Octopus Metrics
+   `latest` channel. Redpanda maintenance and Octopus Metrics
    publish candidate images separately until their first reviewed stack pins; and
 6. archives the release manifest and prints a final report containing only the
    `make bump-digest-<service> ENV=prod DIGEST=<digest>` commands required by
@@ -178,7 +184,7 @@ The controller configuration also defines Multibranch jobs for `octopus`,
 repository has its own root `Jenkinsfile`. Octopus validates and archives its
 JAR and coverage reports. Integration Console and Schema Migrator publish
 their images under full source commit tags in the same registry; the key
-rotator publishes its own image but remains outside the eight production image
+rotator publishes its own image but remains outside the nine production image
 contracts.
 
 The umbrella pipeline currently keeps `SUBMODULE_CI_READY=false`. After the
@@ -227,7 +233,7 @@ the responsible direct requirement where a newer compatible version exists,
 regenerate the lock, rebuild the controller and rerun the audit before merging.
 
 The target set covers the proxy, Octopus coordinator, Atheros Sensor, Atheros
-Search, Search UI, both Schema Migrator images and the PostgreSQL runtime
+Search, Search UI, Stats Reader, both Schema Migrator images and the PostgreSQL runtime
 schema. The key rotator remains Compose-only and is not published by Jenkins.
 
 The Octopus branch also assembles and inspects the JAR. Publication performs

@@ -29,19 +29,6 @@ if [ "$SHOULD_PUBLISH_REDPANDA_MAINT" = true ]; then
 else
   echo 'skipped: no redpanda-maintenance changes'
 fi
-if [ "$SHOULD_PUBLISH_STATS_READER" = true ]; then
-  env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
-    DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make --no-print-directory publish-stats-reader \
-    TAG="$build_tag" BUILD_DATE="$build_date" BUILDER="$BUILDER" PLATFORM=linux/amd64 \
-    REGISTRY="$REGISTRY" REGISTRY_PLAIN_HTTP="$REGISTRY_PLAIN_HTTP" \
-    PUBLISH_REPOSITORY="$REGISTRY/stats-reader" \
-    PUBLISH_METADATA_FILE=artifacts/stats-reader-buildx.json
-  stats_reader_digest="$(python3 scripts/image_contract.py buildx-digest artifacts/stats-reader-buildx.json)"
-  echo "stats-reader pushed digest: $stats_reader_digest"
-  echo 'Pin that digest in the reviewed app-stack overlays before adding the stats-reader resource and public route.'
-else
-  echo 'skipped: no stats-reader changes'
-fi
 if [ "$SHOULD_PUBLISH_OCTOPUS_METRICS" = true ]; then
   env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
     DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make --no-print-directory publish-octopus-metrics \

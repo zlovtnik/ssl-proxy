@@ -13,6 +13,7 @@ resources:
 - ../../../base/atheros-search
 - ../../../base/cloudflared
 - ../../../base/public-gateway
+- ../../../base/stats-reader
 images:
 - digest: sha256:e462803c0ce26062194f84b3a85ed5b1c480d4021c192fc59cda7be5317121a4
   name: atheros-search
@@ -35,6 +36,9 @@ images:
 - digest: sha256:6567c758105358f346db20d6c6c03a1b40b49734546c6f0fc490137bae2e0dca
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
+- digest: sha256:fcf9438a6b4b5fa070363abca750328c6ed021ce308d6ed8c858426c6f9164be
+  name: stats-reader
+  newName: 192.168.1.242:5000/stats-reader
 patches:
 - path: ../patches/identity-hostname.yaml
 - path: ../patches/schema-migrator-identity.yaml

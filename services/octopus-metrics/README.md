@@ -9,7 +9,8 @@ in [Octopus](../octopus/README.md). The public
 
 The service is implemented and independently buildable. Production promotion
 requires a reviewed image digest, a provisioned metrics account, and GitOps
-integration; no production workload or gateway route is changed here.
+integration. The public gateway uses the store-only stats reader; activation
+of this publisher is still a separate prerequisite for fresh C++ snapshots.
 
 ## Step-by-step review of the extracted Scala worker
 
@@ -164,7 +165,7 @@ All listed values are validated at startup. Secrets come from deployment inputs.
 | `STATS_LIVE_INTERVAL_SECONDS` | `15` | Coordinator sample cadence, 1-60 |
 | `STATS_PUBLISH_INTERVAL_SECONDS` | `30` | Snapshot publish cadence, 1-3600 |
 | `STATS_JOB_TIMEOUT_SECONDS` | `60` | Per I/O operation budget, 1-300 |
-| `STATS_OCTOPUS_LIVE_URL` | `http://ssl-proxy-java-coordinator:8081/internal/metrics/live` | Internal HTTP(S) endpoint; no URL credentials or redirects |
+| `STATS_OCTOPUS_LIVE_URL` | `http://ssl-proxy-java-coordinator:8080/internal/metrics/live` | Service port 8080 targets pod port 8081; no URL credentials or redirects |
 | `REDIS_ADDR` | `ssl-proxy-redis-runtime:6379` | Plain host:port; bracketed IPv6 accepted; URI schemes rejected |
 | `REDIS_PASSWORD` | empty | Optional internal Redis AUTH secret |
 | `STATS_REDIS_KEY` | `stats:current:v2` | Validated snapshot key |

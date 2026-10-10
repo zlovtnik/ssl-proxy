@@ -2,8 +2,10 @@
 
 Tiny always-Ready HTTP service that serves precomputed public stats JSON
 for the product site. It is passive: the request path never computes
-metrics and never touches Postgres or Kafka. Snapshots are produced by
-Octopus's metric worker pool and published to Redis and MinIO.
+metrics and never touches Postgres or Kafka. Snapshots are published to Redis
+and MinIO; the dedicated [C++ materializer](../octopus-metrics/README.md) owns
+the replacement publisher. Keep the existing publisher image until that
+service's separate account, image and GitOps cutover are ready.
 
 ## Endpoints
 
@@ -71,13 +73,14 @@ make build
 The `Dockerfile` is multi-stage and runs as nonroot on
 `gcr.io/distroless/static-debian12:nonroot`, exposing port 8080. Base
 images use version tags (same pattern as
-`apps/integration-console/atheros-search`). Jenkins publishes the
-bootstrap image and records its digest in `artifacts/stats-reader-buildx.json`.
-The gateway continues to serve `/public/stats` from Java Coordinator during
-bootstrap. After reviewing the published digest, add `stats-reader` to the
-deployable image contract and both app-stack Kustomizations, add the base
-resource to each app-stack slice, and switch the public gateway route and
-its GitOps check to `ssl-proxy-stats-reader`.
+`apps/integration-console/atheros-search`). Jenkins publishes this service
+through the regular deployable image contract and records selected digests in
+`artifacts/release-manifest.json`. Both app-stack Kustomizations include the
+reader and an immutable image pin; the public gateway delegates `/public/stats`
+to `ssl-proxy-stats-reader`. Reader readiness stays independent of coordinator
+processor failures. DNS and both sides of Redis/MinIO network access travel
+with the reader base. This decouples routing but does not create a snapshot:
+missing or stale production data remains unavailable on the product site.
 Production images are pinned by digest at the Kubernetes layer, not in
 this Dockerfile.
 

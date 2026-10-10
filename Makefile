@@ -50,9 +50,9 @@ octopus-metrics-test:
 	cmake --build $(OCTOPUS_METRICS_BUILD_DIR) --parallel 2
 	ctest --test-dir $(OCTOPUS_METRICS_BUILD_DIR) --output-on-failure
 # wg-key-rotator is an operational tool, not a long-lived Kubernetes workload.
-# redpanda-maint, stats-reader and octopus-metrics join the image contract after
+# redpanda-maint and octopus-metrics join the image contract after
 # their first reviewed digest pins; Jenkins publishes their bootstrap images.
-DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator redpanda-maint stats-reader octopus-metrics,$(SERVICES))
+DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator redpanda-maint octopus-metrics,$(SERVICES))
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))

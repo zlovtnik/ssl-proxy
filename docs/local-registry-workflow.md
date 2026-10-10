@@ -102,7 +102,7 @@ trusted by every builder and Kubernetes node runtime. `PLATFORM` defaults to
 `linux/amd64`; override it only when the target architecture differs.
 
 `make publish` defaults to `ENV=prod`. It validates the owning app-stack or
-data-plane Kustomization, then publishes the eight
+data-plane Kustomization, then publishes the nine
 Kubernetes-deployed first-party images to the exact repositories configured
 there. It pushes `$TAG` and `latest`, reads the pushed manifest digest from
 Buildx metadata, and reports either `MATCH` or `UNPINNED` against the selected
@@ -222,7 +222,7 @@ only reviewed digests copied from accepted dev desired state.
 
 The Jenkins `ssl-proxy-images` job polls `main`, initializes the pinned
 submodules and shared Buildx builder, validates the repository, then publishes
-the eight Kubernetes image contracts with bounded concurrency. Its final
+the nine Kubernetes image contracts with bounded concurrency. Its final
 console section and archived `artifacts/bump-digest-commands.txt` contain only
 the manual production bump commands needed for digests that differ from the
 current pins. Jenkins never changes Git or Kubernetes. Jenkins publication and

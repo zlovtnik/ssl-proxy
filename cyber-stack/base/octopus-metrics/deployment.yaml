@@ -78,7 +78,7 @@ spec:
             - name: STATS_JOB_TIMEOUT_SECONDS
               value: "60"
             - name: STATS_OCTOPUS_LIVE_URL
-              value: "http://ssl-proxy-java-coordinator:8081/internal/metrics/live"
+              value: "http://ssl-proxy-java-coordinator:8080/internal/metrics/live"
             - name: REDIS_ADDR
               value: "ssl-proxy-redis-runtime:6379"
             - name: REDIS_PASSWORD

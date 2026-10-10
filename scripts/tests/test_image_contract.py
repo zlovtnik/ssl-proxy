@@ -63,7 +63,7 @@ class ImageContractTest(unittest.TestCase):
         dev = load_image_contracts(self.root, "dev")
         prod = load_image_contracts(self.root, "prod")
 
-        self.assertEqual(8, len(dev))
+        self.assertEqual(9, len(dev))
         self.assertTrue(all(contract.repository.startswith("dev.registry.test/team/dev/") for contract in dev))
         self.assertTrue(all(contract.repository.startswith("prod.registry.test/release/prod/") for contract in prod))
         self.assertEqual("data-plane", dev[-1].slice_name)

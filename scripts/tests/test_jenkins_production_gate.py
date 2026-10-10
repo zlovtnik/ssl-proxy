@@ -159,14 +159,13 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn("SUBMODULE_CI_READY = 'false'", pipeline)
         self.assertIn('"$SUBMODULE_CI_READY" = true ] || [ "$SHOULD_RUN_OCTOPUS" != true', pipeline)
         self.assertIn('"$SHOULD_PUBLISH_REDPANDA_MAINT" = true', pipeline)
-        self.assertIn('"$SHOULD_PUBLISH_STATS_READER" = true', pipeline)
 
-    def test_stats_reader_is_tested_before_bootstrap_publication(self) -> None:
+    def test_stats_reader_is_tested_before_regular_publication(self) -> None:
         pipeline = pipeline_source()
         self.assertLess(pipeline.index("stage('Stats reader')"), pipeline.index("stage('Publish immutable images')"))
         self.assertIn("cd services/stats-reader && go test ./...", pipeline)
-        self.assertIn("publish-stats-reader", pipeline)
-        self.assertIn("stats-reader-buildx.json", pipeline)
+        self.assertIn("artifacts/release-manifest.json", pipeline)
+        self.assertNotIn("SHOULD_PUBLISH_STATS_READER", pipeline)
 
     def test_metrics_is_validated_before_candidate_publication(self) -> None:
         pipeline = pipeline_source()

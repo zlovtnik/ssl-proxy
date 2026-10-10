@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source scripts/ci/common.sh
+if [ "${FULL_BUILD:-false}" = true ]; then
+  python3 scripts/classify_changes.py --full \
+    --json-out artifacts/changed-paths.json --env-out artifacts/changed-paths.env
+  exit 0
+fi
 # Jenkins shallow clones often omit GIT_PREVIOUS_SUCCESSFUL_COMMIT.
 # Resolving that base must not silently select a full rebuild.
 if [ -n "${GIT_PREVIOUS_SUCCESSFUL_COMMIT:-}" ]; then
