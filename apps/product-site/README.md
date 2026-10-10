@@ -90,7 +90,7 @@ Only the production hostnames can use this proxy; local and Pages preview
 hosts return unavailable and never fetch production. Browser tests intercept
 this route with isolated responses. No-JavaScript visitors see unavailable
 readings and an explanation. Valid historical snapshots remain available with
-their original timestamps. Gateway failures use the last validated edge snapshot;
+their original timestamps. Gateway failures use durable Cloudflare KV copies of validated snapshots;
 browser failures use the last measured reading, including after reload. Values
 are never invented, and an empty cache before the first measurement cannot supply
 data. The C++ worker is the sole snapshot producer.

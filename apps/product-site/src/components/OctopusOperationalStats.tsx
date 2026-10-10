@@ -58,7 +58,7 @@ const statusText: Record<Mode, string> = {
 export default function OctopusOperationalStats() {
   const [stats, setStats] = createSignal<Stats | null>(null);
   const [fetchState, setFetchState] = createSignal<
-    'idle' | 'loading' | 'ok' | 'failed'
+    'idle' | 'loading' | 'ok' | 'failed' | 'historical'
   >('idle');
   const [now, setNow] = createSignal(Date.now());
 
@@ -67,7 +67,9 @@ export default function OctopusOperationalStats() {
   const peaksReady = () =>
     stats() !== null && stats()!.peaksComputedAt !== null;
   const liveStrip = () =>
-    asOfFresh() && stats()!.liveStrip !== null ? stats()!.liveStrip : null;
+    asOfFresh() && fetchState() !== 'historical' && stats()!.liveStrip !== null
+      ? stats()!.liveStrip
+      : null;
   const weekInProgress = () =>
     peaksReady() &&
     stats()!.peakRecordsWeekStart !== null &&
@@ -78,7 +80,7 @@ export default function OctopusOperationalStats() {
     if (fetchState() === 'idle') return 'ssr';
     if (fetchState() === 'loading' && stats() === null) return 'loading';
     if (stats() === null) return 'unavailable';
-    if (!asOfFresh()) return 'historical';
+    if (!asOfFresh() || fetchState() === 'historical') return 'historical';
     if (liveStrip() === null)
       return peaksReady() || lifetimeReady() ? 'historical' : 'warmup';
     return fetchState() === 'failed' ? 'delayed' : 'live';
@@ -158,7 +160,11 @@ export default function OctopusOperationalStats() {
               // Persistence failure must not discard a measured response.
             }
           }
-          setFetchState('ok');
+          setFetchState(
+            response.headers.get('X-Metrics-State') === 'historical'
+              ? 'historical'
+              : 'ok',
+          );
         }
       } catch {
         if (!disposed) {

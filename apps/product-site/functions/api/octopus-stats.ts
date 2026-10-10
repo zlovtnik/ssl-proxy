@@ -6,7 +6,40 @@ import {
 } from '../../src/data/operational-stats';
 
 const bodyLimit = 16_384;
-const cacheKey = 'https://rclabs.uk/api/octopus-stats';
+// Newest versions sort first. Separate immutable keys prevent an older request
+// from overwriting a newer snapshot; include sub-millisecond source precision.
+export function snapshotKey(asOf: string) {
+  const fraction = (asOf.match(/\.(\d+)Z$/)?.[1] ?? '').padEnd(9, '0');
+  const nanos =
+    BigInt(Date.parse(asOf)) * 1_000_000n + BigInt(fraction.slice(3, 9));
+  return `v2/${(8_640_000_000_000_000_000_000n - nanos).toString().padStart(23, '0')}`;
+}
+
+// The generated binding supplies the native namespace type. This read/write
+// subset also allows isolated tests without a remote Cloudflare account.
+type HistoryStore = Pick<Env['METRICS_HISTORY'], 'list'> & {
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string): Promise<void>;
+};
+
+async function recorded(history: HistoryStore): Promise<Stats | undefined> {
+  let keys = ['bootstrap'];
+  try {
+    const entries = await history.list({ prefix: 'v2/', limit: 3 });
+    keys = [...entries.keys.map((entry) => entry.name), ...keys];
+  } catch {
+    // The permanent initial reading also covers listing outages/quotas.
+  }
+  for (const key of keys) {
+    try {
+      const text = await history.get(key);
+      if (text && new TextEncoder().encode(text).byteLength <= bodyLimit)
+        return parseStats(JSON.parse(text));
+    } catch {
+      // Try an earlier real measurement if a saved object cannot be read.
+    }
+  }
+}
 
 // Bound the response while reading it, including a stalled or oversized body.
 async function readSnapshot(response: Response): Promise<Stats> {
@@ -36,9 +69,10 @@ async function readSnapshot(response: Response): Promise<Stats> {
 }
 
 // Only the C++ publisher produces measurements. This route retains validated
-// public snapshots at the edge; publication timestamps are never rewritten.
+// public snapshots in durable backup storage; timestamps are never rewritten.
 export async function onRequestGet(context: {
   request: Request;
+  env?: { METRICS_HISTORY?: HistoryStore };
   waitUntil?: (promise: Promise<unknown>) => void;
 }) {
   const headers = { 'Cache-Control': 'no-store' };
@@ -54,19 +88,27 @@ export async function onRequestGet(context: {
   )
     return unavailable();
 
-  let cache: Cache | undefined;
+  const history = context.env?.METRICS_HISTORY;
   let saved: Stats | undefined;
+  let backupTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    cache = await caches.open('octopus-stats-v2');
-    const response = await cache.match(cacheKey);
-    if (response) saved = await readSnapshot(response);
+    if (history)
+      saved = await Promise.race([
+        recorded(history),
+        new Promise<undefined>((resolve) => {
+          backupTimer = setTimeout(() => resolve(undefined), 1_000);
+        }),
+      ]);
   } catch {
-    // Edge cache absence/failure cannot prevent a gateway read.
+    // Backup failure cannot prevent a gateway read.
+  } finally {
+    clearTimeout(backupTimer);
   }
 
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let selected = saved;
+  let received: Stats | undefined;
   try {
     const upstream = fetch('https://gateway.rclabs.uk/public/stats', {
       headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
@@ -79,21 +121,21 @@ export async function onRequestGet(context: {
         timer = setTimeout(() => {
           controller.abort();
           reject(new Error('Snapshot timeout'));
-        }, 8_000);
+        }, 7_000);
       }),
     ]);
-    if (!selected || Date.parse(measured.asOf) >= Date.parse(selected.asOf)) {
+    received = measured;
+    if (!selected || snapshotKey(measured.asOf) <= snapshotKey(selected.asOf)) {
       selected = measured;
-      if (cache) {
-        // Keep a separate, long-lived last-good entry. Browser responses still
-        // use no-store so every poll attempts to obtain a newer measurement.
-        const persist = cache
-          .put(
-            cacheKey,
-            Response.json(measured, {
-              headers: { 'Cache-Control': 'public, max-age=31536000' },
-            }),
-          )
+      // A durable historical copy every five minutes bounds backup writes;
+      // the current gateway reading still supplies every successful response.
+      if (
+        history &&
+        (!saved ||
+          Date.parse(measured.asOf) - Date.parse(saved.asOf) >= 300_000)
+      ) {
+        const persist = history
+          .put(snapshotKey(measured.asOf), JSON.stringify(measured))
           .catch(() => {});
         if (context.waitUntil) context.waitUntil(persist);
         else await persist;
@@ -110,7 +152,9 @@ export async function onRequestGet(context: {
       ...headers,
       'X-Metrics-As-Of': selected.asOf,
       'X-Metrics-State':
-        isFresh(selected.asOf, Date.now(), maxStatsAgeMs) && selected.liveStrip
+        received?.asOf === selected.asOf &&
+        isFresh(selected.asOf, Date.now(), maxStatsAgeMs) &&
+        selected.liveStrip
           ? 'live'
           : 'historical',
     },

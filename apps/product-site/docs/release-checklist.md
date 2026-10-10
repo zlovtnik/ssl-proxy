@@ -63,9 +63,14 @@ The [Pages Function](../functions/api/octopus-stats.ts) serves
 store-backed reader. Snapshots publish every 30 seconds and peaks refresh on a
 separate 300-second cache. Production hosts are enabled in code; preview hosts
 return 503. There is no build-time metrics configuration. The proxy retains
-validated public snapshots in the edge cache and accepts historical timestamps.
+validated public snapshots in Cloudflare KV and accepts historical timestamps.
 The browser retains its last measured snapshot across reloads. The proxy bounds
 both response size (16384 bytes) and the complete fetch/read (8 seconds).
+The non-expiring `bootstrap` backup is a copy of a real validated runtime
+response, never a build fixture. New backup versions use separate reverse-time
+keys, so older requests cannot replace newer stored measurements. Copies are
+refreshed at most once per five-minute measurement interval; original timestamps
+remain visible. Cross-region KV propagation can delay discovery of a new copy.
 
 - Verify two real responses at least 30 seconds apart have advancing `asOf`
   values. Counts can legitimately remain unchanged.
