@@ -3,7 +3,7 @@
 The prod/staging `cloudflare-edge` patches replace the public IngressRoute
 wholesale. A path added only to `base/public-gateway/routes.yaml` silently
 disappears from production. This test keeps base and overlay routes in sync and
-requires Traefik ingress to java-coordinator for `/public/stats`.
+requires Traefik ingress to the store-only stats-reader for `/public/stats`.
 The IngressRoute targets the Service port; NetworkPolicy targets the pod port.
 """
 
@@ -20,11 +20,11 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 BASE_ROUTES = REPOSITORY_ROOT / "cyber-stack/base/public-gateway/routes.yaml"
 PROD_EDGE = REPOSITORY_ROOT / "cyber-stack/matrix/prod/patches/cloudflare-edge.yaml"
 STAGING_EDGE = REPOSITORY_ROOT / "cyber-stack/matrix/staging/patches/cloudflare-edge.yaml"
-COORDINATOR_DEPLOYMENT = (
-    REPOSITORY_ROOT / "cyber-stack/base/java-coordinator/deployment.yaml"
+STATS_READER_DEPLOYMENT = (
+    REPOSITORY_ROOT / "cyber-stack/base/stats-reader/deployment.yaml"
 )
-COORDINATOR_NETPOL = (
-    REPOSITORY_ROOT / "cyber-stack/base/java-coordinator/networkpolicy.yaml"
+STATS_READER_NETPOL = (
+    REPOSITORY_ROOT / "cyber-stack/base/stats-reader/networkpolicy.yaml"
 )
 
 # Match Path(`/x`) and PathPrefix(`/x`) literals in Traefik match expressions.
@@ -90,23 +90,23 @@ class PublicStatsRouteTest(unittest.TestCase):
                     )
         self.assertEqual([], failures)
 
-    def test_public_stats_routes_to_java_coordinator(self) -> None:
-        coordinator_services = [
+    def test_public_stats_routes_to_stats_reader(self) -> None:
+        reader_services = [
             document
-            for document in load_documents(COORDINATOR_DEPLOYMENT)
+            for document in load_documents(STATS_READER_DEPLOYMENT)
             if document.get("kind") == "Service"
-            and document.get("metadata", {}).get("name") == "ssl-proxy-java-coordinator"
+            and document.get("metadata", {}).get("name") == "ssl-proxy-stats-reader"
         ]
-        self.assertEqual(1, len(coordinator_services))
+        self.assertEqual(1, len(reader_services))
         http_ports = [
             port
-            for port in coordinator_services[0].get("spec", {}).get("ports", [])
+            for port in reader_services[0].get("spec", {}).get("ports", [])
             if port.get("name") == "http"
         ]
         self.assertEqual(1, len(http_ports))
         service_port = http_ports[0].get("port")
         self.assertIsInstance(service_port, int)
-        self.assertEqual(8081, http_ports[0].get("targetPort"))
+        self.assertEqual(8080, http_ports[0].get("targetPort"))
 
         failures: list[str] = []
         for label, path in (("base", BASE_ROUTES), ("prod", PROD_EDGE), ("staging", STAGING_EDGE)):
@@ -123,9 +123,9 @@ class PublicStatsRouteTest(unittest.TestCase):
             services = hits[0].get("services") or []
             names = {service.get("name") for service in services if isinstance(service, dict)}
             ports = {service.get("port") for service in services if isinstance(service, dict)}
-            if names != {"ssl-proxy-java-coordinator"}:
+            if names != {"ssl-proxy-stats-reader"}:
                 failures.append(
-                    f"{label} {path.name}: /public/stats must target ssl-proxy-java-coordinator, got {names}"
+                    f"{label} {path.name}: /public/stats must target ssl-proxy-stats-reader, got {names}"
                 )
             if ports != {service_port}:
                 failures.append(
@@ -133,22 +133,23 @@ class PublicStatsRouteTest(unittest.TestCase):
                 )
         self.assertEqual([], failures)
 
-    def test_coordinator_networkpolicy_allows_traefik_on_8081(self) -> None:
-        documents = load_documents(COORDINATOR_NETPOL)
+    def test_reader_networkpolicy_allows_traefik_on_8080(self) -> None:
+        documents = load_documents(STATS_READER_NETPOL)
         policy = next(
-            (d for d in documents if d.get("kind") == "NetworkPolicy"),
+            (d for d in documents if d.get("kind") == "NetworkPolicy"
+             and d.get("metadata", {}).get("name") == "ssl-proxy-stats-reader"),
             None,
         )
-        self.assertIsNotNone(policy, f"no NetworkPolicy in {COORDINATOR_NETPOL}")
+        self.assertIsNotNone(policy, f"no NetworkPolicy in {STATS_READER_NETPOL}")
         ingress = policy.get("spec", {}).get("ingress") or []
         allowed = False
         for rule in ingress:
             ports = {
                 port.get("port")
                 for port in rule.get("ports") or []
-                if isinstance(port, dict)
+                if isinstance(port, dict) and port.get("protocol") == "TCP"
             }
-            if 8081 not in ports:
+            if 8080 not in ports:
                 continue
             for source in rule.get("from") or []:
                 if not isinstance(source, dict):
@@ -162,7 +163,7 @@ class PublicStatsRouteTest(unittest.TestCase):
                     allowed = True
         self.assertTrue(
             allowed,
-            "java-coordinator NetworkPolicy must allow Traefik (kube-system) to TCP 8081",
+            "stats-reader NetworkPolicy must allow Traefik (kube-system) to TCP 8080",
         )
 
 
