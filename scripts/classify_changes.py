@@ -71,6 +71,15 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         "scripts/requirements-test.txt", "scripts/requirements.txt", "Jenkinsfile",
         "scripts/ci/",
     )
+    metrics_image = changed(
+        "services/octopus-metrics/", "sql/postgres/octopus_core/manifest.yaml",
+        *ALL_IMAGE_INPUTS,
+    )
+    metrics_tests = metrics_image or bumped["services/octopus"] or changed(
+        "sql/postgres/octopus_core/", "Jenkinsfile", "scripts/classify_changes.py",
+        "scripts/ci/octopus-metrics.sh", "scripts/ci/tasks/octopus-metrics-1.sh",
+        "scripts/ci/common.sh",
+    )
     tests = {
         "platform_sync": changed("services/platform-sync/"),
         "stats_reader": changed("services/stats-reader/", "Makefile"),
@@ -78,6 +87,7 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         "atheros_search_contracts": search_contracts,
         "schema_migrator": bumped["apps/schema-migrator"],
         "octopus": bumped["services/octopus"],
+        "octopus_metrics": metrics_tests,
         "sensor": changed("services/atheros-sensor/", *RUST_INPUTS),
     }
     return {
@@ -87,6 +97,7 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         "changedServices": [service for service in FIRST_PARTY_SERVICES if service in services],
         "publishRedpandaMaint": changed("cyber-stack/base/redpanda-maintenance/"),
         "publishStatsReader": changed("services/stats-reader/", "Makefile"),
+        "publishOctopusMetrics": metrics_image,
         "tests": tests,
     }
 
@@ -123,6 +134,7 @@ def env_lines(result: dict) -> str:
         lines.append(f"SHOULD_RUN_{name.upper()}={str(value).lower()}")
     lines.append(f"SHOULD_PUBLISH_REDPANDA_MAINT={str(result['publishRedpandaMaint']).lower()}")
     lines.append(f"SHOULD_PUBLISH_STATS_READER={str(result['publishStatsReader']).lower()}")
+    lines.append(f"SHOULD_PUBLISH_OCTOPUS_METRICS={str(result['publishOctopusMetrics']).lower()}")
     for path, bumped in result["submoduleBumped"].items():
         key = path.upper().replace("/", "_").replace("-", "_")
         lines.append(f"SUBMODULE_BUMPED_{key}={str(bumped).lower()}")

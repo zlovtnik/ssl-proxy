@@ -168,6 +168,18 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn("publish-stats-reader", pipeline)
         self.assertIn("stats-reader-buildx.json", pipeline)
 
+    def test_metrics_is_validated_before_candidate_publication(self) -> None:
+        pipeline = pipeline_source()
+        self.assertLess(pipeline.index("stage('Octopus metrics')"),
+                        pipeline.index("stage('Publish immutable images')"))
+        for contract in (
+            "-DMETRICS_SANITIZE=ON", "-DMETRICS_TSAN=ON", "ctest --test-dir",
+            "integration_test.py --build", "SHOULD_RUN_OCTOPUS_METRICS",
+            "SHOULD_PUBLISH_OCTOPUS_METRICS", "publish-octopus-metrics",
+            "artifacts/octopus-metrics-buildx.json",
+        ):
+            self.assertIn(contract, pipeline)
+
     def test_external_multibranch_jobs_are_declared(self) -> None:
         config = (REPOSITORY_ROOT / "docker/jenkins/casc/jenkins.yaml").read_text(encoding="utf-8")
         for name, url in (

@@ -112,14 +112,15 @@ Each run:
    pin with both worktrees clean. Delivery documentation validation still
    inspects every pinned submodule, so this checkout remains necessary;
 3. prepares Docker access and always runs delivery checks, then runs platform
-   sync, Atheros Search, Schema Migrator, Octopus, and Sensor validation only
+   sync, Stats Reader, Atheros Search, Schema Migrator, Octopus, Octopus Metrics,
+   and Sensor validation only
    for their changed owner paths or bumped submodule pins;
 4. creates and bootstraps its shared Buildx builder after bounded registry
    checks when an image is selected;
 5. publishes only the selected Kubernetes image contracts with at most three
    concurrent workers, using a 12-character commit tag plus the mutable
-   `latest` channel. Redpanda maintenance publishes only when its source path
-   changes; and
+   `latest` channel. Redpanda maintenance, Stats Reader, and Octopus Metrics
+   publish candidate images separately until their first reviewed stack pins; and
 6. archives the release manifest and prints a final report containing only the
    `make bump-digest-<service> ENV=prod DIGEST=<digest>` commands required by
    newly published digests.
@@ -130,6 +131,28 @@ recorded by a superproject commit. Root `Cargo.toml`, `Cargo.lock`, the shared
 `crates/` tree, and the root `Dockerfile` select both Rust images because both
 targets share the Docker build. `sql/postgres/` selects the PostgreSQL schema
 image. A manifest-only `cyber-stack/` change selects no first-party image.
+
+`services/octopus-metrics` is ordinary superproject source. Its dedicated
+[test stage](../scripts/ci/octopus-metrics.sh) uses Debian trixie's C++23
+toolchain for ASan/UBSan, real ephemeral PostgreSQL/Redis/MinIO adapters, and a
+separate ThreadSanitizer build. Source, canonical schema manifest and shared
+image-input changes select `publish-octopus-metrics`; schema/grant and coordinator
+gitlink changes also select adapter validation. The existing umbrella job owns
+this service, so no standalone job or controller plugin is needed.
+
+For a local Docker Desktop check, run the same test stage with
+`SHOULD_RUN_OCTOPUS_METRICS=true METRICS_CI_NETWORK=bridge
+TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal bash scripts/ci/octopus-metrics.sh`
+on one shell line. Linux Jenkins uses host networking and `127.0.0.1` by default.
+
+Until activation, its candidate digest is archived in
+`artifacts/octopus-metrics-buildx.json` and printed for a reviewed initial
+app-stack mapping. The [Kubernetes base](../cyber-stack/base/octopus-metrics/)
+is prepared but absent from production/staging slices. The dedicated read-only
+account, password Secret, scoped S3 Secret, paired coordinator revision, and
+initial digest pin are still required. The
+[service README](../services/octopus-metrics/README.md) lists the complete
+activation changes. Candidate publication alone does not deploy the service.
 
 Validation and publication are fail-closed. Jenkins never pushes a Git branch,
 opens a pull request, updates a Kustomization or contacts the Kubernetes API.
@@ -216,8 +239,9 @@ The pipeline inventory contains five declarative definitions:
 
 The job definitions embedded in
 [Configuration as Code](../docker/jenkins/casc/jenkins.yaml) continue to load
-these Jenkinsfiles from SCM. The existing GitHub Actions workflow is a separate
-CI system and is unchanged.
+these Jenkinsfiles from SCM. The
+[GitHub Actions workflow](../.github/workflows/ci.yml) is a separate CI system;
+its Octopus Metrics job also tests and builds this service.
 
 Jenkinsfiles now describe orchestration, conditions, deadlines and artifact
 archives. Long shell bodies execute in agent `sh` steps through Bash scripts.

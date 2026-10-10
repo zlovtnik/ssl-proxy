@@ -42,3 +42,16 @@ if [ "$SHOULD_PUBLISH_STATS_READER" = true ]; then
 else
   echo 'skipped: no stats-reader changes'
 fi
+if [ "$SHOULD_PUBLISH_OCTOPUS_METRICS" = true ]; then
+  env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+    DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make --no-print-directory publish-octopus-metrics \
+    TAG="$build_tag" BUILD_DATE="$build_date" BUILDER="$BUILDER" PLATFORM=linux/amd64 \
+    REGISTRY="$REGISTRY" REGISTRY_PLAIN_HTTP="$REGISTRY_PLAIN_HTTP" \
+    PUBLISH_REPOSITORY="$REGISTRY/octopus-metrics" \
+    PUBLISH_METADATA_FILE=artifacts/octopus-metrics-buildx.json
+  metrics_digest="$(python3 scripts/image_contract.py buildx-digest artifacts/octopus-metrics-buildx.json)"
+  echo "octopus-metrics pushed digest: $metrics_digest"
+  echo 'Pin that digest and add ../../../base/octopus-metrics to the reviewed app-stack slice after provisioning the read-only role and required Secrets.'
+else
+  echo 'skipped: no octopus-metrics changes'
+fi

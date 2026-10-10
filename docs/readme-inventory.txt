@@ -12,6 +12,7 @@ apps/integration-console/atheros-search-ui/README.md
 apps/product-site/README.md
 services/atheros-sensor/README.md
 services/octopus/README.md
+services/octopus-metrics/README.md
 services/platform-sync/README.md
 services/stats-reader/README.md
 ops/disk/README.md

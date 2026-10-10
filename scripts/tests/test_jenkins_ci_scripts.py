@@ -192,6 +192,7 @@ class JenkinsCiScriptsTest(unittest.TestCase):
 
     def test_change_flags_and_delegation_skip_container_tests(self) -> None:
         for script, flag in (("platform-sync", "PLATFORM_SYNC"), ("stats-reader", "STATS_READER"),
+                             ("octopus-metrics", "OCTOPUS_METRICS"),
                              ("atheros-search", "ATHEROS_SEARCH"), ("schema-migrator", "SCHEMA_MIGRATOR"),
                              ("octopus", "OCTOPUS"), ("sensor", "SENSOR"),
                              ("atheros-search-contracts", "ATHEROS_SEARCH_CONTRACTS")):
@@ -203,6 +204,54 @@ class JenkinsCiScriptsTest(unittest.TestCase):
                     result = self.run_script(script, SUBMODULE_CI_READY="true", **{f"SHOULD_RUN_{flag}": "true"})
                     self.assertEqual(0, result.returncode, result.stderr)
                     self.assertFalse(any(call["args"][0] == "run" for call in self.calls()))
+
+    def test_metrics_failure_is_preserved_and_container_is_removed(self) -> None:
+        (self.root / "services/octopus-metrics").mkdir(parents=True)
+        (self.root / "sql/postgres/octopus_core").mkdir(parents=True)
+        result = self.run_script("octopus-metrics", SHOULD_RUN_OCTOPUS_METRICS="true",
+                                 MOCK_RUN_STATUS="17")
+        self.assertEqual(17, result.returncode, result.stderr)
+        self.assertEqual({}, json.loads(self.state.read_text()))
+        run = next(call["args"] for call in self.calls() if call["args"][0] == "run")
+        self.assertIn("host", run)
+        self.assertIn("/var/run/docker.sock:/var/run/docker.sock", run)
+        self.assertIn("TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1", run)
+
+    def test_metrics_candidate_publication_records_digest(self) -> None:
+        (self.root / "scripts/publish_images.py").write_text("# No active image inputs\n")
+        shutil.copyfile(ROOT / "scripts/image_contract.py", self.root / "scripts/image_contract.py")
+        publish_log = self.root / "make.json"
+        self.executable("make", f'''
+import json, sys
+from pathlib import Path
+Path({str(publish_log)!r}).write_text(json.dumps(sys.argv[1:]))
+Path("artifacts/octopus-metrics-buildx.json").write_text(json.dumps(
+    {{"containerimage.digest": "sha256:" + "a" * 64}}))
+''')
+        result = self.run_script("publish", CHANGED_SERVICES="", REGISTRY="registry.example:5000",
+                                 REGISTRY_PLAIN_HTTP="1", RELEASE_MANIFEST="artifacts/release.json",
+                                 BUMP_COMMANDS_REPORT="artifacts/commands.txt",
+                                 SHOULD_PUBLISH_REDPANDA_MAINT="false",
+                                 SHOULD_PUBLISH_STATS_READER="false",
+                                 SHOULD_PUBLISH_OCTOPUS_METRICS="true")
+        self.assertEqual(0, result.returncode, result.stderr)
+        args = json.loads(publish_log.read_text())
+        self.assertIn("publish-octopus-metrics", args)
+        self.assertIn("PUBLISH_REPOSITORY=registry.example:5000/octopus-metrics", args)
+        self.assertIn("PUBLISH_METADATA_FILE=artifacts/octopus-metrics-buildx.json", args)
+        self.assertIn("sha256:" + "a" * 64, result.stdout)
+        self.assertEqual([], self.calls())
+
+    def test_metrics_supports_docker_desktop_fixture_addresses(self) -> None:
+        (self.root / "services/octopus-metrics").mkdir(parents=True)
+        (self.root / "sql/postgres/octopus_core").mkdir(parents=True)
+        result = self.run_script("octopus-metrics", SHOULD_RUN_OCTOPUS_METRICS="true",
+                                 METRICS_CI_NETWORK="bridge",
+                                 TESTCONTAINERS_HOST_OVERRIDE="host.docker.internal")
+        self.assertEqual(0, result.returncode, result.stderr)
+        run = next(call["args"] for call in self.calls() if call["args"][0] == "run")
+        self.assertEqual("bridge", run[run.index("--network") + 1])
+        self.assertIn("TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal", run)
 
     def test_standalone_publication_keeps_full_sha_tags_and_metadata(self) -> None:
         for repository, images in (

@@ -1,0 +1,179 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-octopus-metrics
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    reloader.stakater.com/auto: "true"
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: octopus-metrics
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  revisionHistoryLimit: 3
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: octopus-metrics
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: octopus-metrics
+        ssl-proxy.io/postgres-client: "true"
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 75
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: octopus-metrics
+          image: octopus-metrics
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+          env:
+            - name: POSTGRES_HOST
+              value: "postgres-pgbouncer"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DATABASE
+              value: "sync"
+            - name: POSTGRES_USER
+              value: "octopus_metrics"
+            - name: POSTGRES_PASSWORD_FILE
+              value: "/var/run/postgres-password/password"
+            - name: POSTGRES_SSL_MODE
+              value: "verify-full"
+            - name: POSTGRES_SSL_CA_PATH
+              value: "/etc/postgres/tls/ca.crt"
+            - name: POSTGRES_SSL_SERVER_NAME
+              value: "postgres-pgbouncer"
+            - name: STATS_LOCAL_DEV
+              value: "false"
+            - name: STATS_HTTP_PORT
+              value: "9092"
+            - name: STATS_WORKER_COUNT
+              value: "3"
+            - name: STATS_PEAKS_INTERVAL_SECONDS
+              value: "300"
+            - name: STATS_HISTORY_INTERVAL_SECONDS
+              value: "60"
+            - name: STATS_LIVE_INTERVAL_SECONDS
+              value: "15"
+            - name: STATS_PUBLISH_INTERVAL_SECONDS
+              value: "30"
+            - name: STATS_JOB_TIMEOUT_SECONDS
+              value: "60"
+            - name: STATS_OCTOPUS_LIVE_URL
+              value: "http://ssl-proxy-java-coordinator:8081/internal/metrics/live"
+            - name: REDIS_ADDR
+              value: "ssl-proxy-redis-runtime:6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-runtime
+                  key: password
+            - name: STATS_REDIS_KEY
+              value: "stats:current:v2"
+            - name: STATS_REDIS_TTL_SECONDS
+              value: "180"
+            - name: MINIO_ENDPOINT
+              value: "http://ssl-proxy-minio-api:9000"
+            - name: MINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: octopus-metrics-store
+                  key: access-key
+            - name: MINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: octopus-metrics-store
+                  key: secret-key
+            - name: MINIO_REGION
+              value: "us-east-1"
+            - name: MINIO_STATS_BUCKET
+              value: "ssl-proxy-stats"
+            - name: MINIO_STATS_PREFIX
+              value: "stats/"
+          ports:
+            - name: http
+              containerPort: 9092
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /live
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: postgres-ca
+              mountPath: /etc/postgres/tls
+              readOnly: true
+            - name: postgres-password
+              mountPath: /var/run/postgres-password
+              readOnly: true
+      volumes:
+        - name: postgres-ca
+          secret:
+            secretName: pgbouncer-listener-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: postgres-password
+          secret:
+            secretName: postgres-octopus-metrics
+            items:
+              - key: password
+                path: password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-octopus-metrics
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: octopus-metrics
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: octopus-metrics
+  ports:
+    - name: http
+      port: 9092
+      targetPort: http
+      protocol: TCP

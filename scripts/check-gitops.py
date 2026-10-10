@@ -84,6 +84,7 @@ FIRST_PARTY_IMAGES = (
     "schema-migrator-backend",
     "schema-migrator-ui",
     "postgres-runtime-schema",
+    "octopus-metrics",
 )
 
 JAEGER_V2_IMAGE = (

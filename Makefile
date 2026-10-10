@@ -41,11 +41,18 @@ ATHEROS_SEARCH_UI_KEYCLOAK_URL ?= https://gateway.rclabs.uk
 ATHEROS_SEARCH_UI_KEYCLOAK_REALM ?= middleware
 ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID ?= atheros-search-ui
 
-SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui postgres-runtime-schema redpanda-maint stats-reader
+SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui postgres-runtime-schema redpanda-maint stats-reader octopus-metrics
+
+OCTOPUS_METRICS_BUILD_DIR ?= /tmp/ssl-proxy-octopus-metrics-build
+.PHONY: octopus-metrics-test
+octopus-metrics-test:
+	cmake -S services/octopus-metrics -B $(OCTOPUS_METRICS_BUILD_DIR) -DCMAKE_BUILD_TYPE=Release
+	cmake --build $(OCTOPUS_METRICS_BUILD_DIR) --parallel 2
+	ctest --test-dir $(OCTOPUS_METRICS_BUILD_DIR) --output-on-failure
 # wg-key-rotator is an operational tool, not a long-lived Kubernetes workload.
-# redpanda-maint and stats-reader join the deployable image contract after
+# redpanda-maint, stats-reader and octopus-metrics join the image contract after
 # their first reviewed digest pins; Jenkins publishes their bootstrap images.
-DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator redpanda-maint stats-reader,$(SERVICES))
+DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator redpanda-maint stats-reader octopus-metrics,$(SERVICES))
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
@@ -240,6 +247,7 @@ gitops-check:
 	python3 scripts/gen_contract_digest.py --check
 	python3 scripts/gen_platform_sync_rbac.py --check
 	python3 scripts/check-gitops.py --kustomize "$(KUSTOMIZE_EDITOR)"
+	$(KUSTOMIZE_EDITOR) build cyber-stack/base/octopus-metrics >/dev/null
 
 # Read-only topic retention contract check. Add TOPICS_LIVE=1 to also compare
 # the tracked manifest with a reachable cluster.
@@ -435,6 +443,7 @@ $(eval $(call service_rules,schema-migrator-ui,apps/schema-migrator/frontend/Doc
 $(eval $(call service_rules,postgres-runtime-schema,k8s/postgres-schema-executor/Dockerfile,,postgres-runtime-schema,.))
 $(eval $(call service_rules,redpanda-maint,cyber-stack/base/redpanda-maintenance/Dockerfile,,redpanda-maint,cyber-stack/base/redpanda-maintenance))
 $(eval $(call service_rules,stats-reader,services/stats-reader/Dockerfile,,stats-reader,.))
+$(eval $(call service_rules,octopus-metrics,services/octopus-metrics/Dockerfile,,octopus-metrics,.))
 
 ifneq ($(BUILDX_READY),1)
 $(BUILD_TARGETS) $(PUBLISH_TARGETS): buildx-ready

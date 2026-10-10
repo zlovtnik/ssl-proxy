@@ -50,8 +50,9 @@ pipeline {
             'CHANGED_SERVICES', 'SHOULD_RUN_PLATFORM_SYNC',
             'SHOULD_RUN_STATS_READER', 'SHOULD_RUN_ATHEROS_SEARCH',
             'SHOULD_RUN_ATHEROS_SEARCH_CONTRACTS', 'SHOULD_RUN_SCHEMA_MIGRATOR',
-            'SHOULD_RUN_OCTOPUS', 'SHOULD_RUN_SENSOR',
-            'SHOULD_PUBLISH_REDPANDA_MAINT', 'SHOULD_PUBLISH_STATS_READER'
+            'SHOULD_RUN_OCTOPUS', 'SHOULD_RUN_OCTOPUS_METRICS', 'SHOULD_RUN_SENSOR',
+            'SHOULD_PUBLISH_REDPANDA_MAINT', 'SHOULD_PUBLISH_STATS_READER',
+            'SHOULD_PUBLISH_OCTOPUS_METRICS'
           ]
           readFile('artifacts/changed-paths.env').split('\n').each { line ->
             if (line) {
@@ -149,12 +150,18 @@ pipeline {
             sh 'bash scripts/ci/sensor.sh'
           }
         }
+        stage('Octopus metrics') {
+          options { timeout(time: 30, unit: 'MINUTES') }
+          steps {
+            sh 'bash scripts/ci/octopus-metrics.sh'
+          }
+        }
       }
     }
 
     stage('Registry and Buildx preflight') {
       when {
-        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' || env.SHOULD_PUBLISH_STATS_READER == 'true' }
+        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' || env.SHOULD_PUBLISH_STATS_READER == 'true' || env.SHOULD_PUBLISH_OCTOPUS_METRICS == 'true' }
       }
       options { timeout(time: 10, unit: 'MINUTES') }
       steps {
@@ -164,12 +171,12 @@ pipeline {
 
     stage('Publish immutable images') {
       when {
-        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' || env.SHOULD_PUBLISH_STATS_READER == 'true' }
+        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' || env.SHOULD_PUBLISH_STATS_READER == 'true' || env.SHOULD_PUBLISH_OCTOPUS_METRICS == 'true' }
       }
       options { timeout(time: 75, unit: 'MINUTES') }
       steps {
         sh 'bash scripts/ci/publish.sh'
-        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt,artifacts/redpanda-maint-buildx.json,artifacts/stats-reader-buildx.json', fingerprint: true
+        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt,artifacts/redpanda-maint-buildx.json,artifacts/stats-reader-buildx.json,artifacts/octopus-metrics-buildx.json', fingerprint: true
       }
     }
   }

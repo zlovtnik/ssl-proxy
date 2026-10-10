@@ -14,6 +14,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  octopus-metrics:
+    name: Octopus C++ metrics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/octopus-metrics/tests/requirements.txt
+      - name: Install C++ and isolated integration-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 cmake ninja-build pkg-config libpq-dev libcurl4-openssl-dev libhiredis-dev libsimdjson-dev
+          python -m pip install -r services/octopus-metrics/tests/requirements.txt
+      - name: Build and test memory safety and adapters
+        env:
+          CXX: g++-14
+        run: |
+          cmake -S services/octopus-metrics -B /tmp/metrics-asan -G Ninja -DMETRICS_SANITIZE=ON
+          cmake --build /tmp/metrics-asan --parallel 2
+          ctest --test-dir /tmp/metrics-asan --output-on-failure
+          python services/octopus-metrics/tests/integration_test.py --build /tmp/metrics-asan
+      - name: Check concurrent queue and cache with ThreadSanitizer
+        env:
+          CXX: g++-14
+        run: |
+          cmake -S services/octopus-metrics -B /tmp/metrics-tsan -G Ninja -DMETRICS_TSAN=ON
+          cmake --build /tmp/metrics-tsan --parallel 2
+          ctest --test-dir /tmp/metrics-tsan --output-on-failure
+      - name: Build the dedicated service image
+        run: docker build -f services/octopus-metrics/Dockerfile -t octopus-metrics:test .
+
   atheros-search-contracts:
     name: Search stack contracts
     runs-on: ubuntu-latest

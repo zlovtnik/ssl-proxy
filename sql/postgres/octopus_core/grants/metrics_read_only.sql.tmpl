@@ -1,0 +1,7 @@
+-- Provision {{OCTOPUS_METRICS_ACCOUNT}} externally; never reuse the writer role.
+-- This optional grant fixture is applied by provisioning, not by the service.
+REVOKE CREATE ON SCHEMA octopus_core FROM {{OCTOPUS_METRICS_ACCOUNT}};
+GRANT USAGE ON SCHEMA octopus_core TO {{OCTOPUS_METRICS_ACCOUNT}};
+GRANT SELECT (first_seen_at) ON octopus_core.ingestion_evidence TO {{OCTOPUS_METRICS_ACCOUNT}};
+GRANT SELECT (domain, ready, required_version, applied_version, required_checksum, applied_checksum)
+  ON octopus_core.schema_readiness TO {{OCTOPUS_METRICS_ACCOUNT}};

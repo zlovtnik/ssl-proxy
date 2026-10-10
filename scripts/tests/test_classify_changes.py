@@ -49,6 +49,34 @@ class ClassifyChangesTest(unittest.TestCase):
                 self.assertTrue(result["publishStatsReader"])
                 self.assertIn("SHOULD_PUBLISH_STATS_READER=true", env_lines(result))
 
+    def test_metrics_binary_inputs_test_and_publish_bootstrap_image(self) -> None:
+        for path in (
+            "services/octopus-metrics/src/domain.cpp",
+            "sql/postgres/octopus_core/manifest.yaml", "Makefile", ".dockerignore",
+        ):
+            with self.subTest(path=path):
+                result = classify_paths({path}, self.bumped(), full=False)
+                self.assertTrue(result["tests"]["octopus_metrics"])
+                self.assertTrue(result["publishOctopusMetrics"])
+                self.assertIn("SHOULD_PUBLISH_OCTOPUS_METRICS=true", env_lines(result))
+                self.assertNotIn("octopus-metrics", result["changedServices"])
+
+    def test_metrics_contract_inputs_test_without_republishing_binary(self) -> None:
+        for path in (
+            "services/octopus", "sql/postgres/octopus_core/grants/metrics_read_only.sql.tmpl",
+            "scripts/ci/octopus-metrics.sh", "scripts/ci/tasks/octopus-metrics-1.sh",
+        ):
+            with self.subTest(path=path):
+                result = classify_paths({path}, self.bumped("services/octopus")
+                    if path == "services/octopus" else self.bumped(), full=False)
+                self.assertTrue(result["tests"]["octopus_metrics"])
+                self.assertFalse(result["publishOctopusMetrics"])
+
+    def test_unrelated_changes_skip_metrics_binary_and_tests(self) -> None:
+        result = classify_paths({"src/main.rs"}, self.bumped(), full=False)
+        self.assertFalse(result["tests"]["octopus_metrics"])
+        self.assertFalse(result["publishOctopusMetrics"])
+
     def test_search_contract_inputs_select_consumers_without_submodule_bump(self) -> None:
         for path in (
             "sql/postgres/atheros_search/01_tables/change.sql",
@@ -80,6 +108,7 @@ class ClassifyChangesTest(unittest.TestCase):
         self.assertTrue(all(result["tests"].values()))
         self.assertTrue(result["publishRedpandaMaint"])
         self.assertTrue(result["publishStatsReader"])
+        self.assertTrue(result["publishOctopusMetrics"])
 
     def test_repository_range_includes_every_commit_since_successful_build(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

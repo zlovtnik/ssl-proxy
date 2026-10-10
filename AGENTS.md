@@ -27,6 +27,8 @@ overrides a rule for its subtree.
   processing via a worker pool and exposes ETL health monitoring.
 - `services/octopus/` is the Scala 3 Cats Effect/FS2 coordinator and owner of
   durable ingestion, leases, outbox, and maintained PostgreSQL projections, built via sbt.
+- `services/octopus-metrics/` is the C++23 snapshot materializer extracted from
+  Octopus. It reads ingestion evidence and publishes public Redis/MinIO snapshots.
 - `services/stats-reader/` is the Go always-Ready public stats reader. It serves
   precomputed snapshot JSON from Redis/MinIO only — no PostgreSQL, no Kafka.
 - `services/platform-sync/` is the Go host-side Vault-to-Kubernetes secret
@@ -56,8 +58,9 @@ overrides a rule for its subtree.
 - Atheros Search owns embedding job processing (claim, embed, write vectors)
   via its worker pool. Projection maintenance and alert derivation remain
   Octopus concerns.
-- PostgreSQL clients are intentional for Octopus, Atheros Search, and
-  schema-migrator. Keep them on isolated schemas/accounts and enforce the
+- PostgreSQL clients are intentional for Octopus, its read-only C++ metrics
+  service, Atheros Search, and schema-migrator. Keep them on isolated
+  schemas/accounts and enforce the
   table-level grant matrix in `sql/postgres/*/grants/`. Do not add direct database wiring to `src/`,
   `crates/sync-plane/`, or `services/atheros-sensor/`.
 - Keep PostgreSQL connection configuration consistent between application config
