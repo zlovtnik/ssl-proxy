@@ -404,6 +404,25 @@ def wait_for_health(runner: Runner, runtime: Runtime) -> None:
     raise MaintenanceError("PostgreSQL did not become healthy before the timeout")
 
 
+def run_admin_command(
+    runner: Runner,
+    runtime: Runtime,
+    arguments: Sequence[str],
+    *,
+    input_data: bytes | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    return runner.run(
+        (
+            "docker", "exec", "-i", runtime.container, "sh", "-eu", "-c",
+            "PGPASSWORD=$(tr -d '\\r\\n' "
+            "</run/platform-secrets/platform_admin.password); "
+            'export PGPASSWORD; exec "$@"',
+            "postgres-maintenance", *arguments,
+        ),
+        input_data=input_data,
+    )
+
+
 def ensure_role_search_paths(
     runner: Runner,
     runtime: Runtime,
@@ -414,19 +433,11 @@ def ensure_role_search_paths(
         f"SET search_path TO {search_path};"
         for role, search_path in ROLE_SEARCH_PATHS.items()
     ]
-    runner.run(
+    run_admin_command(
+        runner, runtime,
         (
-            "docker",
-            "exec",
-            "-i",
-            runtime.container,
-            "sh",
-            "-eu",
-            "-c",
-            "PGPASSWORD=$(tr -d '\\r\\n' "
-            "</run/platform-secrets/platform_admin.password); "
-            "export PGPASSWORD; exec psql --no-psqlrc --set=ON_ERROR_STOP=1 "
-            f'--username platform_admin --dbname "{contract.database}"',
+            "psql", "-w", "--no-psqlrc", "--set=ON_ERROR_STOP=1",
+            "--username", "platform_admin", "--dbname", contract.database,
         ),
         input_data=("\n".join(statements) + "\n").encode("ascii"),
     )
@@ -543,8 +554,9 @@ def reset_database(
     ensure_role_search_paths(runner, runtime, contract)
     apply_schema(runner, runtime, contract)
     if identity_backup is not None:
-        runner.run(
-            ("docker", "exec", "-i", runtime.container, "pg_restore",
+        run_admin_command(
+            runner, runtime,
+            ("pg_restore", "-w",
              "--username", "platform_admin", "--dbname", contract.database,
              "--clean", "--if-exists", "--exit-on-error", "--single-transaction"),
             input_data=identity_backup.read_bytes(),
@@ -556,8 +568,9 @@ def reset_database(
 def backup_keycloak(runner: Runner, runtime: Runtime, contract: PostgresContract) -> Path:
     """Require quiescent consumers and retain identity recovery outside the checkout."""
     require_no_database_clients(runner, runtime, contract)
-    dump = runner.run(
-        ("docker", "exec", runtime.container, "pg_dump", "--username", "platform_admin",
+    dump = run_admin_command(
+        runner, runtime,
+        ("pg_dump", "-w", "--username", "platform_admin",
          "--dbname", contract.database, "--format=custom", "--schema=keycloak")
     ).stdout
     if not dump.startswith(b"PGDMP"):
@@ -577,8 +590,9 @@ def require_no_database_clients(
     runner: Runner, runtime: Runtime, contract: PostgresContract
 ) -> None:
     """Refuse a volume reset unless Git/Argo has stopped every database client."""
-    active = runner.run(
-        ("docker", "exec", runtime.container, "psql", "--no-psqlrc",
+    active = run_admin_command(
+        runner, runtime,
+        ("psql", "-w", "--no-psqlrc",
          "--username", "platform_admin", "--dbname", contract.database, "-Atc",
          "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
          "AND pid<>pg_backend_pid() AND backend_type='client backend'")
