@@ -117,6 +117,8 @@ class PlatformPostgresTest(unittest.TestCase):
         self.assertIn("platform_admin.password", runner.command[-1])
         self.assertEqual(
             (
+                'ALTER ROLE "octopus_metrics" IN DATABASE "sync" '
+                "SET search_path TO octopus_core;\n"
                 'ALTER ROLE "octopus_runtime" IN DATABASE "sync" '
                 "SET search_path TO octopus_core, atheros_search;\n"
                 'ALTER ROLE "atheros_search_runtime" IN DATABASE "sync" '
@@ -204,6 +206,7 @@ class PlatformPostgresTest(unittest.TestCase):
                 "atheros_search_runtime",
                 "keycloak_runtime",
                 "octopus_runtime",
+                "octopus_metrics",
                 "schema_migrator_runtime",
                 "schema_owner",
             },

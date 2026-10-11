@@ -12,6 +12,10 @@ path "secret/data/ssl-proxy/prod/postgres-octopus" {
   capabilities = ["read", "update", "patch"]
 }
 
+path "secret/data/ssl-proxy/prod/postgres-octopus-metrics" {
+  capabilities = ["read", "update", "patch"]
+}
+
 path "secret/data/ssl-proxy/prod/postgres-schema-migrator" {
   capabilities = ["read", "update", "patch"]
 }

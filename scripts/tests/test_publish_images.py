@@ -156,7 +156,7 @@ class PublishImagesTest(unittest.TestCase):
 
         report = "\n".join(output)
         self.assertEqual(0, result)
-        self.assertEqual(9, len(commands))
+        self.assertEqual(10, len(commands))
         self.assertFalse(any("wg-key-rotator" in " ".join(command) for command in commands))
         self.assertIn("ssl-proxy: MATCH", report)
         self.assertIn("java-coordinator: UNPINNED", report)
@@ -166,9 +166,9 @@ class PublishImagesTest(unittest.TestCase):
         self.assertIn("bump:       not required", report)
         command_lines = bump_commands.read_text(encoding="utf-8").splitlines()
         self.assertEqual("Manual digest updates (run only when ready):", command_lines[0])
-        self.assertEqual(8, len(command_lines[1:]))
+        self.assertEqual(9, len(command_lines[1:]))
         self.assertFalse(any("bump-digest-ssl-proxy" in line for line in command_lines))
-        self.assertEqual(9, len(json.loads(manifest.read_text(encoding="utf-8"))["images"]))
+        self.assertEqual(10, len(json.loads(manifest.read_text(encoding="utf-8"))["images"]))
         for service, command in zip(FIRST_PARTY_SERVICES, commands, strict=True):
             self.assertIn(
                 f"PUBLISH_REPOSITORY=registry.test:5000/releases/{service}", command

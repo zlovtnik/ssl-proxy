@@ -43,7 +43,7 @@ images:
   newName: 192.168.1.242:5000/minio
 - digest: sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
   name: otel/opentelemetry-collector-contrib
-- digest: sha256:98b2b1a640140d4d1ab81e141defcd01c02b71028469c0f41a47d62681df5431
+- digest: sha256:5ae0012e69034ccc09b9c981687ffef5ddb5b596dc795afc3651e753731e240f
   name: postgres-runtime-schema
   newName: 192.168.1.242:5000/postgres-runtime-schema
 - digest: sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69

@@ -86,7 +86,8 @@ func TestValidatePgBouncerRequiresRuntimeAccounts(t *testing.T) {
 	}
 	data["pgbouncer-runtime-users"]["userlist.txt"] = []byte(`"atheros_search_runtime" "secret"
 "octopus_runtime" "secret"
-"schema_migrator_runtime" "secret"`)
+"schema_migrator_runtime" "secret"
+"octopus_metrics" "secret"`)
 	if err := validatePgBouncer(c, data); err != nil {
 		t.Fatalf("complete userlist rejected: %v", err)
 	}
@@ -217,7 +218,8 @@ func postgresContract() *contract.Contract {
 		Accounts: map[string]string{
 			"postgres-atheros-search": "atheros_search_runtime", "postgres-keycloak": "keycloak_runtime",
 			"postgres-octopus": "octopus_runtime", "postgres-schema-migrator": "schema_migrator_runtime",
-			"postgres-schema-owner": "schema_owner",
+			"postgres-schema-owner":    "schema_owner",
+			"postgres-octopus-metrics": "octopus_metrics",
 		},
 	}}}
 }
@@ -232,10 +234,12 @@ func pgbouncerTLSData(t *testing.T, dnsName string) map[string]map[string][]byte
 		"pgbouncer-runtime-users": {
 			"userlist.txt": []byte(`"atheros_search_runtime" "secret"
 "octopus_runtime" "secret"
-"schema_migrator_runtime" "secret"`),
+"schema_migrator_runtime" "secret"
+"octopus_metrics" "secret"`),
 		},
 		"postgres-atheros-search":  {"password": []byte("secret")},
 		"postgres-octopus":         {"password": []byte("secret")},
+		"postgres-octopus-metrics": {"password": []byte("secret")},
 		"postgres-schema-migrator": {"password": []byte("secret")},
 	}
 }

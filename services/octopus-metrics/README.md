@@ -243,9 +243,9 @@ Missing Docker is a test failure, not a silent integration success. The
 image. The [root Jenkinsfile](../../Jenkinsfile) also runs memory/thread
 sanitizers and the real adapters through the
 [metrics test runner](../../scripts/ci/octopus-metrics.sh). Changes to the service,
-canonical manifest, or shared image inputs select candidate publication.
-Jenkins archives `artifacts/octopus-metrics-buildx.json` with the pushed digest;
-it does not promote that digest into production. See
+canonical manifest, or shared image inputs select published-image updates.
+Jenkins records the pushed digest in `artifacts/release-manifest.json` and emits
+reviewed digest update commands; it never promotes production automatically. See
 [Jenkins Image CI](../../docs/jenkins-ci.md).
 
 Build the standalone image with repository root context:
@@ -272,32 +272,28 @@ while their processing readiness fails, so ingestion health cannot hide live
 diagnostic measurements. The regular coordinator Service keeps its readiness
 gate; network policies still restrict access to pod port 8081.
 
-This base is not yet included in either environment's canonical app-stack.
-No registry digest is fabricated, and the current platform-input contract does
-not yet provision the new `postgres-octopus-metrics` or `octopus-metrics-store`
-Secrets. Activation is a reviewed change containing all of the following:
+The canonical app-stack mappings and platform contract declare this worker and
+the `postgres-octopus-metrics` / `octopus-metrics-store` Secrets. Activation still
+requires provisioned Vault values and the separate database role before promotion:
 
-- Register the externally provisioned `octopus_metrics` account and its password
-  Secret, including the PgBouncer userlist, in the
-  [platform input contract](../../cyber-stack/platform-input-contract.yaml).
-  Add the `octopus-metrics-store` Secret with `access-key` / `secret-key` for a
-  scoped S3 writer. Update platform-sync target shells, environment patches and
-  generated RBAC together; existing Redis and listener-CA Secrets are reused.
-- Add `../../../base/octopus-metrics` only to each selected environment's
-  `app-stack` Kustomization and map logical image `octopus-metrics` to the
-  registry repository and the reviewed Jenkins digest. Add the service to
-  `scripts/image_contract.py` and the Makefile's deployable inventory at that
-  point so subsequent digest updates follow the existing promotion contract.
+- Provision the `octopus_metrics` account password and matching PgBouncer
+  userlist entry in Vault, plus the `octopus-metrics-store` `access-key` /
+  `secret-key` for a scoped S3 writer. Platform-sync validates the read-only
+  role and matching PgBouncer password once those values are present.
 - Promote the coordinator revision that exposes `/internal/metrics/live` and
   removes the Scala publisher before using the production snapshot destinations.
-  Add the worker's internal `/metrics` target to the telemetry configuration.
   Render and validate both environments with `make gitops-check`.
+
+The app-stack resource listing, image digest pin, `scripts/image_contract.py` /
+Makefile deployable inventory, and the worker's internal `/metrics` scrape
+target are already in place.
 
 The application defaults and base agree on `postgres-pgbouncer:5432`,
 `verify-full`, the listener TLS identity, and `/etc/postgres/tls/ca.crt`.
 Do not reuse the coordinator's writer account. The new password Secret and
-scoped S3 Secret are deliberate provisioning prerequisites; this change does
-not require them in the currently deployed platform contract.
+scoped S3 Secret are mandatory provisioning prerequisites. The schema executor
+applies the existing metrics grant fixture when `POSTGRES_OCTOPUS_METRICS_ACCOUNT`
+is configured; application runtimes never apply grants or DDL.
 
 ## Production cutover and performance acceptance
 

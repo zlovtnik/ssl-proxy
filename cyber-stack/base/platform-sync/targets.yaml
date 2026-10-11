@@ -91,6 +91,18 @@ type: Opaque
 apiVersion: v1
 kind: Secret
 metadata:
+  name: postgres-octopus-metrics
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: octopus-metrics-store
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
   name: postgres-schema-migrator
 type: Opaque
 ---

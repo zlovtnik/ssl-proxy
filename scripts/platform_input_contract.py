@@ -192,6 +192,7 @@ def load_platform_input_contract(root: Path) -> PlatformInputContract:
                 "postgres-atheros-search": "atheros_search_runtime",
                 "postgres-keycloak": "keycloak_runtime",
                 "postgres-octopus": "octopus_runtime",
+                "postgres-octopus-metrics": "octopus_metrics",
                 "postgres-schema-migrator": "schema_migrator_runtime",
                 "postgres-schema-owner": "schema_owner",
             },

@@ -11,6 +11,7 @@ db_ssl_mode="${PGSSLMODE:?PGSSLMODE is required}"
 db_ssl_server_name="${POSTGRES_SSL_SERVER_NAME:?POSTGRES_SSL_SERVER_NAME is required}"
 db_ssl_root_cert="${PGSSLROOTCERT:?PGSSLROOTCERT is required}"
 octopus_account="${POSTGRES_OCTOPUS_ACCOUNT:?POSTGRES_OCTOPUS_ACCOUNT is required}"
+metrics_account="${POSTGRES_OCTOPUS_METRICS_ACCOUNT:-}"
 search_account="${POSTGRES_ATHEROS_SEARCH_ACCOUNT:?POSTGRES_ATHEROS_SEARCH_ACCOUNT is required}"
 migrator_account="${POSTGRES_SCHEMA_MIGRATOR_ACCOUNT:?POSTGRES_SCHEMA_MIGRATOR_ACCOUNT is required}"
 keycloak_account="${POSTGRES_KEYCLOAK_ACCOUNT:?POSTGRES_KEYCLOAK_ACCOUNT is required}"
@@ -22,6 +23,9 @@ keycloak_account="${POSTGRES_KEYCLOAK_ACCOUNT:?POSTGRES_KEYCLOAK_ACCOUNT is requ
 for account in "${db_user}" "${octopus_account}" "${search_account}" "${migrator_account}" "${keycloak_account}"; do
   case "${account}" in *[!A-Za-z0-9_]*|'') echo "runtime role names contain invalid characters" >&2; exit 2;; esac
 done
+if [ -n "${metrics_account}" ]; then
+  case "${metrics_account}" in *[!A-Za-z0-9_]*|'') echo "invalid metrics role name" >&2; exit 2;; esac
+fi
 
 export PGPASSWORD="${db_password}"
 psql_run() {
@@ -359,6 +363,12 @@ for domain in octopus_core atheros_search schema_migrator keycloak; do
       ;;
   esac
 done
+
+# Apply the read-only metrics fixture only after its role is provisioned.
+if [ -n "${metrics_account}" ]; then
+  sed -e "s/{{OCTOPUS_METRICS_ACCOUNT}}/${metrics_account}/g" \
+      "${schema_root}/octopus_core/grants/metrics_read_only.sql.tmpl" | psql_run
+fi
 
 # Transaction-pool clients must not depend on a one-time client connection
 # initializer. Role defaults are applied whenever PgBouncer opens an upstream

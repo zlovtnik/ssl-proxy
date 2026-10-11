@@ -78,6 +78,7 @@ class PlatformSyncRbacTest(unittest.TestCase):
             "postgres-atheros-search",
             "postgres-keycloak",
             "postgres-octopus",
+            "postgres-octopus-metrics",
             "postgres-schema-migrator",
             "postgres-schema-owner",
             "pgbouncer-runtime-users",
@@ -115,7 +116,7 @@ class PlatformSyncRbacTest(unittest.TestCase):
 
         secrets_rule = next(r for r in rules if "secrets" in r["resources"])
         self.assertEqual(["get", "update"], secrets_rule["verbs"])
-        self.assertEqual(21, len(secrets_rule["resourceNames"]))
+        self.assertEqual(23, len(secrets_rule["resourceNames"]))
 
         configmaps_rule = next(r for r in rules if "configmaps" in r["resources"])
         self.assertEqual(["get", "update"], configmaps_rule["verbs"])

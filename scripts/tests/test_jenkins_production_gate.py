@@ -155,7 +155,7 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertNotIn("env[fields[0]]", pipeline)
         for name in ("PLATFORM_SYNC", "ATHEROS_SEARCH", "SCHEMA_MIGRATOR", "OCTOPUS", "SENSOR"):
             self.assertIn(f'"$SHOULD_RUN_{name}" != true', pipeline)
-        self.assertIn('--only "${CHANGED_SERVICES:-}"', pipeline)
+        self.assertIn('--only "$selected_services"', pipeline)
         self.assertIn('--reuse-submodules "$SUBMODULE_CI_READY"', pipeline)
         self.assertIn("SUBMODULE_CI_READY = 'false'", pipeline)
         self.assertIn('"$SUBMODULE_CI_READY" = true ] || [ "$SHOULD_RUN_OCTOPUS" != true', pipeline)
@@ -168,15 +168,15 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertIn("artifacts/release-manifest.json", pipeline)
         self.assertNotIn("SHOULD_PUBLISH_STATS_READER", pipeline)
 
-    def test_metrics_is_validated_before_candidate_publication(self) -> None:
+    def test_metrics_is_validated_before_regular_publication(self) -> None:
         pipeline = pipeline_source()
         self.assertLess(pipeline.index("stage('Octopus metrics')"),
                         pipeline.index("stage('Publish immutable images')"))
         for contract in (
             "-DMETRICS_SANITIZE=ON", "-DMETRICS_TSAN=ON", "ctest --test-dir",
             "integration_test.py --build", "SHOULD_RUN_OCTOPUS_METRICS",
-            "SHOULD_PUBLISH_OCTOPUS_METRICS", "publish-octopus-metrics",
-            "artifacts/octopus-metrics-buildx.json",
+            "SHOULD_PUBLISH_OCTOPUS_METRICS", 'selected_services="${selected_services:+$selected_services,}octopus-metrics"',
+            "artifacts/release-manifest.json",
         ):
             self.assertIn(contract, pipeline)
 

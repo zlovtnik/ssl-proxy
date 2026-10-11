@@ -33,6 +33,7 @@ from platform_input_contract import (  # noqa: E402
 EXPECTED_INPUTS = {
     ("Secret", "cloudflared-tunnel-credentials"): {"credentials.json"},
     ("Secret", "minio-credentials"): {"access-key", "secret-key"},
+    ("Secret", "octopus-metrics-store"): {"access-key", "secret-key"},
     ("Secret", "observability-credentials"): {
         "grafana-admin-password",
         "loki-username",
@@ -61,6 +62,7 @@ EXPECTED_INPUTS = {
     ("Secret", "postgres-atheros-search"): {"password"},
     ("Secret", "postgres-keycloak"): {"password"},
     ("Secret", "postgres-octopus"): {"password"},
+    ("Secret", "postgres-octopus-metrics"): {"password"},
     ("Secret", "postgres-schema-migrator"): {"password"},
     ("Secret", "postgres-schema-owner"): {"password"},
     ("Secret", "postgres-runtime-tls"): {"ca.crt"},
@@ -223,7 +225,7 @@ class PlatformInputContractTest(unittest.TestCase):
         }
 
         self.assertEqual(EXPECTED_INPUTS, actual)
-        self.assertEqual(21, sum(entry.kind == "Secret" for entry in contract.inputs))
+        self.assertEqual(23, sum(entry.kind == "Secret" for entry in contract.inputs))
         self.assertEqual(1, sum(entry.kind == "ConfigMap" for entry in contract.inputs))
         for entry in contract.inputs:
             self.assertEqual(

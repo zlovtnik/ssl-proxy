@@ -192,6 +192,22 @@ systemd credentials. The sync renews the token before reading Vault.
 
 **Never commit kubeconfig or Vault tokens to Git.**
 
+## PostgreSQL privilege regression tests
+
+The metrics credential validator rejects table and column write privileges on
+both metrics relations, including privileges granted through `PUBLIC`. The
+canonical column-only read grants remain accepted. Run the actual validator
+against an ephemeral PostgreSQL Testcontainer from the repository root:
+
+```bash
+python3 -m venv /tmp/platform-sync-postgres-tests
+/tmp/platform-sync-postgres-tests/bin/pip install -r services/platform-sync/tests/requirements.txt
+/tmp/platform-sync-postgres-tests/bin/python services/platform-sync/tests/postgres_grants_test.py
+```
+
+Docker and Go are required. The runner supplies `PLATFORM_SYNC_TEST_POSTGRES_DSN`
+to the integration tests and removes the disposable database on exit.
+
 ## Configuration Reference
 
 | Variable | Default | Description |

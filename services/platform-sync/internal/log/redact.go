@@ -30,6 +30,8 @@ func New() *Logger {
 		"postgres-atheros-search":          true,
 		"postgres-keycloak":                true,
 		"postgres-octopus":                 true,
+		"postgres-octopus-metrics":         true,
+		"octopus-metrics-store":            true,
 		"postgres-schema-migrator":         true,
 		"postgres-schema-owner":            true,
 		"postgres-runtime-tls":             true,
