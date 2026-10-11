@@ -171,6 +171,12 @@ func validateAccountGrants(ctx context.Context, connection *pgx.Conn, user strin
 		var isolated bool
 		query := `SELECT NOT (rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls)
 		  AND NOT EXISTS (SELECT 1 FROM pg_auth_members WHERE member = pg_roles.oid)
+		  AND NOT EXISTS (SELECT 1 FROM pg_class
+		    WHERE oid IN ('octopus_core.ingestion_evidence'::regclass,
+		                 'octopus_core.schema_readiness'::regclass)
+		      AND relowner = pg_roles.oid)
+		  AND NOT EXISTS (SELECT 1 FROM pg_namespace
+		    WHERE nspname = 'octopus_core' AND nspowner = pg_roles.oid)
 		  AND NOT has_schema_privilege(current_user, 'octopus_core', 'CREATE')
 		  AND NOT has_table_privilege(current_user, 'octopus_core.ingestion_evidence', 'INSERT,UPDATE,DELETE,TRUNCATE')
 		  AND NOT has_any_column_privilege(current_user, 'octopus_core.ingestion_evidence', 'INSERT,UPDATE')
@@ -192,7 +198,7 @@ func validateAccountGrants(ctx context.Context, connection *pgx.Conn, user strin
 			return fmt.Errorf("check metrics read-only isolation: %w", err)
 		}
 		if !isolated {
-			return errors.New("metrics role must have isolated column-only read grants")
+			return errors.New("metrics role must have isolated column-only read grants and must not own octopus_core objects")
 		}
 		return nil
 	case "schema_owner":

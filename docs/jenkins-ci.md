@@ -97,7 +97,7 @@ integrity gate. Docker and BuildKit caches live outside that workspace. Every
 run has a 180-minute hard timeout.
 
 The `FULL_BUILD` parameter defaults to true: an ordinary run validates and
-publishes every image candidate, including the unactivated Octopus Metrics
+publishes every image candidate, including the Octopus Metrics
 image. Uncheck it explicitly to select changes since the last completed
 successful run. Publication still does not change production digest pins. The archived
 `changed-paths.json` is the authoritative selection report for each build.
@@ -127,8 +127,8 @@ Each run:
    checks when an image is selected;
 5. publishes only the selected Kubernetes image contracts with at most three
    concurrent workers, using a 12-character commit tag plus the mutable
-   `latest` channel. Redpanda maintenance and Octopus Metrics
-   publish candidate images separately until their first reviewed stack pins; and
+   `latest` channel. Redpanda maintenance
+   publishes candidate images separately until its first reviewed stack pin; and
 6. archives the release manifest and prints a final report containing the
    `make bump-digest-<service> ENV=prod DIGEST=<digest>` commands required by
    newly published deployed images, plus digests and activation requirements
@@ -171,7 +171,8 @@ is included in the canonical app-stack slices with a digest pin. The dedicated
 read-only account and scoped S3 credentials must be provisioned in Vault before
 activation; platform-sync verifies the metrics role and PgBouncer userlist. The
 [service README](../services/octopus-metrics/README.md) lists the complete
-activation changes. Candidate publication alone does not deploy the service.
+activation changes. Image publication alone does not deploy the service;
+deployment follows the reviewed digest pin and the provisioned Vault inputs.
 
 Validation and publication are fail-closed. Jenkins never pushes a Git branch,
 opens a pull request, updates a Kustomization or contacts the Kubernetes API.

@@ -1,6 +1,7 @@
 """Run the Go privilege regressions against ephemeral PostgreSQL Testcontainers."""
 import os
 from pathlib import Path
+import secrets
 import subprocess
 
 from testcontainers.community.postgres import PostgresContainer
@@ -11,7 +12,7 @@ IMAGE = "postgres:16.15-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b676793
 
 
 def main():
-    with PostgresContainer(IMAGE, username="fixture", password="fixture-only",
+    with PostgresContainer(IMAGE, username="fixture", password=secrets.token_urlsafe(24),
                            dbname="metrics_grants") as postgres:
         env = dict(os.environ, PLATFORM_SYNC_TEST_POSTGRES_DSN=
                    postgres.get_connection_url().replace("postgresql+psycopg2://", "postgresql://"))

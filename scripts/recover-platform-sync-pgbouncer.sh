@@ -29,7 +29,7 @@ usage() {
     cat <<EOF
 Usage: sudo $0 --confirm $CONFIRMATION
 
-Installs the current platform-sync binary, replaces the three PgBouncer
+Installs the current platform-sync binary, replaces the four PgBouncer
 runtime entries in Vault with their corresponding plaintext Vault passwords,
 and runs platform-sync. Secret values are never printed.
 EOF
@@ -62,7 +62,7 @@ work_dir=""
 strings_file=""
 
 cleanup() {
-    unset VAULT_TOKEN octopus_password atheros_password migrator_password
+    unset VAULT_TOKEN octopus_password atheros_password migrator_password metrics_password
     if [[ -n ${strings_file:-} && -f $strings_file ]]; then
         rm -f -- "$strings_file"
     fi
@@ -142,10 +142,12 @@ validate_direct_login() {
 octopus_password="$(read_password postgres-octopus)"
 atheros_password="$(read_password postgres-atheros-search)"
 migrator_password="$(read_password postgres-schema-migrator)"
+metrics_password="$(read_password postgres-octopus-metrics)"
 
 validate_direct_login octopus_runtime "$octopus_password"
 validate_direct_login atheros_search_runtime "$atheros_password"
 validate_direct_login schema_migrator_runtime "$migrator_password"
+validate_direct_login octopus_metrics "$metrics_password"
 
 printf '%s\n' 'Writing a new Vault version for pgbouncer-runtime-users/userlist.txt...'
 vault kv patch \
@@ -155,9 +157,10 @@ vault kv patch \
         printf '"octopus_runtime" "%s"\n' "$octopus_password"
         printf '"atheros_search_runtime" "%s"\n' "$atheros_password"
         printf '"schema_migrator_runtime" "%s"\n' "$migrator_password"
+        printf '"octopus_metrics" "%s"\n' "$metrics_password"
     ) >/dev/null
 
-unset octopus_password atheros_password migrator_password
+unset octopus_password atheros_password migrator_password metrics_password
 
 printf '%s\n' 'Running platform-sync...'
 export KUBECONFIG=/run/platform-sync/kubeconfig

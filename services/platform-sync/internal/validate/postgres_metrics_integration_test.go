@@ -126,6 +126,9 @@ func TestMetricsAccountRejectsColumnWrites(t *testing.T) {
 				if _, err := admin.Exec(ctx, fmt.Sprintf("ALTER TABLE %s OWNER TO fixture; REVOKE UPDATE (%s) ON %s FROM octopus_metrics", table.name, table.column, table.name)); err != nil {
 					t.Fatal(err)
 				}
+				if _, err := admin.Exec(ctx, strings.ReplaceAll(string(fixture), "{{OCTOPUS_METRICS_ACCOUNT}}", "octopus_metrics")); err != nil {
+					t.Fatal(err)
+				}
 				assertReadOnly(t)
 			})
 			var writable bool
@@ -139,5 +142,33 @@ func TestMetricsAccountRejectsColumnWrites(t *testing.T) {
 				t.Fatalf("owner fixture cannot restore its own write privilege: %v", err)
 			}
 		})
+		t.Run(table.name+"/owner-with-canonical-grants", func(t *testing.T) {
+			if _, err := admin.Exec(ctx, fmt.Sprintf("ALTER TABLE %s OWNER TO octopus_metrics", table.name)); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if _, err := admin.Exec(ctx, fmt.Sprintf("ALTER TABLE %s OWNER TO fixture", table.name)); err != nil {
+					t.Fatal(err)
+				}
+				assertReadOnly(t)
+			})
+			if err := validateAccountGrants(ctx, metrics, "octopus_metrics"); err == nil {
+				t.Error("accepted an owner that can grant itself write privileges")
+			}
+		})
 	}
+	t.Run("octopus_core/schema-owner", func(t *testing.T) {
+		if _, err := admin.Exec(ctx, "ALTER SCHEMA octopus_core OWNER TO octopus_metrics"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if _, err := admin.Exec(ctx, "ALTER SCHEMA octopus_core OWNER TO fixture"); err != nil {
+				t.Fatal(err)
+			}
+			assertReadOnly(t)
+		})
+		if err := validateAccountGrants(ctx, metrics, "octopus_metrics"); err == nil {
+			t.Error("accepted ownership of the octopus_core schema")
+		}
+	})
 }

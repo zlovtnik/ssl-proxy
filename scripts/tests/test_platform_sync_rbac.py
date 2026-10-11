@@ -78,6 +78,7 @@ class PlatformSyncRbacTest(unittest.TestCase):
             "postgres-atheros-search",
             "postgres-keycloak",
             "postgres-octopus",
+            "postgres-octopus-metrics",
             "postgres-schema-migrator",
             "postgres-schema-owner",
             "pgbouncer-runtime-users",

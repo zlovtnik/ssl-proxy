@@ -243,7 +243,7 @@ Missing Docker is a test failure, not a silent integration success. The
 image. The [root Jenkinsfile](../../Jenkinsfile) also runs memory/thread
 sanitizers and the real adapters through the
 [metrics test runner](../../scripts/ci/octopus-metrics.sh). Changes to the service,
-canonical manifest, or shared image inputs select candidate publication.
+canonical manifest, or shared image inputs select published-image updates.
 Jenkins records the pushed digest in `artifacts/release-manifest.json` and emits
 reviewed digest update commands; it never promotes production automatically. See
 [Jenkins Image CI](../../docs/jenkins-ci.md).
@@ -276,21 +276,17 @@ The canonical app-stack mappings and platform contract declare this worker and
 the `postgres-octopus-metrics` / `octopus-metrics-store` Secrets. Activation still
 requires provisioned Vault values and the separate database role before promotion:
 
-- Register the externally provisioned `octopus_metrics` account and its password
-  Secret, including the PgBouncer userlist, in the
-  [platform input contract](../../cyber-stack/platform-input-contract.yaml).
-  Provide the `octopus-metrics-store` Secret with `access-key` / `secret-key` for
-  a scoped S3 writer. Platform-sync validates the read-only role and matching
-  PgBouncer password. Existing Redis and listener-CA Secrets are reused.
-- Add `../../../base/octopus-metrics` only to each selected environment's
-  `app-stack` Kustomization and map logical image `octopus-metrics` to the
-  registry repository and the reviewed Jenkins digest. Add the service to
-  `scripts/image_contract.py` and the Makefile's deployable inventory at that
-  point so subsequent digest updates follow the existing promotion contract.
+- Provision the `octopus_metrics` account password and matching PgBouncer
+  userlist entry in Vault, plus the `octopus-metrics-store` `access-key` /
+  `secret-key` for a scoped S3 writer. Platform-sync validates the read-only
+  role and matching PgBouncer password once those values are present.
 - Promote the coordinator revision that exposes `/internal/metrics/live` and
   removes the Scala publisher before using the production snapshot destinations.
-  Add the worker's internal `/metrics` target to the telemetry configuration.
   Render and validate both environments with `make gitops-check`.
+
+The app-stack resource listing, image digest pin, `scripts/image_contract.py` /
+Makefile deployable inventory, and the worker's internal `/metrics` scrape
+target are already in place.
 
 The application defaults and base agree on `postgres-pgbouncer:5432`,
 `verify-full`, the listener TLS identity, and `/etc/postgres/tls/ca.crt`.

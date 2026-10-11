@@ -121,6 +121,14 @@ spec:
           jsonPointers: [/data]
         - group: ""
           kind: Secret
+          name: postgres-octopus-metrics
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: octopus-metrics-store
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
           name: postgres-schema-migrator
           jsonPointers: [/data]
         - group: ""

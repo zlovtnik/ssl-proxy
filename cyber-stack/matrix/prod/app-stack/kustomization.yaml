@@ -14,6 +14,9 @@ resources:
 - ../../../base/cloudflared
 - ../../../base/public-gateway
 - ../../../base/stats-reader
+# Gate: bootstrap secret shells and the data-plane platform-ready preflight
+# require platform-sync to populate and validate octopus-metrics-store and
+# postgres-octopus-metrics before this app-stack slice is healthy.
 - ../../../base/octopus-metrics
 images:
 - digest: sha256:2d2e40b1db957e3be71375771b6f2f32717a385d745d9d7234c9deabf8f4c5aa
