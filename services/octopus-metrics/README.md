@@ -239,8 +239,7 @@ PostgreSQL container, verifies least privilege, UTC semantics, empty evidence,
 schema drift, blocked-query deadlines, real Redis Lua, real S3 signing and
 conditional PUT ordering, full service publication, health, and signal shutdown.
 Missing Docker is a test failure, not a silent integration success. The
-[GitHub CI workflow](../../.github/workflows/ci.yml) runs these checks and builds the
-image. The [root Jenkinsfile](../../Jenkinsfile) also runs memory/thread
+[root Jenkinsfile](../../Jenkinsfile) runs memory/thread
 sanitizers and the real adapters through the
 [metrics test runner](../../scripts/ci/octopus-metrics.sh). Changes to the service,
 canonical manifest, or shared image inputs select published-image updates.

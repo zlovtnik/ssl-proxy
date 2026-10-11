@@ -99,6 +99,10 @@ pipeline {
           steps {
             sh 'make docs-check'
             sh 'make gitops-check'
+            sh 'python3 scripts/check-runtime-datastores.py'
+            sh 'python3 scripts/check-postgres-schema-contract.py'
+            sh 'bash scripts/check-column-limits.sh'
+            sh 'TMPDIR="$WORKSPACE" bash scripts/tests/test-postgres-schema-executor-integration.sh'
             sh 'bash scripts/ci/delivery.sh'
             sh 'make jenkins-plugin-audit'
             sh "python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v"

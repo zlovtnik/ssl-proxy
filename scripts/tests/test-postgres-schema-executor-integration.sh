@@ -9,13 +9,14 @@ readonly database_container="${test_id}-postgres"
 test_dir="$(mktemp -d "${TMPDIR:-/tmp}/ssl-proxy-schema-executor.XXXXXX")"
 
 cleanup() {
-  docker rm -f "${database_container}" >/dev/null 2>&1 || true
+  docker rm -f -v "${database_container}" >/dev/null 2>&1 || true
   docker network rm "${network_name}" >/dev/null 2>&1 || true
   rm -rf "${test_dir}"
 }
 trap cleanup EXIT HUP INT TERM
 
 mkdir -p "${test_dir}/bin"
+chmod 0755 "${test_dir}"
 printf '%s\n' '#!/bin/sh' 'PGSSLMODE=disable exec /usr/bin/psql "$@"' >"${test_dir}/bin/psql"
 chmod 0555 "${test_dir}/bin/psql"
 printf '%s\n' 'integration-test-placeholder' >"${test_dir}/ca.crt"
@@ -28,7 +29,8 @@ docker run --detach --name "${database_container}" --network "${network_name}" \
   "${postgres_image}" >/dev/null
 
 for _ in $(seq 1 60); do
-  if docker exec "${database_container}" pg_isready --username postgres --dbname sync >/dev/null 2>&1; then
+  if docker logs "${database_container}" 2>&1 | grep -q 'PostgreSQL init process complete' && \
+    docker exec "${database_container}" pg_isready --username postgres --dbname sync >/dev/null 2>&1; then
     break
   fi
   sleep 1

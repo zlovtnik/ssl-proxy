@@ -1,0 +1,22 @@
+# Existing canonical table declarations exceeding the 15-column default.
+# Freeze their current widths; new tables retain the default limit.
+atheros_search.search_documents 22
+atheros_search.embedding_jobs 18
+atheros_search.behaviour_snapshots 23
+atheros_search.timing_profiles 18
+atheros_search.similarity_pairs 26
+atheros_search.threat_signals 21
+atheros_search.v_vec_similarity_audit 39
+octopus_core.work_items 19
+octopus_core.proxy_events 16
+octopus_core.wireless_observations 27
+octopus_core.sync_jobs 16
+octopus_core.sync_batches 22
+octopus_core.sync_events 94
+octopus_core.outbox_events 20
+octopus_core.wireless_frames 16
+octopus_core.wireless_audit_frames 37
+octopus_core.wireless_bandwidth_windows 31
+octopus_core.proxy_blocked_host_rollups 19
+octopus_core.proxy_payload_audit 16
+schema_migrator.runs 17

@@ -3,15 +3,16 @@ set -euo pipefail
 
 readonly max_columns=15
 readonly repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly existing_limits="${repo_root}/config/postgres-column-limits.txt"
 
 cd "$repo_root"
 
 shopt -s nullglob
-sql_files=(sql/tables/*.sql)
+sql_files=(sql/postgres/*/01_tables/*.sql)
 shopt -u nullglob
 
 if ((${#sql_files[@]} == 0)); then
-  echo "No table definitions found under sql/tables/." >&2
+  echo "No table definitions found under sql/postgres/*/01_tables/." >&2
   exit 2
 fi
 
@@ -37,13 +38,15 @@ awk -v max_columns="$max_columns" '
   function finish_table() {
     finish_item()
     table_count++
+    seen_tables[table_name] = 1
+    allowed_columns = (table_name in existing_columns) ? existing_columns[table_name] : max_columns
 
-    if (column_count > max_columns) {
+    if (column_count > allowed_columns) {
       if (!printed_heading) {
-        printf "Postgres tables exceed the %d-column limit:\n", max_columns
+        printf "Postgres tables exceed their column limits (default %d):\n", max_columns
         printed_heading = 1
       }
-      printf "  %s:%d: %s has %d columns\n", table_file, table_line, table_name, column_count
+      printf "  %s:%d: %s has %d columns, limit %d\n", table_file, table_line, table_name, column_count, allowed_columns
       violation_count++
     }
 
@@ -53,6 +56,17 @@ awk -v max_columns="$max_columns" '
     in_double_quote = 0
     in_block_comment = 0
     item = ""
+  }
+
+  FILENAME == ARGV[1] {
+    if ($0 ~ /^[[:space:]]*(#|$)/) next
+    if (NF != 2 || $1 !~ /^[a-z_]+\.[a-z_]+$/ || $2 !~ /^[0-9]+$/ || $2 <= max_columns || ($1 in existing_columns)) {
+      printf "%s:%d: invalid existing column limit\n", FILENAME, FNR > "/dev/stderr"
+      parse_error = 1
+      next
+    }
+    existing_columns[$1] = $2
+    next
   }
 
   function parse_table_text(text,    character, next_character, cursor) {
@@ -175,6 +189,12 @@ awk -v max_columns="$max_columns" '
   }
 
   END {
+    for (existing_table in existing_columns) {
+      if (!(existing_table in seen_tables)) {
+        printf "column limit references missing table: %s\n", existing_table > "/dev/stderr"
+        parse_error = 1
+      }
+    }
     if (in_table) {
       printf "%s:%d: unterminated CREATE TABLE for %s\n", table_file, table_line, table_name > "/dev/stderr"
       parse_error = 1
@@ -187,6 +207,6 @@ awk -v max_columns="$max_columns" '
       exit 1
     }
 
-    printf "Checked %d Postgres tables: all have at most %d columns.\n", table_count, max_columns
+    printf "Checked %d canonical CREATE TABLE declarations: default limit %d; existing declaration widths are frozen.\n", table_count, max_columns
   }
-' "${sql_files[@]}"
+' "${existing_limits}" "${sql_files[@]}"
