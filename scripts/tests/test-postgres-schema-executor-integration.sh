@@ -42,6 +42,7 @@ CREATE EXTENSION vector;
 CREATE EXTENSION pg_stat_statements;
 CREATE ROLE schema_owner LOGIN PASSWORD 'integration-schema-owner';
 CREATE ROLE octopus_runtime LOGIN;
+CREATE ROLE octopus_metrics LOGIN;
 CREATE ROLE atheros_search_runtime LOGIN;
 CREATE ROLE schema_migrator_runtime LOGIN;
 CREATE ROLE keycloak_runtime LOGIN;
@@ -64,6 +65,7 @@ run_executor() {
     --env POSTGRES_SCHEMA_OWNER_USER=schema_owner \
     --env POSTGRES_SCHEMA_OWNER_PASSWORD=integration-schema-owner \
     --env POSTGRES_OCTOPUS_ACCOUNT=octopus_runtime \
+    --env POSTGRES_OCTOPUS_METRICS_ACCOUNT=octopus_metrics \
     --env POSTGRES_ATHEROS_SEARCH_ACCOUNT=atheros_search_runtime \
     --env POSTGRES_SCHEMA_MIGRATOR_ACCOUNT=schema_migrator_runtime \
     --env POSTGRES_KEYCLOAK_ACCOUNT=keycloak_runtime \
@@ -78,6 +80,18 @@ run_executor() {
 }
 
 run_executor
+
+# Metrics can read only timestamps and schema proof through the executor's
+# canonical fixture; the role cannot read record identifiers or write rows.
+metrics_grants="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align --command="
+  SELECT has_column_privilege('octopus_metrics', 'octopus_core.ingestion_evidence', 'first_seen_at', 'SELECT')
+     AND NOT has_column_privilege('octopus_metrics', 'octopus_core.ingestion_evidence', 'message_key', 'SELECT')
+     AND NOT has_table_privilege('octopus_metrics', 'octopus_core.ingestion_evidence', 'INSERT,UPDATE,DELETE,TRUNCATE')
+     AND NOT has_any_column_privilege('octopus_metrics', 'octopus_core.ingestion_evidence', 'INSERT,UPDATE')
+     AND NOT has_table_privilege('octopus_metrics', 'octopus_core.schema_readiness', 'INSERT,UPDATE,DELETE,TRUNCATE')
+     AND NOT has_any_column_privilege('octopus_metrics', 'octopus_core.schema_readiness', 'INSERT,UPDATE')
+     AND has_column_privilege('octopus_metrics', 'octopus_core.schema_readiness', 'required_checksum', 'SELECT')")"
+[ "${metrics_grants}" = t ] || { echo "metrics read-only grants did not match the fixture" >&2; exit 1; }
 first_count="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align \
   --command="SELECT count(*) FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/%'")"
 [ "${first_count}" -gt 0 ]
@@ -95,6 +109,9 @@ readonly current_octopus_checksum="$(awk '/^manifest_sha256:/{print $2; exit}' "
 docker exec --interactive "${database_container}" psql \
   --username postgres --dbname sync --set=ON_ERROR_STOP=1 <<SQL
 DROP INDEX octopus_core.wireless_frames_cooccurrence_idx;
+DROP TABLE octopus_core.wireless_projection_hashes;
+DROP TABLE octopus_core.wireless_projection_receipts;
+DROP INDEX octopus_core.ingestion_evidence_first_seen_idx;
 DELETE FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/octopus_core/%';
 UPDATE octopus_core.schema_readiness
 SET required_checksum = '${previous_octopus_checksum}',

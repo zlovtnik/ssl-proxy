@@ -28,6 +28,7 @@ SERVICE_SLICES = (
     ("schema-migrator-backend", "app-stack"),
     ("schema-migrator-ui", "app-stack"),
     ("stats-reader", "app-stack"),
+    ("octopus-metrics", "app-stack"),
     ("postgres-runtime-schema", "data-plane"),
 )
 FIRST_PARTY_SERVICES = tuple(service for service, _slice in SERVICE_SLICES)

@@ -14,6 +14,7 @@ resources:
 - ../../../base/cloudflared
 - ../../../base/public-gateway
 - ../../../base/stats-reader
+- ../../../base/octopus-metrics
 images:
 - digest: sha256:7313414747940780243b966483e50dd25dc4d25aea78707c9dab622e6257a7bb
   name: atheros-search
@@ -39,6 +40,9 @@ images:
 - digest: sha256:fcf9438a6b4b5fa070363abca750328c6ed021ce308d6ed8c858426c6f9164be
   name: stats-reader
   newName: 192.168.1.242:5000/stats-reader
+- digest: sha256:f8c22c4586271fe975d5d2a9fdd0b993fe490c9a48f4c372b55251cdd17f61d6
+  name: octopus-metrics
+  newName: 192.168.1.242:5000/octopus-metrics
 patches:
 - path: ../patches/identity-hostname.yaml
 - path: ../patches/cloudflare-edge.yaml

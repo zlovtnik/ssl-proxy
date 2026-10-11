@@ -16,6 +16,7 @@ var canonicalAccounts = map[string]string{
 	"postgres-atheros-search":  "atheros_search_runtime",
 	"postgres-keycloak":        "keycloak_runtime",
 	"postgres-octopus":         "octopus_runtime",
+	"postgres-octopus-metrics": "octopus_metrics",
 	"postgres-schema-migrator": "schema_migrator_runtime",
 	"postgres-schema-owner":    "schema_owner",
 }
@@ -84,7 +85,7 @@ func validatePostgres(ctx context.Context, c *contract.Contract, data map[string
 	}
 
 	if len(pg.Accounts) != len(canonicalAccounts) {
-		return fmt.Errorf("PostgreSQL contract must declare exactly the five isolated accounts")
+		return fmt.Errorf("PostgreSQL contract must declare exactly the six isolated accounts")
 	}
 	for secretName, expectedUser := range canonicalAccounts {
 		declaredUser, ok := pg.Accounts[secretName]
@@ -161,6 +162,39 @@ func validatePgvector(ctx context.Context, connection *pgx.Conn) error {
 
 func validateAccountGrants(ctx context.Context, connection *pgx.Conn, user string) error {
 	switch user {
+	case "octopus_metrics":
+		if err := requireSchemaPrivileges(ctx, connection, "octopus_core", "USAGE"); err != nil {
+			return err
+		}
+		// Column-only reads match the canonical metrics grant fixture. Reject
+		// writer/admin inheritance before making the credentials available.
+		var isolated bool
+		query := `SELECT NOT (rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls)
+		  AND NOT EXISTS (SELECT 1 FROM pg_auth_members WHERE member = pg_roles.oid)
+		  AND NOT has_schema_privilege(current_user, 'octopus_core', 'CREATE')
+		  AND NOT has_table_privilege(current_user, 'octopus_core.ingestion_evidence', 'INSERT,UPDATE,DELETE,TRUNCATE')
+		  AND NOT has_any_column_privilege(current_user, 'octopus_core.ingestion_evidence', 'INSERT,UPDATE')
+		  AND has_column_privilege(current_user, 'octopus_core.ingestion_evidence', 'first_seen_at', 'SELECT')
+		  AND NOT EXISTS (SELECT 1 FROM pg_attribute
+		    WHERE attrelid = 'octopus_core.ingestion_evidence'::regclass
+		      AND attnum > 0 AND NOT attisdropped AND attname <> 'first_seen_at'
+		      AND has_column_privilege(current_user, attrelid, attnum, 'SELECT'))
+		  AND NOT has_table_privilege(current_user, 'octopus_core.schema_readiness', 'INSERT,UPDATE,DELETE,TRUNCATE')
+		  AND NOT has_any_column_privilege(current_user, 'octopus_core.schema_readiness', 'INSERT,UPDATE')
+		  AND has_column_privilege(current_user, 'octopus_core.schema_readiness', 'domain', 'SELECT')
+		  AND has_column_privilege(current_user, 'octopus_core.schema_readiness', 'ready', 'SELECT')
+		  AND has_column_privilege(current_user, 'octopus_core.schema_readiness', 'required_version', 'SELECT')
+		  AND has_column_privilege(current_user, 'octopus_core.schema_readiness', 'applied_version', 'SELECT')
+		  AND has_column_privilege(current_user, 'octopus_core.schema_readiness', 'required_checksum', 'SELECT')
+		  AND has_column_privilege(current_user, 'octopus_core.schema_readiness', 'applied_checksum', 'SELECT')
+		  FROM pg_roles WHERE rolname = current_user`
+		if err := connection.QueryRow(ctx, query).Scan(&isolated); err != nil {
+			return fmt.Errorf("check metrics read-only isolation: %w", err)
+		}
+		if !isolated {
+			return errors.New("metrics role must have isolated column-only read grants")
+		}
+		return nil
 	case "schema_owner":
 		return requireDatabasePrivilege(ctx, connection, "CREATE")
 	case "keycloak_runtime":

@@ -184,7 +184,7 @@ pipeline {
       options { timeout(time: 75, unit: 'MINUTES') }
       steps {
         sh 'bash scripts/ci/publish.sh'
-        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt,artifacts/redpanda-maint-buildx.json,artifacts/octopus-metrics-buildx.json', fingerprint: true
+        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt,artifacts/redpanda-maint-buildx.json', fingerprint: true
       }
     }
   }
