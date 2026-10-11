@@ -61,7 +61,6 @@ patches:
 - path: ../patches/schema-migrator-images.yaml
 - path: ../patches/octopus-runtime.yaml
 - path: ../patches/keycloak-direct-postgres.yaml
-- path: ../patches/clean-start-app-maintenance.yaml
 replacements:
 - source:
     fieldPath: data.IDENTITY_PUBLIC_ORIGIN
