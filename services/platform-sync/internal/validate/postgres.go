@@ -173,12 +173,14 @@ func validateAccountGrants(ctx context.Context, connection *pgx.Conn, user strin
 		  AND NOT EXISTS (SELECT 1 FROM pg_auth_members WHERE member = pg_roles.oid)
 		  AND NOT has_schema_privilege(current_user, 'octopus_core', 'CREATE')
 		  AND NOT has_table_privilege(current_user, 'octopus_core.ingestion_evidence', 'INSERT,UPDATE,DELETE,TRUNCATE')
+		  AND NOT has_any_column_privilege(current_user, 'octopus_core.ingestion_evidence', 'INSERT,UPDATE')
 		  AND has_column_privilege(current_user, 'octopus_core.ingestion_evidence', 'first_seen_at', 'SELECT')
 		  AND NOT EXISTS (SELECT 1 FROM pg_attribute
 		    WHERE attrelid = 'octopus_core.ingestion_evidence'::regclass
 		      AND attnum > 0 AND NOT attisdropped AND attname <> 'first_seen_at'
 		      AND has_column_privilege(current_user, attrelid, attnum, 'SELECT'))
 		  AND NOT has_table_privilege(current_user, 'octopus_core.schema_readiness', 'INSERT,UPDATE,DELETE,TRUNCATE')
+		  AND NOT has_any_column_privilege(current_user, 'octopus_core.schema_readiness', 'INSERT,UPDATE')
 		  AND has_column_privilege(current_user, 'octopus_core.schema_readiness', 'domain', 'SELECT')
 		  AND has_column_privilege(current_user, 'octopus_core.schema_readiness', 'ready', 'SELECT')
 		  AND has_column_privilege(current_user, 'octopus_core.schema_readiness', 'required_version', 'SELECT')

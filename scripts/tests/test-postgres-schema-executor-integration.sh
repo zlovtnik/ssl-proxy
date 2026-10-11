@@ -87,6 +87,9 @@ metrics_grants="$(docker exec "${database_container}" psql --username postgres -
   SELECT has_column_privilege('octopus_metrics', 'octopus_core.ingestion_evidence', 'first_seen_at', 'SELECT')
      AND NOT has_column_privilege('octopus_metrics', 'octopus_core.ingestion_evidence', 'message_key', 'SELECT')
      AND NOT has_table_privilege('octopus_metrics', 'octopus_core.ingestion_evidence', 'INSERT,UPDATE,DELETE,TRUNCATE')
+     AND NOT has_any_column_privilege('octopus_metrics', 'octopus_core.ingestion_evidence', 'INSERT,UPDATE')
+     AND NOT has_table_privilege('octopus_metrics', 'octopus_core.schema_readiness', 'INSERT,UPDATE,DELETE,TRUNCATE')
+     AND NOT has_any_column_privilege('octopus_metrics', 'octopus_core.schema_readiness', 'INSERT,UPDATE')
      AND has_column_privilege('octopus_metrics', 'octopus_core.schema_readiness', 'required_checksum', 'SELECT')")"
 [ "${metrics_grants}" = t ] || { echo "metrics read-only grants did not match the fixture" >&2; exit 1; }
 first_count="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align \
