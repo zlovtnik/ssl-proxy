@@ -34,6 +34,7 @@ from platform_postgres import (  # noqa: E402
     replace_userlist_password,
     require_no_database_clients,
     require_confirmation,
+    run_admin_command,
     reset_database,
     parser,
     validate_private_file,
@@ -42,6 +43,51 @@ from platform_postgres import (  # noqa: E402
 
 
 class PlatformPostgresTest(unittest.TestCase):
+    def test_admin_authentication_keeps_password_out_of_arguments_and_preserves_stdin(self) -> None:
+        runner = Mock()
+        sql = b"SELECT 1;\n"
+        result = run_admin_command(
+            runner, SimpleNamespace(container="postgres"),
+            ("psql", "--no-password", "--dbname", "database with spaces"),
+            input_data=sql,
+        )
+        self.assertIs(result, runner.run.return_value)
+        command = runner.run.call_args.args[0]
+        self.assertEqual(command[:7], ("docker", "exec", "-i", "postgres", "sh", "-eu", "-c"))
+        self.assertIn("/run/platform-secrets/platform_admin.password", command[7])
+        self.assertIn('exec "$@"', command[7])
+        self.assertEqual(command[8:], ("postgres-maintenance", "psql", "--no-password", "--dbname", "database with spaces"))
+        self.assertEqual(runner.run.call_args.kwargs["input_data"], sql)
+
+    def test_admin_shell_reads_private_password_and_preserves_binary_input(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            password = Path(directory) / "admin.password"
+            password.write_bytes(b"synthetic-password\r\n")
+            os.chmod(password, 0o600)
+
+            class ShellRunner:
+                def run(self, arguments, *, input_data=None):
+                    script = arguments[7].replace(
+                        "/run/platform-secrets/platform_admin.password", str(password)
+                    )
+                    return subprocess.run(
+                        ("sh", "-eu", "-c", script, *arguments[8:]),
+                        input=input_data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        check=True,
+                    )
+
+            payload = b"PGDMP\x00\r\n"
+            argument = "database with spaces; exit 1"
+            result = run_admin_command(
+                ShellRunner(), SimpleNamespace(container="postgres"),
+                (sys.executable, "-c",
+                 "import os,sys; assert os.environ['PGPASSWORD']=='synthetic-password'; "
+                 "assert sys.argv[1]=='database with spaces; exit 1'; "
+                 "sys.stdout.buffer.write(sys.stdin.buffer.read())", argument),
+                input_data=payload,
+            )
+            self.assertEqual(result.stdout, payload)
+
     def test_identity_backup_refuses_connected_clients(self) -> None:
         from unittest.mock import Mock
 
@@ -114,7 +160,7 @@ class PlatformPostgresTest(unittest.TestCase):
         ensure_role_search_paths(runner, runtime, contract)
 
         self.assertIsNotNone(runner.command)
-        self.assertIn("platform_admin.password", runner.command[-1])
+        self.assertIn("platform_admin.password", runner.command[7])
         self.assertEqual(
             (
                 'ALTER ROLE "octopus_metrics" IN DATABASE "sync" '
