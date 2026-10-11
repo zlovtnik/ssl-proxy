@@ -31,6 +31,65 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: wait-for-redpanda-topics
+          image: redpandadata/redpanda:v24.2.7@sha256:82a69763bef8d8b55ea5a520fa1b38f993908ef68946819ca1aed43541824c48
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+          env:
+            - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              topics_file="${TMPDIR:-/tmp}/octopus-redpanda-startup.txt"
+              while :; do
+                all_ready=false
+                checked=0
+                if rpk topic list --brokers "$SYNC_REDPANDA_BOOTSTRAP_SERVERS" </dev/null >"$topics_file" 2>/dev/null; then
+                  all_ready=true
+                  while IFS='|' read -r topic partitions replicas retention_ms retention_bytes; do
+                    case "$topic" in ''|\#*) continue ;; esac
+                    checked=$((checked + 1))
+                    if ! awk -v topic="$topic" -v partitions="$partitions" -v replicas="$replicas" '
+                      NR > 1 && $1 == topic && $2 == partitions && $3 == replicas { found=1 }
+                      END { exit !found }
+                    ' "$topics_file"; then
+                      all_ready=false
+                      break
+                    fi
+                  done </app/docker/redpanda/topics.manifest
+                fi
+                if [ "$all_ready" = true ] && [ "$checked" -gt 0 ]; then
+                  echo 'Declared Redpanda topics are available'
+                  exit 0
+                fi
+                echo 'Waiting for declared Redpanda topics'
+                sleep 5
+              done
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: topics-manifest
+              mountPath: /app/docker/redpanda
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
       containers:
         - name: java-coordinator
           image: java-coordinator:latest
