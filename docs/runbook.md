@@ -361,6 +361,13 @@ missing Application, unhealthy status or timeout is a failed release check.
 
 ## Data-plane checks
 
+Before its JVM starts, the coordinator waits for every declared Redpanda topic
+with the partition and replica counts in the
+[topic manifest](../cyber-stack/base/platform-config/configmap.yaml).
+If `wait-for-redpanda-topics` is still running, inspect the Redpanda initialization
+hook and compare the live topic inventory with that manifest. This gate protects
+fresh startup while the topic bootstrap hook is still creating topics.
+
 1. Confirm the frontdoor sees packets and pins clients to a healthy backend.
 2. Confirm the proxy publishes to Redpanda and its local outbox is not growing.
 3. Confirm `sync.scan.request` consumer lag is moving.
