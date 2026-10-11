@@ -1,5 +1,9 @@
 # Jenkins Image CI
 
+Local Jenkins is the sole CI system for the stack. GitHub Actions is disabled
+in the superproject and its four submodule repositories. Argo CD reconciles
+reviewed production changes from `main`.
+
 Jenkins provides the private build-and-publish loop for the repository's nine
 Kubernetes image contracts. The checked-in controller configuration creates one
 `ssl-proxy-images` pipeline from the root `Jenkinsfile`; the root Makefile
@@ -156,7 +160,7 @@ with `ThreadSanitizer: unexpected memory mapping` on high-entropy ASLR kernels.
 The disposable x86-64 metrics validation container uses `seccomp=unconfined`
 to permit the required `personality` call; other stages retain their existing
 filters. This test-container exception does not enter runtime images or
-Kubernetes manifests. Neither Jenkins nor GitHub CI changes host sysctls.
+Kubernetes manifests. The test runner does not change host sysctls.
 The runner propagates all failures and does not suppress race reports.
 
 For a local Docker Desktop check, run the same test stage with
@@ -259,9 +263,13 @@ The pipeline inventory contains five declarative definitions:
 
 The job definitions embedded in
 [Configuration as Code](../docker/jenkins/casc/jenkins.yaml) continue to load
-these Jenkinsfiles from SCM. The
-[GitHub Actions workflow](../.github/workflows/ci.yml) is a separate CI system;
-its Octopus Metrics job also tests and builds this service.
+these Jenkinsfiles from SCM. The umbrella delivery stage validates runtime
+datastore policy, canonical PostgreSQL manifests, table column limits, and
+schema-executor replay, checksum, and ownership behavior. Its disposable
+database fixtures live in the Jenkins workspace shared with Docker-in-Docker.
+The column check scans the canonical domain declarations, limits new tables to
+15 columns, and freezes wider existing declarations at the reviewed limits in
+[`postgres-column-limits.txt`](../config/postgres-column-limits.txt).
 
 Jenkinsfiles now describe orchestration, conditions, deadlines and artifact
 archives. Long shell bodies execute in agent `sh` steps through Bash scripts.
