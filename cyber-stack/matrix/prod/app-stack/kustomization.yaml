@@ -19,31 +19,31 @@ resources:
 # postgres-octopus-metrics before this app-stack slice is healthy.
 - ../../../base/octopus-metrics
 images:
-- digest: sha256:2d2e40b1db957e3be71375771b6f2f32717a385d745d9d7234c9deabf8f4c5aa
+- digest: sha256:64e01d6e90483a45025a39bc3d65912edda69989ce9609623d11a29cfcf1aa72
   name: atheros-search
   newName: 192.168.1.242:5000/atheros-search
-- digest: sha256:d241af9b1a242f63d962a7da81499b898b6f5fa261a601592dce0b01d2adbb0d
+- digest: sha256:107488592905e3b50db83a468c1af2ed43515433849b146d67dcc80dfec2e53f
   name: atheros-search-ui
   newName: 192.168.1.242:5000/atheros-search-ui
-- digest: sha256:9967a55a3c08b5e80c7410a7e2993611872668ff9702c33d21483296c82ef529
+- digest: sha256:fa8be40c9278975f4830a2e777d1f5784f596c0eee7f341911ee90defca31ad1
   name: atheros-sensor
   newName: 192.168.1.242:5000/atheros-sensor
 - digest: sha256:03ecb2062b00e6bddb652fb03bf882823b3613d0d49e762feeb7c2027bdf2648
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
-- digest: sha256:0c0874d0efcca2fb641c1ef8d70d1e418638ed37d7cf8ea3610648fb123dc64d
+- digest: sha256:cfd85ae8e02329dd4d6b0f475c9aa4470d3f247b44a1ff4e007c4d74c212204f
   name: schema-migrator-backend
   newName: 192.168.1.242:5000/schema-migrator-backend
-- digest: sha256:6c3662f20fa3ca164c2f70186877a7823daf44378ba5e1c87b925050595873fd
+- digest: sha256:0cd879ccc37559e9c7807d588a5ab7700b8bd67cf7458cf104ce8157f2f604b9
   name: schema-migrator-ui
   newName: 192.168.1.242:5000/schema-migrator-ui
-- digest: sha256:0ae58de1502300a9cd9d9f3d0834b61d463fa6cc4bb716db13870e303f4f656e
+- digest: sha256:243cb47503ae135d74774c516f5fd875e25a597c7eafae57d04435677bd39aaf
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
-- digest: sha256:41c10a6b59dc705630e8f206059952c6135d5624bdc80118aa7fa9b66d2c1503
+- digest: sha256:a8a57952bcee5a17d36c760ae3053d27e132f607417583bfe830e7050ac84c06
   name: stats-reader
   newName: 192.168.1.242:5000/stats-reader
-- digest: sha256:f8c22c4586271fe975d5d2a9fdd0b993fe490c9a48f4c372b55251cdd17f61d6
+- digest: sha256:68aa74b33318b058db55182a122701ccb8b0a480e00468df8c51413415fb600d
   name: octopus-metrics
   newName: 192.168.1.242:5000/octopus-metrics
 patches:
