@@ -55,7 +55,6 @@ patches:
 - path: ../patches/alloy-positions.yaml
 - path: ../patches/jaeger-recovery.yaml
 - path: ../patches/grafana-lan-nodeport.yaml
-- path: ../patches/clean-start-data-maintenance.yaml
 - patch: |-
     - op: replace
       path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
