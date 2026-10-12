@@ -116,3 +116,18 @@ data:
     wireless.alert.attack_sequence|3|1|2592000000|1073741824
     wireless.alert.sequence|3|1|2592000000|1073741824
     wifi.alert.handshake|3|1|2592000000|1073741824
+    dq.commands.v1|3|1|604800000|1073741824
+    dq.worker-reports.v1|3|1|604800000|1073741824
+    dq.events.v1|3|1|2592000000|1073741824
+    dq.dlq.v1|3|1|2592000000|1073741824
+    dq.registry.v1|1|1|2592000000|536870912
+    dq.audit.v1|3|1|15552000000|1073741824
+  topics.properties: |
+    # topic|property|value
+    dq.commands.v1|max.message.bytes|65536
+    dq.worker-reports.v1|max.message.bytes|65536
+    dq.events.v1|max.message.bytes|65536
+    dq.dlq.v1|max.message.bytes|65536
+    dq.registry.v1|max.message.bytes|65536
+    dq.registry.v1|cleanup.policy|compact
+    dq.audit.v1|max.message.bytes|65536

@@ -4,3 +4,4 @@ resources:
   - deployment.yaml
   - networkpolicy.yaml
   - wireless-calibration.yaml
+  - dq-config.yaml

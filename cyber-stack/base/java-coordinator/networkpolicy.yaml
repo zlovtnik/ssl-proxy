@@ -18,6 +18,13 @@ spec:
     - from:
         - podSelector:
             matchLabels:
+              app.kubernetes.io/component: dq-manager
+      ports:
+        - protocol: TCP
+          port: 8081
+    - from:
+        - podSelector:
+            matchLabels:
               app.kubernetes.io/component: telemetry-prometheus
         - podSelector:
             matchLabels:

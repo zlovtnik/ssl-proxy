@@ -40,6 +40,22 @@ spec:
           image: atheros-search:latest
           imagePullPolicy: IfNotPresent
           env:
+            - name: ATHSEARCH_DQ_ENABLED
+              value: "false"
+            - name: ATHSEARCH_DQ_MANAGER_URL
+              value: "http://ssl-proxy-dq-manager:8080"
+            - name: ATHSEARCH_DQ_INSTALLATION_ID
+              value: ""
+            - name: ATHSEARCH_DQ_NAMESPACE
+              value: ""
+            - name: ATHSEARCH_DQ_TIMEOUT_SECONDS
+              value: "5"
+            - name: ATHSEARCH_DQ_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ssl-proxy-dq-atheros-auth
+                  key: service-token
+                  optional: true
             - name: ATHSEARCH_WIRELESS_PROJECTION
               value: "false"
             - name: POD_NAMESPACE

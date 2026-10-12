@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-dq-control-config
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: java-coordinator
+    app.kubernetes.io/managed-by: kustomize
+data:
+  OCTOPUS_DQ_ENABLED: "false"
+  OCTOPUS_DQ_INSTALLATION_ID: ""
+  OCTOPUS_DQ_NAMESPACE: ""
+  OCTOPUS_DQ_SCOPE_MODES_JSON: "{}"
+  OCTOPUS_DQ_POLICY_VERSION: ""
+  OCTOPUS_DQ_APPROVED_DIGESTS_JSON: "[]"
+  OCTOPUS_DQ_ARTIFACT_BUCKET: "dq-artifacts"
+  OCTOPUS_DQ_POLL_INTERVAL_MS: "1000"
+  OCTOPUS_DQ_BATCH_SIZE: "8"
+  OCTOPUS_DQ_LEASE_SECONDS: "60"
+  OCTOPUS_DQ_MAX_QUEUED: "10000"
+  OCTOPUS_DQ_MAX_ARTIFACT_BYTES: "8388608"

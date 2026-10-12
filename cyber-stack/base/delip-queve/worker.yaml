@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-dq-atheros-dedup-v0-1-0
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    reloader.stakater.com/auto: "true"
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: dq-worker
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: dq-worker
+      app.kubernetes.io/version: "0.1.0"
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: dq-worker
+        app.kubernetes.io/version: "0.1.0"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: delip-queve-worker
+          ports:
+            - name: grpc
+              containerPort: 9091
+            - name: health
+              containerPort: 8091
+          envFrom:
+            - configMapRef:
+                name: ssl-proxy-dq-worker-config
+          env:
+            - name: DQ_WORKER_LISTEN
+              value: ":9091"
+            - name: DQ_WORKER_HTTP_LISTEN
+              value: ":8091"
+            - name: DQ_WORKER_MANIFEST_FILE
+              value: "/var/run/dq-manifest/manifest.json"
+            - name: DQ_WORKER_CERT_PATH
+              value: "/var/run/dq-tls/tls.crt"
+            - name: DQ_WORKER_KEY_PATH
+              value: "/var/run/dq-tls/tls.key"
+            - name: DQ_WORKER_CA_PATH
+              value: "/var/run/dq-tls/ca.crt"
+            - name: DQ_WORKER_TOKEN_FILE
+              value: "/var/run/dq-auth/service-token"
+            - name: MINIO_ACCESS_KEY_FILE
+              value: "/var/run/dq-auth/minio-access-key"
+            - name: MINIO_SECRET_KEY_FILE
+              value: "/var/run/dq-auth/minio-secret-key"
+            - name: DQ_BROKER_SASL_PASSWORD_FILE
+              value: "/var/run/dq-auth/redpanda-password"
+            - name: DQ_BROKER_CA_PATH
+              value: "/var/run/dq-broker-tls/ca.crt"
+            - name: MINIO_SECURE
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: health
+          volumeMounts:
+            - name: tls
+              mountPath: /var/run/dq-tls
+              readOnly: true
+            - name: broker-tls
+              mountPath: /var/run/dq-broker-tls
+              readOnly: true
+            - name: auth
+              mountPath: /var/run/dq-auth
+              readOnly: true
+            - name: manifest
+              mountPath: /var/run/dq-manifest
+              readOnly: true
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: "2"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: tls
+          secret:
+            secretName: ssl-proxy-dq-worker-tls
+        - name: broker-tls
+          secret:
+            secretName: ssl-proxy-dq-broker-tls
+        - name: auth
+          secret:
+            secretName: ssl-proxy-dq-worker-auth
+        - name: manifest
+          configMap:
+            name: ssl-proxy-dq-atheros-dedup-v0-1-0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-dq-atheros-dedup-v0-1-0
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: dq-worker
+spec:
+  selector:
+    app.kubernetes.io/component: dq-worker
+    app.kubernetes.io/version: "0.1.0"
+  ports:
+    - name: grpc
+      port: 9091
+      targetPort: grpc

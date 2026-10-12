@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-dq-manager
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    reloader.stakater.com/auto: "true"
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: dq-manager
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: dq-manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: dq-manager
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: delip-queve-manager
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: remotes
+              containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: ssl-proxy-dq-manager-config
+            - secretRef:
+                name: ssl-proxy-dq-manager-auth
+          env:
+            - name: DQ_BETA_ENABLED
+              value: "false"
+            - name: DQ_INSECURE_DEVELOPMENT
+              value: "false"
+            - name: DQ_HTTP_ADDR
+              value: ":8080"
+            - name: DQ_REMOTE_HTTP_ADDR
+              value: ":8081"
+            - name: DQ_WORKER_CA_PATH
+              value: "/var/run/dq-tls/ca.crt"
+            - name: DQ_WORKER_CERT_PATH
+              value: "/var/run/dq-tls/tls.crt"
+            - name: DQ_WORKER_KEY_PATH
+              value: "/var/run/dq-tls/tls.key"
+          volumeMounts:
+            - name: worker-tls
+              mountPath: /var/run/dq-tls
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: worker-tls
+          secret:
+            secretName: ssl-proxy-dq-manager-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-dq-manager
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: dq-manager
+spec:
+  selector:
+    app.kubernetes.io/component: dq-manager
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-dq-remotes
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: dq-manager
+spec:
+  selector:
+    app.kubernetes.io/component: dq-manager
+  ports:
+    - name: remotes
+      port: 8081
+      targetPort: remotes
