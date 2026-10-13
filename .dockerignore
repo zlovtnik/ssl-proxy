@@ -46,6 +46,8 @@ node_modules/
 **/node_modules/
 dist/
 **/dist/
+**/remotes-dist/
+**/remote-build/
 coverage/
 **/coverage/
 .svelte-kit/

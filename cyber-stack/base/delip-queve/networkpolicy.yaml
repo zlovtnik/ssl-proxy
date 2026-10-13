@@ -61,6 +61,7 @@ spec:
               app.kubernetes.io/component: telemetry-otel-collector
       ports:
         - port: 4317
+        - port: 4318
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -112,3 +113,4 @@ spec:
               app.kubernetes.io/component: telemetry-otel-collector
       ports:
         - port: 4317
+        - port: 4318

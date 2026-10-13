@@ -67,6 +67,8 @@ spec:
               value: "/var/run/dq-broker-tls/ca.crt"
             - name: MINIO_SECURE
               value: "true"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://ssl-proxy-telemetry-otel-collector:4318"
           readinessProbe:
             httpGet:
               path: /readyz

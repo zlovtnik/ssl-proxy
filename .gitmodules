@@ -10,3 +10,6 @@
 [submodule "services/octopus"]
 	path = services/octopus
 	url = https://github.com/zlovtnik/octopus
+[submodule "services/dq"]
+	path = services/dq
+	url = https://github.com/zlovtnik/dq.git

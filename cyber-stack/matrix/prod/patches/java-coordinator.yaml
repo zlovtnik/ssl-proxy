@@ -21,8 +21,11 @@ spec:
               value: "-XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=40 -XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError"
           resources:
             limits:
-              cpu: "2"
+              # The coordinator owns all 24 broker partitions in production.
+              # Four cores let its JVM create enough compute workers to drain
+              # sustained broker lag without changing the singleton contract.
+              cpu: "4"
               memory: 4Gi
             requests:
-              cpu: "1"
+              cpu: "2"
               memory: 2Gi

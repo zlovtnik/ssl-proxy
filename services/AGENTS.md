@@ -9,7 +9,7 @@ repository root instructions.
 - `atheros-sensor/` is a Rust host-side Wi-Fi sensor and sync-plane producer.
 - `octopus/` is the Scala 3 Cats Effect/FS2 coordinator and the sole owner of
   durable ingestion, leases, outbox, and maintained projections in PostgreSQL.
-- `delip-queve/` dispatches versioned processor runs through Octopus and hosts
+- `dq/` dispatches versioned processor runs through Octopus and hosts
   isolated Go workers and their SolidJS UI. Its processes have no database access.
 - `octopus-metrics/` materializes snapshots through a read-only PostgreSQL role;
   it reads Octopus live telemetry and publishes Redis/MinIO objects.
