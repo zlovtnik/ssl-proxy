@@ -844,6 +844,18 @@ OCTOPUS_RUNTIME_PROCESSORS = {
     "scheduled-reconciliation",
 }
 
+OCTOPUS_BROKER_DRAIN_PROFILE = "broker-drain"
+OCTOPUS_BROKER_DRAIN_PROFILE_ANNOTATION = "ssl-proxy.io/processor-profile"
+OCTOPUS_BROKER_DRAIN_PROCESSORS = {
+    "sync-scan-ingestion",
+    "sync-job-planner",
+    "sync-backlog-recovery",
+    "sync-load-dispatch",
+    "sync-load-consumer",
+    "sync-result-consumer",
+    "sync-outbox-publisher",
+}
+
 POSTGRES_RESET_MAINTENANCE = "ssl-proxy.io/postgres-reset-maintenance"
 
 
@@ -951,11 +963,25 @@ def _check_octopus_runtime(
         if len(processor_entries) == 1
         else set()
     )
-    if configured_processors != OCTOPUS_RUNTIME_PROCESSORS:
-        missing = sorted(OCTOPUS_RUNTIME_PROCESSORS - configured_processors)
-        extra = sorted(configured_processors - OCTOPUS_RUNTIME_PROCESSORS)
+    annotations = _mapping(
+        _path(deployments[0], "spec", "template", "metadata", "annotations")
+    )
+    processor_profile = annotations.get(OCTOPUS_BROKER_DRAIN_PROFILE_ANNOTATION)
+    if processor_profile == OCTOPUS_BROKER_DRAIN_PROFILE and expected_environment == "production":
+        expected_processors = OCTOPUS_BROKER_DRAIN_PROCESSORS
+        expected_label = "broker-drain processor catalog"
+    else:
+        expected_processors = OCTOPUS_RUNTIME_PROCESSORS
+        expected_label = "complete processor catalog"
+        if processor_profile is not None:
+            errors.append(
+                f"{relative}: unsupported Octopus processor profile {processor_profile}"
+            )
+    if configured_processors != expected_processors:
+        missing = sorted(expected_processors - configured_processors)
+        extra = sorted(configured_processors - expected_processors)
         errors.append(
-            f"{relative}: Octopus must enable the complete processor catalog; "
+            f"{relative}: Octopus must enable the {expected_label}; "
             f"missing={','.join(missing) or '-'} extra={','.join(extra) or '-'}"
         )
     unexpected = sorted(name for name in names if name.startswith("OCTOPUS_CUTOVER_"))
