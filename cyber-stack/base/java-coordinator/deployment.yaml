@@ -194,6 +194,8 @@ spec:
               value: "4"
             - name: SYNC_RESULT_CONSUMERS_COUNT
               value: "4"
+            - name: WIRELESS_AUDIT_CONSUMERS_COUNT
+              value: "3"
             - name: COORDINATOR_LOCKED_BATCH_MAX_BYTES
               value: "8388608"
             - name: POSTGRES_LOAD_CHUNK_MAX_BYTES
