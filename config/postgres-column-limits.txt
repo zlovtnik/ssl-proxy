@@ -19,4 +19,5 @@ octopus_core.wireless_audit_frames 37
 octopus_core.wireless_bandwidth_windows 31
 octopus_core.proxy_blocked_host_rollups 19
 octopus_core.proxy_payload_audit 16
+octopus_core.dq_runs 32
 schema_migrator.runs 17
