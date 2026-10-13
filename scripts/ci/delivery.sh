@@ -8,7 +8,14 @@ python3 scripts/check_redpanda_maintenance.py
 tar -cf - cyber-stack/base/redpanda-maintenance/redpanda-daily-clean.sh | ci_run delivery-1 --rm -i koalaman/shellcheck-alpine:v0.10.0 \
   sh -c 'tar --no-same-owner -xf - && shellcheck /cyber-stack/base/redpanda-maintenance/redpanda-daily-clean.sh'
 awk -F'|' '
-  /^[[:space:]]+[[:alnum:]._-]+\|/ && (NF != 5 || $5 == "") {
+  /^  topics\.manifest:[[:space:]]*\|[[:space:]]*$/ {
+    in_topic_manifest = 1
+    next
+  }
+  in_topic_manifest && /^  [[:alnum:]._-]+:/ {
+    in_topic_manifest = 0
+  }
+  in_topic_manifest && /^[[:space:]]+[[:alnum:]._-]+\|/ && (NF != 5 || $5 == "") {
     print "topic manifest row is missing retention.bytes: " $0 > "/dev/stderr"
     invalid = 1
   }
