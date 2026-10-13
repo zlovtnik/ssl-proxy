@@ -400,6 +400,9 @@ func octopusCoreGrants() []tableGrant {
 		"wireless_bandwidth_windows", "wireless_client_inventory", "wireless_probe_requests",
 		"proxy_blocked_host_rollups", "proxy_payload_audit", "work_leases", "processor_state",
 		"retention_runs", "reconciliation_findings", "outbox_publish_attempts",
+		"dq_scope_policies", "dq_processors", "dq_processor_versions", "dq_runs",
+		"dq_workers", "dq_attempts", "dq_receipts", "dq_audit", "dq_outbox",
+		"dq_decision_sources", "dq_artifacts",
 	} {
 		grants = append(grants, tableGrant{table: "octopus_core." + table, privileges: crud})
 	}
