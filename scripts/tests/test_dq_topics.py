@@ -37,7 +37,7 @@ class DQTopicTests(unittest.TestCase):
         self.assertEqual(config["topics.properties"].strip(), (ROOT / "docker/redpanda/topics.properties").read_text().strip())
         self.assertIn("dq.registry.v1|cleanup.policy|compact", config["topics.properties"])
         for topic in expected:
-            self.assertIn(f"{topic}|max.message.bytes|65536", config["topics.properties"])
+            self.assertIn(f"{topic}|max.message.bytes|69632", config["topics.properties"])
 
     def test_bootstrap_applies_properties_and_rejects_unknown_setting(self):
         with tempfile.TemporaryDirectory() as directory:

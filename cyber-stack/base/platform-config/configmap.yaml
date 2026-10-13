@@ -124,10 +124,12 @@ data:
     dq.audit.v1|3|1|15552000000|1073741824
   topics.properties: |
     # topic|property|value
-    dq.commands.v1|max.message.bytes|65536
-    dq.worker-reports.v1|max.message.bytes|65536
-    dq.events.v1|max.message.bytes|65536
-    dq.dlq.v1|max.message.bytes|65536
-    dq.registry.v1|max.message.bytes|65536
+    # DQ payloads are bounded at 64 KiB. Kafka's limit covers record-batch framing
+    # and the key as well, so reserve the matching 4 KiB producer framing margin.
+    dq.commands.v1|max.message.bytes|69632
+    dq.worker-reports.v1|max.message.bytes|69632
+    dq.events.v1|max.message.bytes|69632
+    dq.dlq.v1|max.message.bytes|69632
+    dq.registry.v1|max.message.bytes|69632
     dq.registry.v1|cleanup.policy|compact
-    dq.audit.v1|max.message.bytes|65536
+    dq.audit.v1|max.message.bytes|69632
