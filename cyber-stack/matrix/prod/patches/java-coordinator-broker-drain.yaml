@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-java-coordinator
+  namespace: ssl-proxy
+spec:
+  template:
+    metadata:
+      annotations:
+        # Temporarily prioritize durable broker intake over derived projections.
+        ssl-proxy.io/processor-profile: "broker-drain"
+    spec:
+      containers:
+        - name: java-coordinator
+          env:
+            # Kafka consumers remain enabled through OCTOPUS_CONSUMERS_ENABLED.
+            # Derived projections stay durable and resume after the backlog drains.
+            - name: OCTOPUS_ENABLED_PROCESSORS
+              value: >-
+                sync-scan-ingestion,sync-job-planner,sync-backlog-recovery,
+                sync-load-dispatch,sync-load-consumer,sync-result-consumer,
+                sync-outbox-publisher

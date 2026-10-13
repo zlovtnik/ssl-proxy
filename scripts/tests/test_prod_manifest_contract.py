@@ -592,6 +592,24 @@ mock_kcadm() {
         self.assertTrue(any("complete processor catalog" in error for error in errors))
         self.assertTrue(any("retired cutover inputs" in error for error in errors))
 
+    def test_octopus_allows_the_explicit_broker_drain_profile(self) -> None:
+        rendered = octopus()
+        deployment = rendered[0]
+        deployment["spec"]["template"]["metadata"] = {
+            "annotations": {
+                check_gitops.OCTOPUS_BROKER_DRAIN_PROFILE_ANNOTATION:
+                    check_gitops.OCTOPUS_BROKER_DRAIN_PROFILE
+            }
+        }
+        environment = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        next(
+            entry
+            for entry in environment
+            if entry["name"] == "OCTOPUS_ENABLED_PROCESSORS"
+        )["value"] = ",".join(sorted(check_gitops.OCTOPUS_BROKER_DRAIN_PROCESSORS))
+
+        self.assertEqual([], check_gitops._check_octopus_runtime(rendered, "prod"))
+
     def test_octopus_rejects_surging_singleton_rollout(self) -> None:
         for strategy in ({}, {"type": "RollingUpdate"},
                          {"type": "Recreate", "rollingUpdate": {"maxSurge": 1}}):
