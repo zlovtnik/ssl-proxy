@@ -94,6 +94,9 @@ spec:
         - name: java-coordinator
           image: java-coordinator:latest
           imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: ssl-proxy-dq-control-config
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -103,6 +106,12 @@ spec:
             runAsGroup: 1000
             readOnlyRootFilesystem: true
           env:
+            - name: OCTOPUS_DQ_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ssl-proxy-dq-control-auth
+                  key: control-token
+                  optional: true
             - name: WIRELESS_PROJECTION_MODE
               value: "shadow"
             - name: WIRELESS_RANGES_ENABLED
@@ -185,6 +194,8 @@ spec:
               value: "4"
             - name: SYNC_RESULT_CONSUMERS_COUNT
               value: "4"
+            - name: WIRELESS_AUDIT_CONSUMERS_COUNT
+              value: "3"
             - name: COORDINATOR_LOCKED_BATCH_MAX_BYTES
               value: "8388608"
             - name: POSTGRES_LOAD_CHUNK_MAX_BYTES
@@ -362,7 +373,7 @@ spec:
             - name: POSTGRES_ENABLED
               value: "true"
             - name: POSTGRES_SCHEMA_MANIFEST_SHA256
-              value: "49753f65f6273bb288fb502fa1679f715fc67e6602c450d30a63b9b2ca95ad9a"
+              value: "625ab5479655353e71dfab2a6164644f1baae47be42b60ecdbdb0ec217181489"
             - name: POSTGRES_HOST
               value: "postgres-pgbouncer"
             - name: POSTGRES_PORT

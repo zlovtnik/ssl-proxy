@@ -68,6 +68,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.processor_state TO {{OCTOPU
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.retention_runs TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.reconciliation_findings TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.outbox_publish_attempts TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.dq_scope_policies,
+  octopus_core.dq_processors, octopus_core.dq_processor_versions, octopus_core.dq_runs,
+  octopus_core.dq_workers, octopus_core.dq_attempts, octopus_core.dq_receipts,
+  octopus_core.dq_audit, octopus_core.dq_outbox, octopus_core.dq_decision_sources,
+  octopus_core.dq_artifacts TO {{OCTOPUS_ACCOUNT}};
 
 -- Atheros Search can calculate ETL health and serve alerts, but it cannot read
 -- operator credentials or registered-device claims.

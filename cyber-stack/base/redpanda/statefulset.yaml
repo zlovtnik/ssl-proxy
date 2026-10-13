@@ -233,6 +233,14 @@ spec:
                 fi
                 rpk topic alter-config "$topic" --brokers "$brokers" --set "retention.ms=$retention_ms" --set "retention.bytes=$retention_bytes" </dev/null >/dev/null
               done < /config/topics.manifest
+              if [ -f /config/topics.properties ]; then
+                while IFS='|' read -r topic property value || [ -n "$topic$property$value" ]; do
+                  case "$topic" in ''|\#*) continue ;; esac
+                  case "$property" in cleanup.policy|max.message.bytes) ;; *) exit 1 ;; esac
+                  [ -n "$value" ] || exit 1
+                  rpk topic alter-config "$topic" --brokers "$brokers" --set "$property=$value" </dev/null >/dev/null
+                done < /config/topics.properties
+              fi
           volumeMounts:
             - name: topics-manifest
               mountPath: /config

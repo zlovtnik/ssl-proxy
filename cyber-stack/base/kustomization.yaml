@@ -17,6 +17,7 @@ resources:
   # Java coordinator
   - java-coordinator/deployment.yaml
   - java-coordinator/networkpolicy.yaml
+  - java-coordinator/dq-config.yaml
   # Schema migrator
   - schema-migrator
   # Public Cloudflare edge

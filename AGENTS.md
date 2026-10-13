@@ -27,6 +27,8 @@ overrides a rule for its subtree.
   processing via a worker pool and exposes ETL health monitoring.
 - `services/octopus/` is the Scala 3 Cats Effect/FS2 coordinator and owner of
   durable ingestion, leases, outbox, and maintained PostgreSQL projections, built via sbt.
+- `services/dq/` contains the Go DQ manager, isolated processor workers,
+  and SolidJS shell. Octopus owns its durable coordination and projection application.
 - `services/octopus-metrics/` is the C++23 snapshot materializer extracted from
   Octopus. It reads ingestion evidence and publishes public Redis/MinIO snapshots.
 - `services/stats-reader/` is the Go always-Ready public stats reader. It serves

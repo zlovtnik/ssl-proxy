@@ -5,6 +5,7 @@ SERVICE_NAME="redpanda-init"
 INSTANCE_NAME="${INSTANCE_NAME:-$(hostname 2>/dev/null || printf unknown)}"
 BOOTSTRAP_SERVERS="${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}"
 TOPIC_MANIFEST="${SYNC_REDPANDA_TOPIC_MANIFEST:-/config/topics.manifest}"
+TOPIC_PROPERTIES="${SYNC_REDPANDA_TOPIC_PROPERTIES:-/config/topics.properties}"
 PARTITIONS="${SYNC_REDPANDA_TOPIC_PARTITIONS:-3}"
 REPLICAS="${SYNC_REDPANDA_TOPIC_REPLICAS:-1}"
 PUSHGATEWAY_URL="${PUSHGATEWAY_URL:-http://pushgateway:9091}"
@@ -123,5 +124,15 @@ while IFS='|' read -r topic partitions replicas retention_ms retention_bytes; do
   topic_count=$((topic_count + 1))
   log_line "info" "topic_verified" "Verified topic ${topic}"
 done < "${TOPIC_MANIFEST}"
+
+if [ -f "$TOPIC_PROPERTIES" ]; then
+  while IFS='|' read -r topic property value || [ -n "$topic$property$value" ]; do
+    case "$topic" in ''|\#*) continue ;; esac
+    case "$property" in cleanup.policy|max.message.bytes) ;; *) exit 1 ;; esac
+    [ -n "$value" ] || exit 1
+    rpk topic alter-config "$topic" --brokers "$BOOTSTRAP_SERVERS" \
+      --set "$property=$value" >/dev/null
+  done < "$TOPIC_PROPERTIES"
+fi
 
 RUN_SUCCESS=1
