@@ -12,6 +12,12 @@ implementation evidence, synthetic demonstrations, deployment observations, and
 unpublished customer or benchmark outcomes. Identity markup uses a person as
 publisher and makes no registered-company claim.
 
+The About page also presents author-provided career context: 15+ years in
+production software engineering and approximately 20 million weekly fiscal
+transactions in enterprise integration work. These figures are contextual scale
+signals, not product benchmarks, customer outcomes, or a service-level claim;
+the associated production implementation detail is not published.
+
 Column definitions and nullability are outside the Migrator comparison scope;
 this limitation now appears in the opening product and drift-guide copy.
 The [CLI](../../schema-migrator/src/main/scala/com/sslproxy/schema/cli/Commands.scala)

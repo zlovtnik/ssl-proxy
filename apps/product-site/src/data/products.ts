@@ -7,46 +7,172 @@ export const author = {
 } as const;
 
 export const about = {
-  title: 'About Rafael and RCLabs',
+  title: 'About Rafael',
   description:
-    'RCLabs is the backend and data-platform engineering portfolio of Rafael Cardoso dos Santos. Review the code, operating boundaries, and evidence still needed.',
-  eyebrow: 'RCLABS / ENGINEERING PORTFOLIO',
+    'Backend and distributed-systems engineering by Rafael Cardoso dos Santos, with an emphasis on enterprise integration, data platforms, and production infrastructure.',
+  eyebrow: 'BACKEND ENGINEERING / DISTRIBUTED SYSTEMS',
   introduction:
-    'RCLabs is my independently maintained backend and data-platform engineering portfolio. Start with Atheros Search to follow wireless observations from ingestion to an authenticated investigation interface.',
-  primaryCta: { label: 'Start with Atheros Search', href: '/atheros-search/' },
-  secondaryCta: { label: 'Code on GitHub', href: author.profile },
-  scopeTitle: 'What the work covers',
-  scope:
-    'The proxy and sensor publish observations, Octopus coordinates durable ingestion, and Search owns queries and embedding workers. Schema Migrator is companion tooling for reviewing ordered SQL changes. These pages document the implementation and provide synthetic browser demonstrations.',
-  evidenceTitle: 'What the evidence establishes',
-  evidence:
-    'Source code and tests show implementation choices. The public samples use synthetic records; Octopus readings describe this deployment when available. Neither establishes customer adoption, measured customer outcomes, or a service-level commitment. Search relevance, latency, and storage measurements have not been published.',
-  benchmarkCta: {
-    label: 'Read the Search evaluation protocol',
-    href: '/#search-benchmark',
-  },
-  securityTitle: 'Security and collection boundaries',
-  security: [
-    [
-      'Collection scope',
-      'Use RF capture only within an explicitly authorized assessment, with the applicable collection basis, scope, access, retention, and deletion arrangements established before capture. Passive reception can include nearby networks and raw frames; it does not make collection anonymous. The public samples collect no RF traffic.',
-    ],
-    [
-      'Evidence and access',
-      'Spoofed or replayed frames and randomized addresses can mislead an investigation. Treat indicators and identity candidates as hypotheses. Operator APIs enforce authentication and roles; database accounts and grants separate service responsibilities. Deployment configuration still needs review.',
-    ],
-    [
-      'Delivery and remaining risks',
-      'Repeated broker delivery is handled through saved offsets and durable deduplication. Operators with control of the broker, database, or archives can still alter evidence. Image digest pins identify deployment artifacts; they do not establish signing or build provenance. Signing and attestation enforcement remain incomplete.',
-    ],
+    '15 years designing and operating backend systems at transaction scale: enterprise integrations, distributed data platforms, and production infrastructure. Building toward broader technical ownership.',
+  primaryCta: { label: 'View Atheros Search', href: '/atheros-search/' },
+  secondaryCta: { label: 'GitHub profile', href: author.profile },
+  metrics: [
+    ['15+', 'Years', 'in production software engineering'],
+    ['~20M', 'Transactions', 'fiscal transactions processed weekly'],
+    ['4', 'Domains', 'distributed systems, integration, data, security'],
+    ['6+', 'Languages', 'Java, Scala, Go, Rust, SQL, Python'],
   ],
+  scope: {
+    index: '_01',
+    title: 'Engineering scope',
+    domains: [
+      {
+        title: 'Distributed systems',
+        description:
+          'Durable message pipelines, offset-based deduplication, and failure recovery across Kafka-based architectures at transaction scale. Design priority: correctness over throughput when both cannot be satisfied simultaneously.',
+        tags: ['Kafka', 'Kubernetes', 'Go', 'Java'],
+      },
+      {
+        title: 'Enterprise integration',
+        description:
+          'End-to-end fiscal transaction processing across enterprise system boundaries. Correctness constraints, schema evolution under production load, and operational observability within regulatory requirements.',
+        tags: ['Java', 'Scala', 'Oracle', 'PostgreSQL'],
+      },
+      {
+        title: 'Data platforms',
+        description:
+          'Ingestion coordination, embedding pipelines, and search infrastructure. Measurement-first design: establish latency, relevance, and storage baselines before any optimization pass.',
+        tags: ['PostgreSQL', 'Rust', 'Go'],
+      },
+      {
+        title: 'Security and observability',
+        description:
+          'Threat modeling for distributed deployments, authentication and role separation at service boundaries, artifact provenance via image digest pinning, and system-level observability for production diagnosis.',
+        tags: ['MCP', 'Kubernetes', 'Cloud infrastructure'],
+      },
+    ],
+  },
+  selectedWork: {
+    index: '_02',
+    title: 'Selected work',
+    summary:
+      'Expand a project for its problem context, architecture summary, key decisions, and scope boundaries. Production and independent work are distinguished explicitly.',
+    studies: [
+      {
+        title: 'Atheros Search',
+        kind: 'Independent',
+        summary:
+          'Wireless observation ingestion to authenticated investigation.',
+        links: [
+          { label: 'View Atheros Search', href: '/atheros-search/' },
+          { label: 'Atheros Search on GitHub', href: author.profile },
+        ],
+        problem:
+          'Wireless observations need a review path that keeps site context, indicators, and supporting records together without treating a received identifier as confirmed device identity.',
+        architecture:
+          'Atheros Sensor and the proxy publish audit events; Octopus coordinates durable ingestion; Atheros Search owns queries and embedding workers. The public interface uses synthetic records and keeps collection limits explicit.',
+        decisions: [
+          'Keep sensor persistence indirect through versioned audit events and coordinator-owned ingestion.',
+          'Separate analyst-review indicators from claims about active connections or physical identity.',
+        ],
+        scope:
+          'Independent project. The public interface uses synthetic records and does not represent a connected production console.',
+        boundaries: [
+          [
+            'Collection scope',
+            'Use RF capture only within an explicitly authorized assessment, with the applicable collection basis, scope, access, retention, and deletion arrangements established before capture. Passive reception can include nearby networks and raw frames; it does not make collection anonymous. The public samples collect no RF traffic.',
+          ],
+          [
+            'Evidence and access',
+            'Spoofed or replayed frames and randomized addresses can mislead an investigation. Treat indicators and identity candidates as hypotheses. Operator APIs enforce authentication and roles; database accounts and grants separate service responsibilities. Deployment configuration still needs review.',
+          ],
+          [
+            'Delivery and remaining risks',
+            'Repeated broker delivery is handled through saved offsets and durable deduplication. Operators with control of the broker, database, or archives can still alter evidence. Image digest pins identify deployment artifacts; they do not establish signing or build provenance. Signing and attestation enforcement remain incomplete.',
+          ],
+        ],
+      },
+      {
+        title: 'Fiscal transaction integration',
+        kind: 'Production',
+        summary: 'Enterprise integration layer at fiscal transaction scale.',
+        links: [],
+        problem:
+          'Enterprise fiscal systems require reliable, auditable integration across heterogeneous backends with strict correctness guarantees. Volume peaks and schema evolution under live production load are the dominant failure modes.',
+        architecture:
+          'Distributed integration layer processing approximately 20 million weekly transactions across enterprise system boundaries. Java and Scala service tier with Oracle and PostgreSQL backends, Kafka for durable cross-system messaging, and Kubernetes for deployment and scaling.',
+        decisions: [
+          'Durable messaging over synchronous RPC reduces coupling between enterprise system boundaries and tolerates partial failures without data loss.',
+          'Schema migration tooling developed as a companion project formalizes ordered change review before production deployment.',
+        ],
+        scope:
+          'Production deployment. Operational detail is not published. Scale figures are approximate weekly throughput from operational monitoring.',
+        boundaries: [],
+      },
+      {
+        title: 'Schema Migrator',
+        kind: 'Tooling',
+        summary: 'Ordered SQL change review for production databases.',
+        links: [{ label: 'Schema Migrator on GitHub', href: author.profile }],
+        problem:
+          'Database changes need a reviewable order and durable run record before they touch a production target.',
+        architecture:
+          'A Cats Effect runner validates ordered SQL files, plans changes, and records the result while retaining an offline workflow for reviewing source files and checksums.',
+        decisions: [
+          'Treat ordered changes as source-controlled inputs rather than mutable runtime state.',
+          'Keep file validation separate from target inspection so permissions, locks, and data-dependent failures are not hidden by an offline dry run.',
+        ],
+        scope:
+          'SQL-file snapshots preserve source files and checksums. They do not back up database data. The public demonstration executes no SQL.',
+        boundaries: [],
+      },
+    ],
+  },
+  perspective: {
+    index: '_03',
+    title: 'Engineering perspective',
+    summary:
+      'Engineering quality comes from making the consequential assumptions visible before production discovers them for you.',
+    principles: [
+      [
+        'Make failure modes explicit',
+        'Write down ordering, delivery, and recovery assumptions before they become incidents.',
+      ],
+      [
+        'Protect system boundaries',
+        'Favor durable contracts, deduplication, and clear authentication separation over hidden application choreography.',
+      ],
+      [
+        'Apply engineering judgment broadly',
+        'Treat architecture, prioritization, and team design as connected systems problems.',
+      ],
+    ],
+  },
+  contact: {
+    index: '_04',
+    title: 'What I am looking for',
+    summary:
+      'Roles where durable backend ownership intersects with technical strategy, team responsibility, and cross-functional scope.',
+    signals: [
+      [
+        'Role scope',
+        'Staff or principal engineering, engineering lead, or early technical leadership.',
+      ],
+      [
+        'Best environment',
+        'Organizations where the engineering foundation still matters and decisions can be inspected.',
+      ],
+      [
+        'Useful conversations',
+        'Backend or data-platform architecture, engineering team structure, technical decision-making, AI systems, and distributed-systems security.',
+      ],
+    ],
+  },
+  evidenceTitle: 'Evidence boundaries',
+  evidence:
+    'Source code and tests establish implementation choices. Public project samples use synthetic records. Scale figures for enterprise work are approximate operational measurements. Neither establishes customer adoption, measured customer outcomes, or service-level commitments.',
   threatModel: 'Read the repository threat model and its remaining risks',
   threatModelHref:
     'https://github.com/zlovtnik/ssl-proxy/blob/main/docs/threat-model.md',
-  contactTitle: 'Discuss the work',
-  contactSupporting:
-    'For a code walkthrough, backend or data-platform role, or use-case discussion, email',
-  privacyLink: { label: 'privacy notice', href: '/privacy/' },
 } as const;
 
 // The two load-bearing caveats, defined once so the product pages and the
