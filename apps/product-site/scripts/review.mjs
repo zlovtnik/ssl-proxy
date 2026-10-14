@@ -12,6 +12,7 @@ await mkdir(output, { recursive: true });
 const browser = await chromium.launch();
 const routes = [
   '/',
+  '/about/',
   '/products/',
   '/vpn-proxy/',
   '/atheros-search/',

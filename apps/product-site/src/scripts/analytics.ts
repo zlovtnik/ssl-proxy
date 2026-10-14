@@ -20,6 +20,7 @@ const consentLifetimeMs = 180 * 24 * 60 * 60 * 1000;
 const analyticsCookieLifetimeSeconds = 60 * 24 * 60 * 60;
 const trackedPaths = new Set([
   '/',
+  '/about/',
   '/products/',
   '/vpn-proxy/',
   '/atheros-search/',

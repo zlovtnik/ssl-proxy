@@ -4,6 +4,20 @@ Copy is limited to repository capabilities and explicitly sourced operational
 measurements. Synthetic examples illustrate behavior without implying
 performance results or customer adoption.
 
+The site is framed as Rafael Cardoso dos Santos's engineering portfolio.
+The owner confirmed that public name and `racasantos@icloud.com` privacy contact
+on 2026-10-14. The [about page](../src/pages/about/index.astro) links the
+[repository threat model](../../../docs/threat-model.md) and distinguishes
+implementation evidence, synthetic demonstrations, deployment observations, and
+unpublished customer or benchmark outcomes. Identity markup uses a person as
+publisher and makes no registered-company claim.
+
+Column definitions and nullability are outside the Migrator comparison scope;
+this limitation now appears in the opening product and drift-guide copy.
+The [CLI](../../schema-migrator/src/main/scala/com/sslproxy/schema/cli/Commands.scala)
+compacts and shortens SQL before passing it to the report printer. The dry-run
+guide requires reviewing the original files alongside that incomplete preview.
+
 | Public story                                                        | Evidence                                                                                                                                                                                                                                                                                                                                                                 | Limitation                                                                                                                             |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Dense, sparse, hybrid search                                        | [Search documentation](../../integration-console/atheros-search/README.md), [fusion implementation](../../integration-console/atheros-search/internal/search/fusion.go)                                                                                                                                                                                                  | No measured relevance or speed claim                                                                                                   |
@@ -29,7 +43,7 @@ performance results or customer adoption.
 | Measured peak day and week                                           | [C++ repository](../../../services/octopus-metrics/src/adapters.cpp), [snapshot serialization](../../../services/octopus-metrics/src/domain.cpp)                                                                                                                                                            | UTC evidence counts; 300-second refresh; failures retain measured history and original timestamps                               |
 | Live processing, backlog, checks, and intake control                 | [CoordinatorMetrics](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/observability/CoordinatorMetrics.scala), [internal live bridge](../../../services/octopus/src/main/scala/com/sslproxy/coordinator/http/LiveMetricsRoutes.scala)                                                      | Committed broker deliveries over five minutes; pending ledger rows and broker lag are separate gauges                           |
 | Lifetime ledger totals and hourly throughput windows                 | [C++ repository](../../../services/octopus-metrics/src/adapters.cpp), [response validation](../src/data/operational-stats.ts)                                                                                                                                                                               | 24 and 168 complete UTC hour buckets; retained windows keep their original bucket times during refresh failures                 |
-| Runtime-only display                                                 | [Pages proxy](../functions/api/octopus-stats.ts), [response validation](../src/data/operational-stats.ts), [browser regression tests](../tests/operational-stats.spec.ts)                                                                                                                                   | Durable Cloudflare and browser copies retain recorded history through outages; never invent values or rewrite measurement times     |
+| Runtime-only display                                                 | [Pages proxy](../functions/api/octopus-stats.ts), [response validation](../src/data/operational-stats.ts), [browser regression tests](../tests/operational-stats.spec.ts)                                                                                                                                   | Durable Cloudflare and browser copies retain recorded history through outages; never invent values or rewrite measurement times |
 
 Octopus copy connects source offsets to incident triage, committed offsets and
 deduplication to restart recovery, and work claims to inspection of stalled
@@ -64,8 +78,8 @@ production target, and the comparison cites the alternative-tool documentation i
 measures itself against instead of claiming compatibility or advantage.
 
 Copy follows [the messaging framework](messaging.md). That document records the
-four product stories, the audience propositions, the commercial thesis as an
-evaluation hypothesis, and the rule that no numeric improvement appears here
+component stories, the audience propositions, the portfolio scope, and the rule
+that no numeric improvement appears here
 without a documented baseline, workload, environment, and measurement method.
 Appearance follows [the design system](design-system.md).
 

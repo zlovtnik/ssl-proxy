@@ -1,6 +1,6 @@
 # Release checklist
 
-This checklist covers the public products, technical guides, and search routing. Prior release
+This checklist covers the public project pages, technical guides, and search routing. Prior release
 evidence is retained in [validation results](validation-results.md). Copy and
 appearance follow [messaging](messaging.md) and [the design system](design-system.md).
 
@@ -27,7 +27,7 @@ appearance follow [messaging](messaging.md) and [the design system](design-syste
 - [ ] Conduct usability sessions with disabled participants.
 - [ ] Review reading level, specialist terms, and all applicable criteria in the
       [accessibility matrix](accessibility-matrix.md).
-- [ ] Review all four product stories and their caveats against repository evidence.
+- [ ] Review all four project stories and their caveats against repository evidence.
 - [ ] Verify the production runtime feed returns fresh measurements and errors
       cannot leave old values labelled live.
 - [ ] Verify CORS from the live origin; confirm foreign origins get no CORS headers.

@@ -1,10 +1,11 @@
-# RCLabs public product site
+# RCLabs engineering portfolio
 
 A standalone Astro + TypeScript frontend with SolidJS synthetic demonstrations
 for Atheros Search, Schema Migrator, and RCLabs VPN / Proxy, plus a static Octopus
-product page with manually captured operational evidence. The existing Search
+page with runtime operational readings when available. The existing Search
 and Migrator operator consoles are separate applications.
-No application API, authentication, database, or migration execution is used here.
+Synthetic samples use no application API, authentication, database, or migration
+execution. Octopus separately reads the public metrics endpoint.
 
 ## Local development
 
@@ -18,7 +19,8 @@ npm run dev
 
 Open `http://localhost:4321`. Routes are `/`, `/products/`,
 `/atheros-search/`, `/schema-migrator/`, `/vpn-proxy/`, `/octopus/`, `/demo/`,
-`/accessibility/`, and `/privacy/`.
+`/about/`, `/accessibility/`, `/privacy/`, `/guides/`, and the six technical guide
+routes generated from [the content model](src/data/products.ts).
 
 ```sh
 npm run build

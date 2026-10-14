@@ -1,8 +1,11 @@
 # Messaging framework
 
-RCLabs presents four separate product stories: Atheros Search, Schema
-Migrator, RCLabs VPN / Proxy, and Octopus. Each story has its own audience,
-workflow, and caveat. The public site describes mechanisms, review workflows,
+RCLabs is Rafael Cardoso dos Santos's independently maintained backend and
+data-platform engineering portfolio. Atheros Search is the first walkthrough:
+the proxy and sensor publish observations, Octopus coordinates ingestion, and
+Search provides queries and embedding workers. Schema Migrator is companion
+tooling for SQL change review. Each component has its own workflow and caveat.
+The public site describes mechanisms, review workflows,
 and measured operational evidence; it does not make savings, latency, market,
 capacity, coverage, or outcome claims.
 
@@ -12,14 +15,18 @@ statements, workflow steps, caveats, or contact labels.
 
 ## Product stories
 
-| Product | Public story | Primary action |
-| --- | --- | --- |
-| Atheros Search | Review wireless indicators with monitored-site context and supporting observations. | Explore the synthetic site review. |
-| Schema Migrator | Inspect ordered SQL changes, validation, and run records before execution. | Explore the synthetic change review. |
-| RCLabs VPN / Proxy | Inspect WireGuard ingress, transparent-proxy classification, and audit publishing. | Explore the synthetic traffic review. |
-| Octopus | Follow incoming events through jobs and loads, with live readings and recorded history. | View live metrics. |
+| Product            | Public story                                                                            | Primary action                        |
+| ------------------ | --------------------------------------------------------------------------------------- | ------------------------------------- |
+| Atheros Search     | Review wireless indicators with monitored-site context and supporting observations.     | Explore the synthetic site review.    |
+| Schema Migrator    | Inspect ordered SQL changes, validation, and run records before execution.              | Explore the synthetic change review.  |
+| RCLabs VPN / Proxy | Inspect WireGuard ingress, transparent-proxy classification, and audit publishing.      | Explore the synthetic traffic review. |
+| Octopus            | Follow incoming events through jobs and loads, with live readings and recorded history. | View live metrics.                    |
 
-The catalogue at `/products/` compares all four. The homepage playground runs
+The project catalogue retains the `/products/` URL and compares all four
+components. Do not present the page count as evidence of four commercial
+products, customer adoption, or a particular career level. The `/about/` page
+identifies the author, links source, and summarizes security boundaries and
+remaining evidence gaps. The homepage playground runs
 one of three synthetic samples at a time. Octopus has no synthetic demo.
 Its production activity section follows the hero, with current readings before
 historical peaks and a disclosure for measurement definitions.
@@ -65,7 +72,9 @@ Keep these statements in the model, product page, and relevant sample:
 - **Search:** An observation does not confirm a current connection or device
   identity. Identity suggestions are review candidates.
 - **Migrator:** SQL-file snapshots preserve source files and checksums. They do
-  not back up database data. The public demonstration executes no SQL.
+  not back up database data. The public demonstration executes no SQL. State in
+  the opening product and guide copy that column definitions and nullability
+  are outside drift comparison scope, and dry-run output is shortened.
 - **VPN / Proxy:** Classification is an operator review aid. It does not prove
   intent, prevent a connection, or cover traffic outside the configured path.
 - **Octopus:** Delivery may repeat; saved progress and deduplication support replay.
@@ -74,7 +83,9 @@ Keep these statements in the model, product page, and relevant sample:
 
 ## Contact
 
-Calls to action use `mailto:` links for `rafael@rclabs.uk`. Subjects are
+General calls to action use `mailto:` links for `rafael@rclabs.uk`. The privacy
+notice identifies Rafael Cardoso dos Santos as the individual controller and
+uses his confirmed privacy contact, `racasantos@icloud.com`. Subjects are
 `Use-case discussion: [product]`. The contact page keeps the address visible
 with a copy fallback. Email begins a discussion; it does not schedule a meeting.
 The Octopus contact invites a pipeline setup discussion with an engineer about

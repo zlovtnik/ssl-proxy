@@ -1,6 +1,6 @@
 # Local validation results
 
-This record covers the four-product site and technical guides: the shared
+This record covers the four-project site and technical guides: the shared
 RCLabs dark/green visual system, product catalogue, natural-height demos and
 disclosures, and search routing. No accessibility conformance claim is made.
 

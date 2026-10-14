@@ -1,13 +1,30 @@
 # ssl-proxy
 
-![License](https://img.shields.io/badge/license-MIT-blue)
-
 ssl-proxy is a WireGuard-first transparent proxy with wireless audit,
 Redpanda-backed processing, PostgreSQL persistence and vector search. The Rust proxy
 and Linux Atheros Sensor publish events; the Scala Octopus coordinator owns
 durable ingestion and maintained projections; the Go Atheros Search service
 owns query APIs and embedding workers; and the SolidJS Atheros Search UI is the
 Integration Console.
+
+This is Rafael Cardoso dos Santos's independently maintained backend and
+data-platform portfolio. Start with the [Atheros Search walkthrough](https://rclabs.uk/atheros-search/)
+and trace the producer, coordinator, and query boundaries below. Schema
+Migrator is companion tooling for database change review. Public browser samples
+are synthetic; deployment readings do not establish customer outcomes or a
+service-level commitment.
+
+Observed identifiers and similarity candidates do not establish physical device
+identity. Traffic classification is heuristic and depends on the configured
+path. Collection scope and remaining risks are described in the
+[threat model](docs/threat-model.md).
+
+## Licensing status
+
+This repository currently has no repository-level license file. The previous
+MIT badge did not establish a license grant and has been removed. Licensing
+needs an explicit maintainer decision; component and dependency licenses must
+also be reviewed before distribution.
 
 The canonical runtime model and data ownership are documented in
 [System Architecture](docs/architecture.md). Kubernetes desired state lives
@@ -51,11 +68,23 @@ target compatibility in Schema Migrator, not a stack runtime dependency.
 
 ## Get started
 
-Initialize every nested repository first:
+Clone the complete workspace, including its nested repositories:
 
 ```bash
-git submodule update --init --recursive
+git clone --recurse-submodules https://github.com/zlovtnik/ssl-proxy.git
+cd ssl-proxy
 ```
+
+For an existing checkout, run `git submodule update --init --recursive`.
+The Search and Migrator servers depend on the canonical schemas and deployment
+contracts in this parent repository. Their individual checkouts are not a
+self-contained hosted stack.
+
+For a database-free review, run the [public site locally](apps/product-site/README.md#local-development)
+or use the [Migrator offline commands](apps/schema-migrator/README.md#cli).
+The site uses synthetic samples. Migrator dry-run output is shortened; retain
+the complete SQL source beside it. Its catalog drift comparison does not cover
+column definitions or nullability.
 
 Run the targeted tests for the components you change. Validate all canonical
 GitOps inputs with:
@@ -70,11 +99,13 @@ canonical environment (`prod` by default), then compare their pushed digests
 with the committed pins:
 
 ```bash
-make publish ENV=prod REGISTRY_PLAIN_HTTP=1
+make publish ENV=prod
 ```
 
 Jenkins, component publishing, and the Compose-only key rotator retain
-`make publish-all REGISTRY=192.168.1.242:5000 REGISTRY_PLAIN_HTTP=1`. Publishing changes registry
+`make publish-all REGISTRY=registry.example.com`. HTTPS is the default.
+`REGISTRY_PLAIN_HTTP=1` is an explicit option for an isolated local registry;
+it does not provide authenticated, encrypted transport. Publishing changes registry
 tags only; it does not mutate Git or a cluster. Diagnose desired and live state
 read-only with `make stack-health`; it uses the active Kubernetes
 context unless `KUBE_CONTEXT` is explicitly set. Record
