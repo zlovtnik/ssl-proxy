@@ -38,7 +38,7 @@ const analyticsMeasurementId =
     ? candidateMeasurementId
     : '';
 const navigation = [
-  ['/products/', 'Products'],
+  ['/products/', 'Projects'],
   ['/guides/', 'Guides'],
   ['/#approach', 'How they work'],
   ['/#faq', 'FAQ'],
@@ -168,7 +168,7 @@ const breadcrumbData =
               stroke-width="2"
             />
           </svg>
-          RCLabs<span class="wordmark-label">/ products</span>
+          RCLabs<span class="wordmark-label">/ engineering</span>
         </a>
         <nav aria-label="Main navigation">
           {navigation.map(([path, label]) => (
@@ -209,8 +209,9 @@ const breadcrumbData =
       <a class="wordmark" href="/">
         RCLabs
       </a>
-      <p>Tools for evidence and deliberate change.</p>
+      <p>Backend and data-platform engineering by Rafael Cardoso dos Santos.</p>
       <nav aria-label="Footer">
+        <a href="/about/">About Rafael</a>
         <a href="/accessibility/">Accessibility</a>
         <a href="/privacy/">Privacy &amp; cookies</a>
         {analyticsMeasurementId && (
@@ -218,7 +219,7 @@ const breadcrumbData =
             Cookie preferences
           </button>
         )}
-        <a href="/demo/">Contact &amp; demo</a>
+        <a href="/demo/">Contact</a>
       </nav>
     </footer>
     <PrivacyConsent measurementId={analyticsMeasurementId} />

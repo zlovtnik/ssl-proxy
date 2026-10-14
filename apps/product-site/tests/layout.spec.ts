@@ -287,7 +287,7 @@ test('VPN categories and catalogue links remain available without JavaScript', a
   for (const product of products) {
     await expect(
       page.getByRole('link', {
-        name: `${product.name} product details`,
+        name: `${product.name} project details`,
         exact: true,
       }),
     ).toHaveAttribute('href', product.path);

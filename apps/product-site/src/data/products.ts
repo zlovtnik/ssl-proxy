@@ -1,5 +1,41 @@
 export const email = 'rafael@rclabs.uk';
 
+export const author = {
+  name: 'Rafael Cardoso dos Santos',
+  profile: 'https://github.com/zlovtnik',
+  privacyEmail: 'racasantos@icloud.com',
+} as const;
+
+export const about = {
+  title: 'About Rafael and RCLabs',
+  description:
+    'RCLabs is the backend and data-platform engineering portfolio of Rafael Cardoso dos Santos. Review the code, operating boundaries, and evidence still needed.',
+  introduction:
+    'RCLabs is my independently maintained backend and data-platform engineering portfolio. Start with Atheros Search to follow wireless observations from ingestion to an authenticated investigation interface.',
+  scope:
+    'The proxy and sensor publish observations, Octopus coordinates durable ingestion, and Search owns queries and embedding workers. Schema Migrator is companion tooling for reviewing ordered SQL changes. These pages document the implementation and provide synthetic browser demonstrations.',
+  evidence:
+    'Source code and tests show implementation choices. The public samples use synthetic records; Octopus readings describe this deployment when available. Neither establishes customer adoption, measured customer outcomes, or a service-level commitment. Search relevance, latency, and storage measurements have not been published.',
+  securityTitle: 'Security and collection boundaries',
+  security: [
+    [
+      'Collection scope',
+      'Use RF capture only within an explicitly authorized assessment, with the applicable collection basis, scope, access, retention, and deletion arrangements established before capture. Passive reception can include nearby networks and raw frames; it does not make collection anonymous. The public samples collect no RF traffic.',
+    ],
+    [
+      'Evidence and access',
+      'Spoofed or replayed frames and randomized addresses can mislead an investigation. Treat indicators and identity candidates as hypotheses. Operator APIs enforce authentication and roles; database accounts and grants separate service responsibilities. Deployment configuration still needs review.',
+    ],
+    [
+      'Delivery and remaining risks',
+      'Repeated broker delivery is handled through saved offsets and durable deduplication. Operators with control of the broker, database, or archives can still alter evidence. Image digest pins identify deployment artifacts; they do not establish signing or build provenance. Signing and attestation enforcement remain incomplete.',
+    ],
+  ],
+  threatModel: 'Read the repository threat model and its remaining risks',
+  threatModelHref:
+    'https://github.com/zlovtnik/ssl-proxy/blob/main/docs/threat-model.md',
+} as const;
+
 // The two load-bearing caveats, defined once so the product pages and the
 // homepage reference entries can never drift apart.
 export const searchCaveat =
@@ -27,7 +63,8 @@ export const octopusMetrics = {
   recorded7dTitle: 'Recorded 7-day window',
   current24hTitle: 'Last 24 hours',
   current7dTitle: 'Last 7 days',
-  recordedMessage: 'Recorded totals and hourly history remain available while live collection starts or recovers.',
+  recordedMessage:
+    'Recorded totals and hourly history remain available while live collection starts or recovers.',
   label: 'PIPELINE OBSERVABILITY',
   title: 'Spot backlog. Investigate stalled work.',
   summary:
@@ -71,39 +108,38 @@ export const octopusContact = {
 export const home = {
   // Google rewrites and truncates titles; this is an editorial target, not a
   // ranking rule. The homepage shares one title and description with Layout.
-  title: 'Wi-Fi Investigation & PostgreSQL Migration Software',
+  title: 'Rafael Cardoso dos Santos | Backend & Data Platforms',
   description:
-    'Explore four RCLabs products for Wi-Fi investigation, PostgreSQL change review, WireGuard traffic handling, and durable sync coordination with Octopus.',
-  headline: ['Understand the evidence.', 'Control the next step.'],
+    "Explore Rafael Cardoso dos Santos's backend engineering portfolio: wireless observation search, durable ingestion, and PostgreSQL change review, with source and explicit limits.",
+  headline: ['Backend systems.', 'Inspectable evidence.'],
   subheadline:
-    'Investigate wireless indicators, review database changes, follow network traffic, and coordinate durable ingestion. Four focused products, with workflows you can inspect.',
-  primaryCta: { label: 'Explore the samples', href: '#playground' },
-  secondaryCta: { label: 'Discuss your use case', href: '/demo/' },
+    "I'm Rafael Cardoso dos Santos. This portfolio follows wireless observations through ingestion, processing, and search, with companion tooling for PostgreSQL change review.",
+  primaryCta: { label: 'Start with Atheros Search', href: '/atheros-search/' },
+  secondaryCta: { label: 'About Rafael and the work', href: '/about/' },
   supporting:
-    'Four products. Product samples and operational evidence. No account required.',
-  eyebrow: 'RCLABS / INFRASTRUCTURE TOOLS',
-  productsEyebrow: 'FOUR PRODUCTS / FOUR WORKFLOWS',
+    'Source-backed walkthroughs and synthetic browser samples. Deployment readings are labelled separately.',
+  eyebrow: 'RCLABS / ENGINEERING PORTFOLIO',
+  productsEyebrow: 'THE SYSTEM AND ITS TOOLS',
   playground: {
     eyebrow: 'THE PLAYGROUND',
     title: 'Take a closer look.',
     summary:
-      'Explore Search, Migrator, and VPN / Proxy product samples. Every interaction stays in your browser. Octopus has a separate operational evidence page.',
+      'Explore synthetic Search, Migrator, and VPN / Proxy samples. Every interaction stays in your browser. Octopus has a separate operational evidence page.',
   },
   relationship:
     'Search can review proxy observations through the configured backend. Schema Migrator has its own change-review workflow. The public samples run independently in your browser.',
-  approach:
-    'Each product makes a different part of your infrastructure inspectable.',
+  approach: 'Each component exposes a different part of the system for review.',
   explore:
     'Try product samples with synthetic records in your browser, or review Octopus operational evidence. No account or production connection required.',
 } as const;
 
 export const catalogue = {
-  title: 'Products',
+  title: 'Projects',
   description:
     'Compare Atheros Search, Schema Migrator, RCLabs VPN / Proxy, and Octopus by audience, inputs, workflow, and output.',
-  headline: ['Find the tool', 'for the work ahead.'],
+  headline: ['Explore the system', 'and its tools.'],
   summary:
-    'Start with the question you need to answer. Four products offer focused workflows and clear operating boundaries, with browser samples or measured operational evidence to review.',
+    'Start with Atheros Search, then follow the proxy and Octopus ingestion path. Schema Migrator is companion tooling for database change review. Each page includes implementation details and operating limits.',
   comparisonTitle: 'A different job for each tool.',
   comparisonSummary:
     'Compare what goes in, what happens, and what you can review afterward.',
@@ -580,7 +616,7 @@ export const products = [
       },
       {
         id: 'buyers',
-        title: 'For buyers and operators',
+        title: 'For operators and reviewers',
         proposition: 'Keep the operating picture inspectable.',
         points: [
           'Keep search and vector storage in PostgreSQL, with embedding work handled by a configurable worker pool.',
@@ -675,7 +711,7 @@ export const products = [
     label: 'DATABASE CHANGE REVIEW',
     headline: ['Review SQL changes', 'before you run them.'],
     summary:
-      'Discover SQL files in a fixed order, validate them offline, and inspect a dry-run plan. Keep execution records and file checksums for subsequent review.',
+      'Discover ordered SQL and validate it offline. Dry-run output is shortened; review the full source files alongside it. Catalog drift checks compare selected object definitions and table presence, but do not compare column definitions or nullability.',
     problem:
       'Platform and database engineers reviewing SQL execution order, target drift, and evidence of previous changes.',
     promise: 'Read the plan before the run.',
@@ -711,7 +747,7 @@ export const products = [
       },
       {
         id: 'buyers',
-        title: 'For buyers and investors',
+        title: 'For operators and reviewers',
         proposition: 'Make change review a repeatable handoff.',
         points: [
           'Use stored run and audit records to support change reviews and operational handoffs.',
@@ -753,8 +789,8 @@ export const products = [
     ],
     features: [
       [
-        'Spot schema drift',
-        'Compare PostgreSQL catalog structure with expected definitions. Drift is a difference between the expected schema and the target database.',
+        'Inspect supported catalog drift',
+        'Compare functions, procedures, triggers, views, materialized views and indexes, plus table presence. Column definitions and nullability are outside the comparison scope.',
       ],
       [
         'Compare SQL files',
@@ -837,7 +873,7 @@ export const products = [
       },
       {
         id: 'buyers',
-        title: 'For buyers and operators',
+        title: 'For operators and reviewers',
         proposition: 'Understand the operating boundary.',
         points: [
           'Evaluate the proxy, administrative readiness surfaces, and the separate staged WireGuard key rotator.',
@@ -932,7 +968,10 @@ export const products = [
       label: 'View live metrics',
       href: '#operational-evidence',
     },
-    secondaryCta: { label: 'Discuss your pipeline setup', href: '#contact-title' },
+    secondaryCta: {
+      label: 'Discuss your pipeline setup',
+      href: '#contact-title',
+    },
     sections: {
       workflow: {
         ...workflowSection,
@@ -954,7 +993,10 @@ export const products = [
         footnote:
           'Consumer offsets, job state, and load results give operators a place to start when work stalls.',
       },
-      glossary: { label: 'QUICK REFERENCE', title: 'The terms behind the pipeline.' },
+      glossary: {
+        label: 'QUICK REFERENCE',
+        title: 'The terms behind the pipeline.',
+      },
     },
     audiences: [
       {
@@ -983,24 +1025,21 @@ export const products = [
         step: 'Receive events',
         stageLabel: 'Receive',
         input: 'Events and requests from configured streams',
-        processing:
-          'Read from saved offsets and check for repeated delivery',
+        processing: 'Read from saved offsets and check for repeated delivery',
         output: 'Recorded events ready for processing',
       },
       {
         step: 'Coordinate jobs',
         stageLabel: 'Process',
         input: 'Queued records and jobs',
-        processing:
-          'Claim work, form batches, and dispatch database loads',
+        processing: 'Claim work, form batches, and dispatch database loads',
         output: 'Tracked jobs with load results',
       },
       {
         step: 'Record outcomes',
         stageLabel: 'Record',
         input: 'Processing results and source offsets',
-        processing:
-          'Save ingestion history and update configured data views',
+        processing: 'Save ingestion history and update configured data views',
         output: 'A persistent record operators can inspect',
       },
     ],
@@ -1062,11 +1101,11 @@ export const contact = {
   eyebrow: 'HAVE A USE CASE IN MIND?',
   headline: ['Discuss your', 'use case.'],
   supporting:
-    "Tell us what you need to investigate, change, route, or ingest, your environment, and the constraints that matter. We'll agree on the next step by email.",
+    'Email Rafael about a backend or data-platform role, a code walkthrough, or a use case. Include the environment and constraints you want to discuss. This is an email conversation; hosted product access is not provisioned here.',
   cta: 'Discuss your use case',
   // Short form for a mailto link that already sits under the headline, so the
   // same words never appear twice in one block.
-  link: 'Email an engineer',
+  link: 'Email Rafael',
   emailHint: 'Opens your email app, or email',
   nextStep: 'Start by email; we can arrange a technical call together.',
 } as const;
@@ -1100,9 +1139,9 @@ export const contactOptions = [
   },
   {
     id: 'all',
-    label: 'All products',
+    label: 'System walkthrough',
     subject: allProducts,
-    text: 'Discuss all four products in one conversation.',
+    text: 'Trace the ingestion and search system, its tradeoffs, and the companion SQL tooling.',
   },
 ] as const;
 
@@ -1115,11 +1154,11 @@ export function demoLink(product: string) {
 export const notFound = {
   title: 'Page not found',
   description:
-    'This page is no longer available. Explore RCLabs products and technical guides.',
+    'This page is no longer available. Explore RCLabs projects and technical guides.',
   eyebrow: '404 / PAGE NOT FOUND',
   heading: 'This page is not available.',
   summary: 'The address may have changed, or the page may have been retired.',
-  productsLabel: 'Explore the products',
+  productsLabel: 'Explore the projects',
   guidesLabel: 'Read the technical guides',
 } as const;
 
@@ -1191,7 +1230,7 @@ export const guides: readonly Guide[] = [
     productId: 'migrator',
     eyebrow: 'POSTGRESQL / FILE REVIEW',
     introduction:
-      'A useful migration dry run begins with inspectable SQL and an explicit order. Schema Migrator can discover and validate files and print their ordered preview without opening a database connection. This local example creates a table before its index.',
+      'Schema Migrator can discover and validate SQL files and print their order without opening a database connection. The CLI collapses whitespace and shortens SQL longer than 120 characters; review the complete source files alongside this preview. This local example creates a table before its index.',
     caveat: `${migratorCaveat} The public demonstration executes no SQL. An offline preview does not establish whether a target can execute the statements.`,
     sections: [
       {
@@ -1316,7 +1355,7 @@ export const guides: readonly Guide[] = [
     productId: 'migrator',
     eyebrow: 'POSTGRESQL / CATALOG REVIEW',
     introduction:
-      'Schema drift asks whether a live PostgreSQL catalog matches the expected structure. It is a different question from whether SQL files have changed. Schema Migrator compares expected definitions and control records with catalog objects, then reports differences for review.',
+      'Schema Migrator compares selected PostgreSQL catalog definitions and table presence, but does not compare column definitions or nullability. A clean report therefore cannot rule out column drift. The checks below compare expected objects and control records with the live catalog, separately from SQL-file checksum changes.',
     caveat: `${migratorCaveat} Catalog inspection needs a target connection. Drift findings do not correct the database, and a finding is not a safe migration plan by itself.`,
     sections: [
       {
@@ -1546,12 +1585,14 @@ PY`,
         id: 'prerequisites',
         title: 'Record what the sensor could observe',
         paragraphs: [
-          'Passive capture requires Linux, monitor-mode Wi-Fi hardware, and configured channels. Establish the sensor location, interface, time range and channel coverage before comparing access points. Use an up-to-date authorized-network list for that site.',
+          'Passive capture requires Linux, monitor-mode Wi-Fi hardware, and configured channels. Establish authorization, collection scope, access and retention arrangements before capture. Record sensor location, interface, time range and channel coverage, and use an up-to-date authorized-network list for that site.',
         ],
         points: [
           'A sensor observing channel 6 cannot establish that nothing happened on unmonitored channels.',
           'The detector reviews beacon and probe-response observations. An advertised network name alone does not establish a client connection.',
           'Record maintenance windows, managed AP changes and the age of the authorized inventory alongside the observation.',
+          'MAC randomization and spoofing prevent an observed address from establishing a physical device identity. Corroborate a lead against site inventory and independent evidence.',
+          'This example does not establish WPA3, 6 GHz, or multi-link coverage. Record the hardware, driver, band and frame types actually observed before extending a conclusion to those environments.',
         ],
       },
       {

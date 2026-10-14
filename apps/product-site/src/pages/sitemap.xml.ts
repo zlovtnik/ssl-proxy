@@ -3,6 +3,7 @@ import { guides, guidePath } from '../data/products';
 export const GET: APIRoute = ({ site }) => {
   const paths = [
     '/',
+    '/about/',
     '/products/',
     '/vpn-proxy/',
     '/atheros-search/',

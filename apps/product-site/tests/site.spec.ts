@@ -5,6 +5,7 @@ import {
   contactOptions,
   contact,
   email,
+  author,
   home,
   homeSections,
   products,
@@ -18,6 +19,7 @@ import {
 
 const routes = [
   '/',
+  '/about/',
   '/products/',
   '/vpn-proxy/',
   '/atheros-search/',
@@ -39,30 +41,54 @@ const tags = [
   'best-practice',
 ];
 
-test('Octopus never publishes saved metrics without JavaScript', async ({ browser }) => {
+test('Octopus never publishes saved metrics without JavaScript', async ({
+  browser,
+}) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
   try {
     const page = await context.newPage();
     await page.goto('http://127.0.0.1:4323/');
     await expect(page.locator('.product-card')).toHaveCount(4);
-    await page.getByRole('link', { name: 'View live metrics', exact: true }).click();
-    await expect(page).toHaveURL('http://127.0.0.1:4323/octopus/#operational-evidence');
+    await page
+      .getByRole('link', { name: 'View live metrics', exact: true })
+      .click();
+    await expect(page).toHaveURL(
+      'http://127.0.0.1:4323/octopus/#operational-evidence',
+    );
     const evidence = page.locator('#operational-evidence');
-    await expect(evidence.getByRole('heading', { name: octopusMetrics.title })).toBeVisible();
+    await expect(
+      evidence.getByRole('heading', { name: octopusMetrics.title }),
+    ).toBeVisible();
     // noscript is present in the document; Playwright innerText drops it.
     expect(await page.content()).toContain(
       'Enable JavaScript to load current metrics.',
     );
     await expect(evidence.locator('[data-metric]')).toHaveCount(0);
-    await expect(evidence.getByRole('heading', { name: octopusMetrics.empty.title })).toBeVisible();
-    await expect(evidence.getByRole('link', { name: octopusMetrics.empty.link })).toHaveAttribute('href', octopusMetrics.empty.href);
+    await expect(
+      evidence.getByRole('heading', { name: octopusMetrics.empty.title }),
+    ).toBeVisible();
+    await expect(
+      evidence.getByRole('link', { name: octopusMetrics.empty.link }),
+    ).toHaveAttribute('href', octopusMetrics.empty.href);
     await expect(evidence.locator('time')).toHaveCount(0);
     await expect(page.locator('#demo, .product-demo')).toHaveCount(0);
     await expect(page.locator('[data-ux="pipeline"]')).toHaveCount(1);
     await expect(page.locator('[data-ux="audience-toggle"]')).toHaveCount(1);
     await expect(page.locator('.caveat')).toHaveText(octopusCaveat);
-    expect(await page.locator('main > section').evaluateAll(sections => sections.map(section => section.getAttribute('aria-labelledby')))).toEqual([
-      'hero-title', 'ops-title', 'workflow-title', 'value-title', 'evidence-title', 'terms-title', 'contact-title',
+    expect(
+      await page
+        .locator('main > section')
+        .evaluateAll((sections) =>
+          sections.map((section) => section.getAttribute('aria-labelledby')),
+        ),
+    ).toEqual([
+      'hero-title',
+      'ops-title',
+      'workflow-title',
+      'value-title',
+      'evidence-title',
+      'terms-title',
+      'contact-title',
     ]);
   } finally {
     await context.close();
@@ -141,7 +167,7 @@ test('header stays visible and product samples preserve the landing layout', asy
   await page.getByLabel('Toggle navigation').click();
   await page
     .getByRole('navigation', { name: 'Mobile navigation', exact: true })
-    .getByRole('link', { name: 'Products', exact: true })
+    .getByRole('link', { name: 'Projects', exact: true })
     .click();
   await expect(page).toHaveURL(/\/products\/$/);
   await expect(page.locator('.mobile-menu')).not.toHaveAttribute('open');
@@ -1188,7 +1214,9 @@ test('every route that offers a commercial action uses the shared contact patter
       (product?.id === 'octopus' ? octopusContact : contact).headline.join(' '),
     );
     const href = await banner
-      .getByRole('link', { name: product?.id === 'octopus' ? octopusContact.link : contact.link })
+      .getByRole('link', {
+        name: product?.id === 'octopus' ? octopusContact.link : contact.link,
+      })
       .getAttribute('href');
     const request = new URL(href!, 'https://example.invalid');
     expect(request.pathname, route).toBe(email);
@@ -1288,20 +1316,17 @@ test('homepage metadata, identity markup and technical sections ship from the mo
   );
   expect(graph['@context']).toBe('https://schema.org');
   const nodes = graph['@graph'] as Record<string, any>[];
-  expect(nodes.map((node) => node['@type'])).toEqual([
-    'Organization',
-    'WebSite',
-  ]);
-  expect(nodes[0].name).toBe('RCLabs');
+  expect(nodes.map((node) => node['@type'])).toEqual(['Person', 'WebSite']);
+  expect(nodes[0].name).toBe(author.name);
   const siteOrigin = new URL(
     (await page.locator('link[rel="canonical"]').getAttribute('href'))!,
   ).origin;
-  expect(nodes[0].url).toBe(siteOrigin + '/');
+  expect(nodes[0].url).toBe(siteOrigin + '/about/');
   expect(nodes[0].email).toBe(email);
   expect(nodes[0].logo).toBeUndefined();
-  expect(nodes[0].sameAs).toBeUndefined();
+  expect(nodes[0].sameAs).toEqual([author.profile]);
   expect(nodes[1].publisher['@id']).toBe(nodes[0]['@id']);
-  expect(nodes[0]['@id']).toBe(siteOrigin + '/#organization');
+  expect(nodes[0]['@id']).toBe(siteOrigin + '/#author');
 
   // Every modelled section is published once, with its own heading.
   for (const section of Object.values(homeSections)) {

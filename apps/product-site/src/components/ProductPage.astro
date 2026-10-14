@@ -13,14 +13,14 @@ const product = getProduct(Astro.props.id);
 
 <Layout title={`${product.name} - ${product.headline.join(' ')}`} description={product.summary} product={product.id} breadcrumbs={[
   { name: 'RCLabs', path: '/' },
-  { name: 'Products', path: '/products/' },
+  { name: 'Projects', path: '/products/' },
   { name: product.name, path: product.path },
 ]}>
   <section class="hero product-hero" aria-labelledby="hero-title">
     <div class="hero-copy">
       <nav class="breadcrumb" aria-label="Breadcrumb">
         <a href="/">RCLabs</a><span aria-hidden="true">/</span>
-        <a href="/products/">Products</a><span aria-hidden="true">/</span>
+        <a href="/products/">Projects</a><span aria-hidden="true">/</span>
         <span aria-current="page">{product.name}</span>
       </nav>
       <p class="eyebrow">{product.label}</p>

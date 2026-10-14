@@ -1,11 +1,11 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { email } from '../../data/products';
+import { author } from '../../data/products';
 ---
 
 <Layout
   title="Privacy and cookies"
-  description="How the RCLabs public product site handles previously saved display preferences and, when enabled and accepted, uses Google Analytics 4."
+  description="Rafael Cardoso dos Santos's privacy notice for RCLabs: browser storage, optional analytics, and privacy contact details."
 >
   <section class="hero">
     <div class="hero-copy">
@@ -14,20 +14,26 @@ import { email } from '../../data/products';
         <span aria-hidden="true">/</span>
         <span aria-current="page">Privacy &amp; cookies</span>
       </nav>
-      <p class="eyebrow">PRIVACY / PUBLIC PRODUCT SITE</p>
+      <p class="eyebrow">PRIVACY / PUBLIC PORTFOLIO</p>
       <h1>Privacy and cookies</h1>
       <p class="lead">
         This notice explains the browser storage and optional analytics used on
-        the RCLabs public product site.
+        the RCLabs public portfolio.
+      </p>
+      <p>
+        Last updated: <time datetime="2026-10-14">14 October 2026</time>.
       </p>
     </div>
   </section>
   <section class="section prose">
     <h2>Who is responsible</h2>
     <p>
-      RCLabs is responsible for this site. For privacy questions, email
+      {author.name} operates RCLabs as an individual and is the data controller
+      for this website. For privacy questions and requests, email
       <!--email_off-->
-      <a href={'mailto:' + email + '?subject=Privacy%20question'}>{email}</a>
+      <a href={'mailto:' + author.privacyEmail + '?subject=Privacy%20question'}>
+        {author.privacyEmail}
+      </a>
       <!--/email_off-->.
     </p>
 
@@ -93,7 +99,9 @@ import { email } from '../../data/products';
     <h2>Contact</h2>
     <p>
       Email <!--email_off-->
-      <a href={'mailto:' + email + '?subject=Privacy%20question'}>{email}</a>
+      <a href={'mailto:' + author.privacyEmail + '?subject=Privacy%20question'}>
+        {author.privacyEmail}
+      </a>
       <!--/email_off--> if you have a question about this notice.
     </p>
   </section>

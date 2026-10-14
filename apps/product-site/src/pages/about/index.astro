@@ -1,0 +1,61 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { about, author, email } from '../../data/products';
+---
+
+<Layout
+  title={about.title}
+  description={about.description}
+  breadcrumbs={[
+    { name: 'RCLabs', path: '/' },
+    { name: 'About Rafael', path: '/about/' },
+  ]}
+>
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">RCLABS / ENGINEERING PORTFOLIO</p>
+      <h1>{author.name}</h1>
+      <p class="lead">{about.introduction}</p>
+      <div class="actions">
+        <a class="button primary" href="/atheros-search/">
+          Start with Atheros Search
+        </a>
+        <a class="text-link" href={author.profile}>
+          Code on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+  <section class="section prose">
+    <h2>What the work covers</h2>
+    <p>{about.scope}</p>
+    <h2>What the evidence establishes</h2>
+    <p>{about.evidence}</p>
+    <p>
+      <a href="/#search-benchmark">Read the Search evaluation protocol</a>.
+    </p>
+  </section>
+  <section id="security" class="section prose" aria-labelledby="security-title">
+    <h2 id="security-title">{about.securityTitle}</h2>
+    {about.security.map(([heading, text]) => (
+      <>
+        <h3>{heading}</h3>
+        <p>{text}</p>
+      </>
+    ))}
+    <p>
+      <a href={about.threatModelHref}>{about.threatModel}</a>.
+    </p>
+  </section>
+  <section class="section prose">
+    <h2>Discuss the work</h2>
+    <p>
+      For a code walkthrough, backend or data-platform role, or use-case
+      discussion, email
+      <!--email_off-->
+      <a href={`mailto:${email}`}>{email}</a>
+      <!--/email_off-->. Privacy requests go to the contact in the{' '}
+      <a href="/privacy/">privacy notice</a>.
+    </p>
+  </section>
+</Layout>
