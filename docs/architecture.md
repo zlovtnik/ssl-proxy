@@ -201,10 +201,7 @@ complete topology and current instrumentation limits are in
 
 These are documentation of current limitations, not hidden future behavior:
 
-1. Atheros Search installs HTTP/gRPC tracing hooks, but the server does not
-   initialize an OTLP exporter or SDK tracer provider. Setting
-   `OTEL_EXPORTER_OTLP_ENDPOINT` alone does not export its spans.
-2. Production performance acceptance still requires representative data,
+1. Production performance acceptance still requires representative data,
    equivalent hardware, and a captured baseline outside this repository.
 
 Until these gaps are closed, deployment success means the declared health

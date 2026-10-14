@@ -95,7 +95,9 @@ through the normal reviewed digest workflow.
 | Prometheus | `GET /-/ready` on `9090` | Prometheus ready |
 | Grafana | `GET /api/health` on `https://gateway.rclabs.uk:30000` from the LAN | Grafana process ready |
 
-Atheros Search tracing hooks do not currently initialize an exporter.
+Atheros Search creates its OTLP gRPC exporter and SDK provider at startup from
+the standard `OTEL_EXPORTER_OTLP_*` variables. A successful readiness response
+does not prove collector reachability or trace retention.
 
 ## Wiretrap canonical address and cutover
 
@@ -439,10 +441,11 @@ fresh startup while the topic bootstrap hook is still creating topics.
 
 ### Missing traces
 
-- Verify that the service initializes an exporter, not only that
-  `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+- Verify the Atheros Search process started without an OTLP trace-provider
+  configuration error and has the expected `OTEL_EXPORTER_OTLP_*` variables.
 - Check collector receiver/exporter health and Jaeger availability.
-- Atheros Search currently has hooks but no exporter initialization.
+- Confirm the HTTP or gRPC request crossed an instrumented service boundary;
+  exporter construction alone does not prove end-to-end trace delivery.
 
 ### Jaeger remains Progressing after a restart
 

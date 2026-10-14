@@ -28,8 +28,7 @@ values.
 | `sync-plane` | Shared Redpanda producer configuration and contracts | [`crates/sync-plane/`](crates/sync-plane/) |
 | Atheros Sensor | Monitor-mode wireless capture and indirect persistence through Redpanda | [Sensor README](services/atheros-sensor/README.md) |
 | Octopus | Durable ingestion, dedupe, evidence, leases, batching, outbox, PostgreSQL load/results and maintained projections | [Octopus README](services/octopus/README.md) |
-| Atheros Search | HTTP/gRPC search, ETL health, embedding-job claims and vector writes | [Search README](apps/integration-console/atheros-search/README.md) |
-| Integration Console | SolidJS UI for Search, graph, inventory and ETL health | [`atheros-search-ui`](apps/integration-console/atheros-search-ui/) |
+| Atheros Search and Integration Console | Go search/vector control plane and SolidJS browser UI | [Project README](apps/integration-console/README.md) |
 | Schema Migrator | Migration authoring/execution and PostgreSQL-backed internal control state | [Schema Migrator README](apps/schema-migrator/README.md) |
 | WireGuard key rotator | Staged WireGuard key rotation and optional notifications | [Rotator README](apps/wg-key-rotator/README.md) |
 

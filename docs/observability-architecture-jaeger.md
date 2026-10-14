@@ -70,12 +70,15 @@ move to v2 requires an explicit configuration and stored-data migration.
 | Rust proxy/frontdoor | Structured pod logs | Proxy/frontdoor Prometheus routes | OTLP configuration is wired |
 | Atheros Sensor | Structured pod logs | Prometheus server on `ATH_SENSOR_METRICS_PORT` | OTLP configuration is wired |
 | Octopus | Structured logs with `trace_id`/`span_id` | Prometheus text 0.0.4 via `PrometheusMeterRegistry` | OTLP SDK spans for HTTP server, Kafka (W3C propagated) and PostgreSQL |
-| Atheros Search | Structured logs | Dedicated Prometheus server | HTTP/gRPC hooks exist, but no SDK exporter/provider is initialized |
+| Atheros Search | Structured logs | Dedicated Prometheus server | OTLP gRPC exporter and SDK provider at startup; HTTP/gRPC instrumentation with W3C propagation |
 | Redpanda, MinIO and nodes | Platform logs | Native endpoints/exporters | Not expected |
 
-For Atheros Search, setting `OTEL_EXPORTER_OTLP_ENDPOINT` does not currently
-create an exporter. The handlers use the default no-op provider until server
-initialization installs an OTel SDK.
+At startup, Atheros Search creates an OTLP gRPC exporter from the standard
+`OTEL_EXPORTER_OTLP_*` variables, installs a process-wide SDK provider and
+W3C trace-context propagator, and flushes it during shutdown. Its HTTP and
+gRPC servers use that provider. Exporter construction does not prove that the
+collector is reachable or retains the trace; validate those dependencies when
+traces are absent.
 
 ## Operating checks
 
