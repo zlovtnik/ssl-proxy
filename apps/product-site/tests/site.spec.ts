@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import {
   allProducts,
+  about,
   contactOptions,
   contact,
   email,
@@ -1176,13 +1177,21 @@ test('hero calls to action keep their documented destinations', async ({
   page,
 }) => {
   await page.goto('/');
-  const home = page.locator('#top');
+  const hero = page.locator('#top');
   await expect(
-    home.getByRole('link', { name: 'Explore the samples' }),
-  ).toHaveAttribute('href', '#playground');
+    hero.getByRole('link', { name: home.primaryCta.label }),
+  ).toHaveAttribute('href', home.primaryCta.href);
   await expect(
-    home.getByRole('link', { name: 'Discuss your use case' }),
-  ).toHaveAttribute('href', '/demo/');
+    hero.getByRole('link', { name: home.secondaryCta.label }),
+  ).toHaveAttribute('href', home.secondaryCta.href);
+  await page.goto('/about/');
+  const aboutHero = page.locator('.hero');
+  await expect(
+    aboutHero.getByRole('link', { name: about.primaryCta.label }),
+  ).toHaveAttribute('href', about.primaryCta.href);
+  await expect(
+    aboutHero.getByRole('link', { name: about.secondaryCta.label }),
+  ).toHaveAttribute('href', about.secondaryCta.href);
   await page.goto('/atheros-search/');
   const search = page.locator('.product-hero');
   await expect(
@@ -1482,6 +1491,11 @@ test('GA4 waits for consent, tracks safe events, and stops on withdrawal', async
   expect(queued).not.toContain('person=');
   expect(queued).not.toContain('search=');
   expect(queued).not.toContain('mailto:');
+
+  await page.goto('http://127.0.0.1:4323/about/');
+  const aboutPageView = await inspectDataLayer();
+  expect(aboutPageView).toContain('http://127.0.0.1:4323/about/');
+  await page.goto('http://127.0.0.1:4323/');
 
   await page.goto('http://127.0.0.1:4323/demo/');
   await page.locator('a[href^="mailto:"]').first().click();

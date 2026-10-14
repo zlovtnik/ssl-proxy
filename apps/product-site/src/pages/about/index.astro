@@ -13,26 +13,26 @@ import { about, author, email } from '../../data/products';
 >
   <section class="hero">
     <div class="hero-copy">
-      <p class="eyebrow">RCLABS / ENGINEERING PORTFOLIO</p>
+      <p class="eyebrow">{about.eyebrow}</p>
       <h1>{author.name}</h1>
       <p class="lead">{about.introduction}</p>
       <div class="actions">
-        <a class="button primary" href="/atheros-search/">
-          Start with Atheros Search
+        <a class="button primary" href={about.primaryCta.href}>
+          {about.primaryCta.label}
         </a>
-        <a class="text-link" href={author.profile}>
-          Code on GitHub
+        <a class="text-link" href={about.secondaryCta.href}>
+          {about.secondaryCta.label}
         </a>
       </div>
     </div>
   </section>
   <section class="section prose">
-    <h2>What the work covers</h2>
+    <h2>{about.scopeTitle}</h2>
     <p>{about.scope}</p>
-    <h2>What the evidence establishes</h2>
+    <h2>{about.evidenceTitle}</h2>
     <p>{about.evidence}</p>
     <p>
-      <a href="/#search-benchmark">Read the Search evaluation protocol</a>.
+      <a href={about.benchmarkCta.href}>{about.benchmarkCta.label}</a>.
     </p>
   </section>
   <section id="security" class="section prose" aria-labelledby="security-title">
@@ -48,14 +48,13 @@ import { about, author, email } from '../../data/products';
     </p>
   </section>
   <section class="section prose">
-    <h2>Discuss the work</h2>
+    <h2>{about.contactTitle}</h2>
     <p>
-      For a code walkthrough, backend or data-platform role, or use-case
-      discussion, email
+      {about.contactSupporting}
       <!--email_off-->
       <a href={`mailto:${email}`}>{email}</a>
       <!--/email_off-->. Privacy requests go to the contact in the{' '}
-      <a href="/privacy/">privacy notice</a>.
+      <a href={about.privacyLink.href}>{about.privacyLink.label}</a>.
     </p>
   </section>
 </Layout>

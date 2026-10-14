@@ -10,12 +10,21 @@ export const about = {
   title: 'About Rafael and RCLabs',
   description:
     'RCLabs is the backend and data-platform engineering portfolio of Rafael Cardoso dos Santos. Review the code, operating boundaries, and evidence still needed.',
+  eyebrow: 'RCLABS / ENGINEERING PORTFOLIO',
   introduction:
     'RCLabs is my independently maintained backend and data-platform engineering portfolio. Start with Atheros Search to follow wireless observations from ingestion to an authenticated investigation interface.',
+  primaryCta: { label: 'Start with Atheros Search', href: '/atheros-search/' },
+  secondaryCta: { label: 'Code on GitHub', href: author.profile },
+  scopeTitle: 'What the work covers',
   scope:
     'The proxy and sensor publish observations, Octopus coordinates durable ingestion, and Search owns queries and embedding workers. Schema Migrator is companion tooling for reviewing ordered SQL changes. These pages document the implementation and provide synthetic browser demonstrations.',
+  evidenceTitle: 'What the evidence establishes',
   evidence:
     'Source code and tests show implementation choices. The public samples use synthetic records; Octopus readings describe this deployment when available. Neither establishes customer adoption, measured customer outcomes, or a service-level commitment. Search relevance, latency, and storage measurements have not been published.',
+  benchmarkCta: {
+    label: 'Read the Search evaluation protocol',
+    href: '/#search-benchmark',
+  },
   securityTitle: 'Security and collection boundaries',
   security: [
     [
@@ -34,6 +43,10 @@ export const about = {
   threatModel: 'Read the repository threat model and its remaining risks',
   threatModelHref:
     'https://github.com/zlovtnik/ssl-proxy/blob/main/docs/threat-model.md',
+  contactTitle: 'Discuss the work',
+  contactSupporting:
+    'For a code walkthrough, backend or data-platform role, or use-case discussion, email',
+  privacyLink: { label: 'privacy notice', href: '/privacy/' },
 } as const;
 
 // The two load-bearing caveats, defined once so the product pages and the
