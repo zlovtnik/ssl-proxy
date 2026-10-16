@@ -42,6 +42,8 @@ spec:
           env:
             - name: ATHSEARCH_DQ_ENABLED
               value: "false"
+            - name: ATHSEARCH_DQ_REMOTE_ORIGIN
+              value: ""
             - name: ATHSEARCH_DQ_MANAGER_URL
               value: "http://ssl-proxy-dq-manager:8080"
             - name: ATHSEARCH_DQ_INSTALLATION_ID

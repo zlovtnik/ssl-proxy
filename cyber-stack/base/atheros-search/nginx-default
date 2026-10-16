@@ -3,6 +3,16 @@ server {
   root /usr/share/nginx/html;
   index index.html;
 
+  # The backend resolves DQ on each request; absent DQ never affects web startup.
+  location ^~ /dq-ui/ {
+    proxy_pass http://ssl-proxy-atheros-search:8080;
+    proxy_set_header Authorization "";
+    proxy_set_header Cookie "";
+    proxy_hide_header X-Frame-Options;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+  }
+
   location /v1/ {
     proxy_pass http://ssl-proxy-atheros-search:8080;
     proxy_http_version 1.1;
