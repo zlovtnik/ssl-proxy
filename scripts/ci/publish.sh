@@ -9,6 +9,17 @@ selected_services="${CHANGED_SERVICES:-}"
 if [ "$SHOULD_PUBLISH_OCTOPUS_METRICS" = true ]; then
   selected_services="${selected_services:+$selected_services,}octopus-metrics"
 fi
+# DQ has reviewed pins for onboarding, but still requires explicit activation.
+# Publish it once through the candidate path, including on a full-image build.
+IFS=, read -r -a requested_services <<< "$selected_services"
+selected_services=""
+for service in "${requested_services[@]}"; do
+  case "$service" in
+    delip-queve-manager|delip-queve-worker) SHOULD_PUBLISH_DQ=true ;;
+    '') ;;
+    *) selected_services="${selected_services:+$selected_services,}$service" ;;
+  esac
+done
 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" python3 scripts/publish_images.py \
   --environment prod --only "$selected_services" --reuse-submodules "$SUBMODULE_CI_READY" \
@@ -30,21 +41,34 @@ if [ "$SHOULD_PUBLISH_REDPANDA_MAINT" = true ]; then
 else
   echo 'skipped: no redpanda-maintenance changes'
 fi
-# Candidate images have no deployed pin or bump target yet. Record their real
-# digests beside the deployable images and explain that in the final report.
+if [ "${SHOULD_PUBLISH_DQ:-false}" = true ]; then
+  for service in delip-queve-manager delip-queve-worker; do
+    env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+      DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make --no-print-directory "publish-$service" \
+      TAG="$build_tag" BUILD_DATE="$build_date" BUILDER="$BUILDER" PLATFORM=linux/amd64 \
+      REGISTRY="$REGISTRY" REGISTRY_PLAIN_HTTP="$REGISTRY_PLAIN_HTTP" \
+      PUBLISH_REPOSITORY="$REGISTRY/$service" \
+      PUBLISH_METADATA_FILE="artifacts/$service-buildx.json"
+  done
+else
+  echo 'skipped: no DQ image changes'
+fi
+# Record candidate digests separately; a pin alone does not activate DQ.
 python3 - "$RELEASE_MANIFEST" "$BUMP_COMMANDS_REPORT" "$REGISTRY" \
-  "$SHOULD_PUBLISH_REDPANDA_MAINT" <<'PY'
+  "$SHOULD_PUBLISH_REDPANDA_MAINT" "${SHOULD_PUBLISH_DQ:-false}" <<'PY'
 import json
 import sys
 from pathlib import Path
 from scripts.image_contract import load_buildx_digest
 
 manifest_path, report_path = map(Path, sys.argv[1:3])
-registry, redpanda = sys.argv[3:]
+registry, redpanda, dq = sys.argv[3:]
 manifest = json.loads(manifest_path.read_text())
 candidates = []
 for service, slice_name, selected in (
     ("redpanda-maint", "data-plane", redpanda),
+    ("delip-queve-manager", "app-stack", dq),
+    ("delip-queve-worker", "app-stack", dq),
 ):
     if selected == "true":
         candidates.append({
@@ -66,7 +90,7 @@ if candidates:
         f"{entry['service']}: {entry['repository']}@{entry['digest']} ({entry['slice']})"
         for entry in candidates
     )
-    report += "\nProvision the required platform inputs, then add the base and digest pin in reviewed Git."
+    report += "\nVerify platform inputs and activation prerequisites, then promote the digest and matching processor manifest in reviewed Git."
 report_path.write_text(report + "\n")
 PY
 printf '\nManual production digest update report\n'

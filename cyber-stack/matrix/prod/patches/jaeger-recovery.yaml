@@ -8,12 +8,16 @@ spec:
     spec:
       containers:
         - name: jaeger
+          env:
+            # Leave 1 GiB for Badger mappings, page cache and non-Go memory.
+            - name: GOMEMLIMIT
+              value: "3GiB"
           resources:
             requests:
               cpu: 500m
-              memory: 512Mi
+              memory: 2Gi
             limits:
               cpu: "2"
-              memory: 2Gi
+              memory: 4Gi
           startupProbe:
             failureThreshold: 180

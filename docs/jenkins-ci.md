@@ -125,18 +125,24 @@ Each run:
    inspects every pinned submodule, so this checkout remains necessary;
 3. prepares Docker access and always runs delivery checks, then runs platform
    sync, Stats Reader, Atheros Search, Schema Migrator, Octopus, Octopus Metrics,
-   and Sensor validation only
+   DQ, and Sensor validation only
    for their changed owner paths or bumped submodule pins;
 4. creates and bootstraps its shared Buildx builder after bounded registry
    checks when an image is selected;
 5. publishes only the selected Kubernetes image contracts with at most three
    concurrent workers, using a 12-character commit tag plus the mutable
-   `latest` channel. Redpanda maintenance
-   publishes candidate images separately until its first reviewed stack pin; and
+   `latest` channel. Redpanda maintenance and DQ manager/worker
+   publish candidate images separately until their first reviewed stack pins; and
 6. archives the release manifest and prints a final report containing the
    `make bump-digest-<service> ENV=prod DIGEST=<digest>` commands required by
    newly published deployed images, plus digests and activation requirements
    for candidates without a production pin.
+
+The `services/dq` gitlink selects DQ Go/race checks, UI checks and both candidate
+images. The candidates use the existing DQ Dockerfile's `manager` and `worker`
+targets. Their pushed manifest digests and source revision are archived under
+`candidateImages` in the release manifest; publication never enables DQ.
+See the [DQ production promotion](runbooks/dq-production.md) prerequisites.
 
 `services/octopus` is a Git submodule in this checkout. Its gitlink bump
 selects `java-coordinator`; ordinary `services/octopus/**` paths are not
@@ -188,12 +194,15 @@ outbound failure webhook is configured.
 ## Submodule CI handoff
 
 The controller configuration also defines Multibranch jobs for `octopus`,
-`integration-console`, `schema-migrator`, and `wg-key-rotator`. Each external
-repository has its own root `Jenkinsfile`. Octopus validates and archives its
+`integration-console`, `schema-migrator`, and `wg-key-rotator`. The pinned
+Octopus, Integration Console and Schema Migrator repositories have root
+Jenkinsfiles. The pinned [key rotator](../apps/wg-key-rotator/README.md) has
+neither a Jenkinsfile nor a `scripts/ci/` directory, so its configured job
+cannot build that revision. Octopus validates and archives its
 JAR and coverage reports. Integration Console and Schema Migrator publish
-their images under full source commit tags in the same registry; the key
-rotator publishes its own image but remains outside the nine production image
-contracts.
+their images under full source commit tags in the same registry. Key rotator
+publication remains pending its upstream CI handoff and stays outside the nine
+production image contracts.
 
 The umbrella pipeline currently keeps `SUBMODULE_CI_READY=false`. After the
 four upstream Jenkinsfiles are committed to their own repositories, the
@@ -251,7 +260,7 @@ replication/TLS validation cannot be pushed as `java-coordinator`.
 
 ## Pipeline implementation and refactor report
 
-The pipeline inventory contains five declarative definitions:
+The pinned pipeline inventory contains four declarative definitions:
 
 | Definition | Agent scripts | Preserved behavior |
 | --- | --- | --- |
@@ -259,7 +268,10 @@ The pipeline inventory contains five declarative definitions:
 | [Integration Console Jenkinsfile](../apps/integration-console/Jenkinsfile) | Its local `scripts/ci/` | Parallel Go/UI checks and two full-SHA image tags |
 | [Schema Migrator Jenkinsfile](../apps/schema-migrator/Jenkinsfile) | Its local `scripts/ci/` | Parallel backend/UI checks and two full-SHA image tags |
 | [Octopus Jenkinsfile](../services/octopus/Jenkinsfile) | Its local `scripts/ci/` | Formatting, lint, Docker-required JaCoCo tests, coverage floor, assembly and report/JAR archive |
-| [Key Rotator Jenkinsfile](../apps/wg-key-rotator/Jenkinsfile) | Its local `scripts/ci/` | Elixir tests and main-only full-SHA image publication |
+
+The configured Key Rotator job is pending an upstream Jenkinsfile and CI
+scripts; its pinned source is excluded from the CI script tests until those
+files are committed and the superproject pin is updated.
 
 The job definitions embedded in
 [Configuration as Code](../docker/jenkins/casc/jenkins.yaml) continue to load
@@ -283,9 +295,9 @@ processing stay in Python on the agent.
 [common.sh](../scripts/ci/common.sh) centralizes Docker endpoint selection,
 TLS context refresh, container naming, cleanup traps and the inotify guard.
 It also supplies the standalone jobs' Buildx bootstrap. Each independent
-repository carries an identical local copy of this helper and
-[cleanup.sh](../scripts/ci/cleanup.sh), so its Jenkinsfile requires only its own
-checkout. The umbrella script tests reject drift between copies. No Jenkins
+repository with a pinned Jenkinsfile carries an identical local copy of this
+helper and [cleanup.sh](../scripts/ci/cleanup.sh), so its Jenkinsfile requires
+only its own checkout. The umbrella script tests reject drift between copies. No Jenkins
 Shared Library registration or extra plugin is required. Existing root Make
 targets remain authoritative for umbrella Buildx configuration and image
 contracts; standalone publishers retain their previous Buildx configuration.

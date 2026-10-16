@@ -58,9 +58,9 @@ pipeline {
             'CHANGED_SERVICES', 'SHOULD_RUN_PLATFORM_SYNC',
             'SHOULD_RUN_STATS_READER', 'SHOULD_RUN_ATHEROS_SEARCH',
             'SHOULD_RUN_ATHEROS_SEARCH_CONTRACTS', 'SHOULD_RUN_SCHEMA_MIGRATOR',
-            'SHOULD_RUN_OCTOPUS', 'SHOULD_RUN_OCTOPUS_METRICS', 'SHOULD_RUN_SENSOR',
+            'SHOULD_RUN_OCTOPUS', 'SHOULD_RUN_OCTOPUS_METRICS', 'SHOULD_RUN_SENSOR', 'SHOULD_RUN_DQ',
             'SHOULD_PUBLISH_REDPANDA_MAINT',
-            'SHOULD_PUBLISH_OCTOPUS_METRICS'
+            'SHOULD_PUBLISH_OCTOPUS_METRICS', 'SHOULD_PUBLISH_DQ'
           ]
           readFile('artifacts/changed-paths.env').split('\n').each { line ->
             if (line) {
@@ -131,6 +131,12 @@ pipeline {
             sh 'bash scripts/ci/stats-reader.sh'
           }
         }
+        stage('DQ') {
+          options { timeout(time: 30, unit: 'MINUTES') }
+          steps {
+            sh 'bash scripts/ci/dq.sh'
+          }
+        }
         stage('Atheros search') {
           options { timeout(time: 30, unit: 'MINUTES') }
           steps {
@@ -173,7 +179,7 @@ pipeline {
 
     stage('Registry and Buildx preflight') {
       when {
-        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' || env.SHOULD_PUBLISH_OCTOPUS_METRICS == 'true' }
+        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' || env.SHOULD_PUBLISH_OCTOPUS_METRICS == 'true' || env.SHOULD_PUBLISH_DQ == 'true' }
       }
       options { timeout(time: 10, unit: 'MINUTES') }
       steps {
@@ -183,12 +189,12 @@ pipeline {
 
     stage('Publish immutable images') {
       when {
-        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' || env.SHOULD_PUBLISH_OCTOPUS_METRICS == 'true' }
+        expression { env.CHANGED_SERVICES || env.SHOULD_PUBLISH_REDPANDA_MAINT == 'true' || env.SHOULD_PUBLISH_OCTOPUS_METRICS == 'true' || env.SHOULD_PUBLISH_DQ == 'true' }
       }
       options { timeout(time: 75, unit: 'MINUTES') }
       steps {
         sh 'bash scripts/ci/publish.sh'
-        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt,artifacts/redpanda-maint-buildx.json', fingerprint: true
+        archiveArtifacts artifacts: 'artifacts/release-manifest.json,artifacts/bump-digest-commands.txt,artifacts/*-buildx.json', fingerprint: true
       }
     }
   }

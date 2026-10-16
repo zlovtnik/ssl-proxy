@@ -34,6 +34,7 @@ spec:
       containers:
         - name: worker
           image: delip-queve-worker
+          imagePullPolicy: IfNotPresent
           ports:
             - name: grpc
               containerPort: 9091

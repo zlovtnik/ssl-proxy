@@ -1,0 +1,22 @@
+# Platform input onboarding only. Activation requires verified TLS, scoped
+# broker/object-store access and shadow acceptance in a subsequent promotion.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-dq-manager
+spec:
+  replicas: 0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-dq-atheros-dedup-v0-1-0
+spec:
+  replicas: 0
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-dq-worker-config
+data:
+  DQ_WORKER_IMPLEMENTATION_DIGEST: sha256:f5ba34c90eec2d4d0ca250b50fba4c40a7da995d87488dfa9956a576c5a9cc31

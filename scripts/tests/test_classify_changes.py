@@ -32,6 +32,25 @@ class ClassifyChangesTest(unittest.TestCase):
         self.assertEqual(["atheros-search", "atheros-search-ui"], result["changedServices"])
         self.assertTrue(result["tests"]["atheros_search"])
 
+    def test_dq_bump_tests_and_publishes_candidates_without_activating_them(self) -> None:
+        result = classify_paths({"services/dq"}, self.bumped("services/dq"), full=False)
+        self.assertEqual([], result["changedServices"])
+        self.assertEqual([], result["changedMainPaths"])
+        self.assertTrue(result["publishDQ"])
+        self.assertTrue(result["tests"]["dq"])
+        self.assertTrue(result["tests"]["atheros_search_contracts"])
+        self.assertIn("SHOULD_PUBLISH_DQ=true", env_lines(result))
+        self.assertIn("SHOULD_RUN_DQ=true", env_lines(result))
+
+    def test_dq_publication_tracks_build_inputs_and_skips_unrelated_changes(self) -> None:
+        for path in ("Makefile", ".dockerignore"):
+            result = classify_paths({path}, self.bumped(), full=False)
+            self.assertTrue(result["publishDQ"])
+            self.assertTrue(result["tests"]["dq"])
+        result = classify_paths({"src/main.rs"}, self.bumped(), full=False)
+        self.assertFalse(result["publishDQ"])
+        self.assertFalse(result["tests"]["dq"])
+
     def test_sensor_and_schema_paths_do_not_publish_unrelated_images(self) -> None:
         result = classify_paths(
             {"services/atheros-sensor/src/main.rs", "sql/postgres/contracts/manifest.txt"},
@@ -104,10 +123,11 @@ class ClassifyChangesTest(unittest.TestCase):
 
     def test_first_commit_selects_everything(self) -> None:
         result = classify_paths(set(), self.bumped(*SUBMODULE_IMAGES), full=True)
-        self.assertEqual(10, len(result["changedServices"]))
+        self.assertEqual(12, len(result["changedServices"]))
         self.assertTrue(all(result["tests"].values()))
         self.assertTrue(result["publishRedpandaMaint"])
         self.assertTrue(result["publishOctopusMetrics"])
+        self.assertTrue(result["publishDQ"])
 
     def test_repository_range_includes_every_commit_since_successful_build(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -140,7 +160,7 @@ class ClassifyChangesTest(unittest.TestCase):
             self.assertEqual(["postgres-runtime-schema"], result["changedServices"])
             self.assertEqual(2, len(result["changedMainPaths"]))
             first_build = classify_repository(root, base="missing")
-            self.assertEqual(10, len(first_build["changedServices"]))
+            self.assertEqual(12, len(first_build["changedServices"]))
             self.assertIn("services/platform-sync/main.go", first_build["changedMainPaths"])
 
 

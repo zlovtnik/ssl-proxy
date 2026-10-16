@@ -29,6 +29,8 @@ SERVICE_SLICES = (
     ("schema-migrator-ui", "app-stack"),
     ("stats-reader", "app-stack"),
     ("octopus-metrics", "app-stack"),
+    ("delip-queve-manager", "app-stack"),
+    ("delip-queve-worker", "app-stack"),
     ("postgres-runtime-schema", "data-plane"),
 )
 FIRST_PARTY_SERVICES = tuple(service for service, _slice in SERVICE_SLICES)

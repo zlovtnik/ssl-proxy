@@ -31,6 +31,17 @@ from platform_input_contract import (  # noqa: E402
 
 
 EXPECTED_INPUTS = {
+    ("Secret", "ssl-proxy-dq-atheros-auth"): {"service-token"},
+    ("Secret", "ssl-proxy-dq-control-auth"): {"control-token"},
+    ("Secret", "ssl-proxy-dq-manager-auth"): {
+        "DQ_CONTROL_TOKEN", "DQ_WORKER_TOKEN", "DQ_IDENTITIES_JSON", "DQ_BROKER_SASL_PASSWORD",
+    },
+    ("Secret", "ssl-proxy-dq-worker-auth"): {
+        "service-token", "minio-access-key", "minio-secret-key", "redpanda-password",
+    },
+    ("Secret", "ssl-proxy-dq-manager-tls"): {"ca.crt", "tls.crt", "tls.key"},
+    ("Secret", "ssl-proxy-dq-worker-tls"): {"ca.crt", "tls.crt", "tls.key"},
+    ("Secret", "ssl-proxy-dq-broker-tls"): {"ca.crt"},
     ("Secret", "cloudflared-tunnel-credentials"): {"credentials.json"},
     ("Secret", "minio-credentials"): {"access-key", "secret-key"},
     ("Secret", "octopus-metrics-store"): {"access-key", "secret-key"},
@@ -225,7 +236,7 @@ class PlatformInputContractTest(unittest.TestCase):
         }
 
         self.assertEqual(EXPECTED_INPUTS, actual)
-        self.assertEqual(23, sum(entry.kind == "Secret" for entry in contract.inputs))
+        self.assertEqual(30, sum(entry.kind == "Secret" for entry in contract.inputs))
         self.assertEqual(1, sum(entry.kind == "ConfigMap" for entry in contract.inputs))
         for entry in contract.inputs:
             self.assertEqual(
