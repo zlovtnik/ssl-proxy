@@ -2,6 +2,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: ssl-proxy-dq-manager
+  labels:
+    app.kubernetes.io/component: dq-manager
 spec:
   podSelector:
     matchLabels:
@@ -67,6 +69,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: ssl-proxy-dq-worker
+  labels:
+    app.kubernetes.io/component: dq-worker
 spec:
   podSelector:
     matchLabels:

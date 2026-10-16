@@ -350,6 +350,7 @@ Path(metadata).write_text(json.dumps({{"containerimage.digest": "sha256:" + "a" 
         self.assertIn("golang:1.26-bookworm", runs[0])
         self.assertIn("make check && make build", runs[0][-1])
         self.assertIn("oven/bun:1.4.0", runs[1])
+        self.assertIn("apt-get install -y --no-install-recommends nodejs", runs[1][-1])
         self.assertIn("bun run test && bun run build", runs[1][-1])
         self.assertEqual({}, json.loads(self.state.read_text()))
 
@@ -372,6 +373,8 @@ from pathlib import Path
 metadata = next(arg.split("=", 1)[1] for arg in sys.argv[1:] if arg.startswith("PUBLISH_METADATA_FILE="))
 digest = "sha256:" + ("a" if "publish-delip-queve-manager" in sys.argv else "b") * 64
 Path(metadata).write_text(json.dumps({"containerimage.digest": digest}))
+with Path("artifacts/dq-publish-calls.jsonl").open("a") as calls:
+    calls.write(json.dumps(sys.argv[1:]) + "\\n")
 ''')
         result = self.run_script(
             "publish", CHANGED_SERVICES="", REGISTRY="registry.example:5000",
@@ -391,6 +394,21 @@ Path(metadata).write_text(json.dumps({"containerimage.digest": digest}))
         report = (self.root / "artifacts/commands.txt").read_text()
         self.assertIn("Published candidates requiring activation:", report)
         self.assertNotIn("make bump-digest-delip", report)
+
+        # A full-image selection now includes the staged DQ pins. Each image
+        # must still be published exactly once through the candidate path.
+        result = self.run_script(
+            "publish", CHANGED_SERVICES="delip-queve-manager,delip-queve-worker",
+            REGISTRY="registry.example:5000", REGISTRY_PLAIN_HTTP="1",
+            RELEASE_MANIFEST="artifacts/release.json", BUMP_COMMANDS_REPORT="artifacts/commands.txt",
+            SHOULD_PUBLISH_REDPANDA_MAINT="false", SHOULD_PUBLISH_OCTOPUS_METRICS="false",
+            SHOULD_PUBLISH_DQ="false",
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        manifest = json.loads((self.root / "artifacts/release.json").read_text())
+        self.assertEqual([], manifest["images"])
+        self.assertEqual(2, len(manifest["candidateImages"]))
+        self.assertEqual(4, len((self.root / "artifacts/dq-publish-calls.jsonl").read_text().splitlines()))
 
 
     def test_standalone_publication_keeps_full_sha_tags_and_metadata(self) -> None:

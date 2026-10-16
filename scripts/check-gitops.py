@@ -86,6 +86,8 @@ FIRST_PARTY_IMAGES = (
     "postgres-runtime-schema",
     "octopus-metrics",
     "stats-reader",
+    "delip-queve-manager",
+    "delip-queve-worker",
 )
 
 JAEGER_V2_IMAGE = (

@@ -63,6 +63,34 @@ spec:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
       ignoreDifferences:
+        - group: ""
+          kind: Secret
+          name: ssl-proxy-dq-atheros-auth
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: ssl-proxy-dq-control-auth
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: ssl-proxy-dq-manager-auth
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: ssl-proxy-dq-worker-auth
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: ssl-proxy-dq-manager-tls
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: ssl-proxy-dq-worker-tls
+          jsonPointers: [/data]
+        - group: ""
+          kind: Secret
+          name: ssl-proxy-dq-broker-tls
+          jsonPointers: [/data]
         - group: apps
           kind: Deployment
           jsonPointers:

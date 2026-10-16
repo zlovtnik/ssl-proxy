@@ -5,3 +5,7 @@ resources:
   - worker.yaml
   - networkpolicy.yaml
   - configmaps.yaml
+labels:
+  - pairs:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/managed-by: kustomize

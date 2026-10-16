@@ -11,6 +11,7 @@ resources:
 - ../../../base/atheros-sensor/daemonset.yaml
 - ../../../base/atheros-sensor/networkpolicy.yaml
 - ../../../base/atheros-search
+- ../../../base/delip-queve
 - ../../../base/cloudflared
 - ../../../base/public-gateway
 - ../../../base/stats-reader
@@ -46,6 +47,12 @@ images:
 - digest: sha256:832abcd5836f07e8f61a69019d1362a326ad581e249b7887367f755895aba6af
   name: octopus-metrics
   newName: 192.168.1.242:5000/octopus-metrics
+- digest: sha256:a5289409f325b7a7a50f0d582263544f8b09210bf8b1269b51e732b547729e3a
+  name: delip-queve-manager
+  newName: 192.168.1.242:5000/delip-queve-manager
+- digest: sha256:f5ba34c90eec2d4d0ca250b50fba4c40a7da995d87488dfa9956a576c5a9cc31
+  name: delip-queve-worker
+  newName: 192.168.1.242:5000/delip-queve-worker
 patches:
 - path: ../patches/identity-hostname.yaml
 - path: ../patches/schema-migrator-identity.yaml
@@ -62,6 +69,12 @@ patches:
 - path: ../patches/schema-migrator-images.yaml
 - path: ../patches/octopus-runtime.yaml
 - path: ../patches/keycloak-direct-postgres.yaml
+- path: ../patches/dq-preparation.yaml
+configMapGenerator:
+- name: ssl-proxy-dq-atheros-dedup-v0-1-0
+  behavior: merge
+  files:
+  - manifest.json=../config/dq/atheros-dedup-v0.1.0.json
 replacements:
 - source:
     fieldPath: data.IDENTITY_PUBLIC_ORIGIN

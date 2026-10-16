@@ -2,6 +2,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ssl-proxy-dq-atheros-dedup-v0-1-0
+  labels:
+    app.kubernetes.io/component: dq-worker
 data:
   manifest.json: "{}"
 ---
@@ -9,10 +11,14 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ssl-proxy-dq-worker-config
+  labels:
+    app.kubernetes.io/component: dq-worker
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ssl-proxy-dq-manager-config
+  labels:
+    app.kubernetes.io/component: dq-manager
 data:
   DQ_CONTROL_ALLOW_PLAINTEXT: "false"

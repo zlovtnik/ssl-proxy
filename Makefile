@@ -50,8 +50,8 @@ octopus-metrics-test:
 	cmake --build $(OCTOPUS_METRICS_BUILD_DIR) --parallel 2
 	ctest --test-dir $(OCTOPUS_METRICS_BUILD_DIR) --output-on-failure
 # wg-key-rotator is an operational tool, not a long-lived Kubernetes workload.
-# Candidates join the deployed image contract after their first reviewed pin.
-DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator redpanda-maint delip-queve-manager delip-queve-worker,$(SERVICES))
+# DQ pins are staged with zero replicas until production prerequisites pass.
+DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator redpanda-maint,$(SERVICES))
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
