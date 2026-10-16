@@ -263,18 +263,22 @@ spec:
             )
         )
         self.assertEqual(
-            3, len(check_gitops._check_prod_jaeger_recovery(bad, "prod"))
+            4, len(check_gitops._check_prod_jaeger_recovery(bad, "prod"))
         )
         good = documents(
             workload(
                 "ssl-proxy-telemetry-jaeger",
-                containers="[{name: jaeger, resources: {requests: {memory: 512Mi}, limits: {memory: 2Gi}}, "
+                containers="[{name: jaeger, env: [{name: GOMEMLIMIT, value: 3GiB}], "
+                "resources: {requests: {memory: 2Gi}, limits: {memory: 4Gi}}, "
                 "startupProbe: {failureThreshold: 180, periodSeconds: 10}}]",
             )
         )
         self.assertEqual(
             [], check_gitops._check_prod_jaeger_recovery(good, "prod")
         )
+        container = good[0]["spec"]["template"]["spec"]["containers"][0]
+        container["env"][0]["value"] = "4GiB"
+        self.assertIn("GOMEMLIMIT=3GiB", check_gitops._check_prod_jaeger_recovery(good, "prod")[0])
 
     def test_atheros_search_auth_and_proxy_policy(self) -> None:
         auth = documents(workload("ssl-proxy-atheros-search", containers="[{env: [{name: ATHSEARCH_API_TOKEN_SHA256}]}]"))

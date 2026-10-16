@@ -341,6 +341,58 @@ Path(metadata).write_text(json.dumps({{"containerimage.digest": "sha256:" + "a" 
         self.assertEqual("bridge", run[run.index("--network") + 1])
         self.assertIn("TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal", run)
 
+    def test_dq_checks_both_runtimes_and_cleans_up_on_failure(self) -> None:
+        (self.root / "services/dq/ui").mkdir(parents=True)
+        result = self.run_script("dq", SHOULD_RUN_DQ="true")
+        self.assertEqual(0, result.returncode, result.stderr)
+        runs = [call["args"] for call in self.calls() if call["args"][0] == "run"]
+        self.assertEqual(2, len(runs))
+        self.assertIn("golang:1.26-bookworm", runs[0])
+        self.assertIn("make check && make build", runs[0][-1])
+        self.assertIn("oven/bun:1.4.0", runs[1])
+        self.assertIn("bun run test && bun run build", runs[1][-1])
+        self.assertEqual({}, json.loads(self.state.read_text()))
+
+        self.log.unlink()
+        result = self.run_script("dq", SHOULD_RUN_DQ="true", MOCK_RUN_STATUS="17")
+        self.assertEqual(17, result.returncode, result.stderr)
+        self.assertEqual(1, len([call for call in self.calls() if call["args"][0] == "run"]))
+        self.assertEqual({}, json.loads(self.state.read_text()))
+
+    def test_dq_candidate_publication_records_real_digests_without_bump_commands(self) -> None:
+        for name in ("publish_images.py", "image_contract.py", "classify_changes.py"):
+            shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
+        for slice_name in ("app-stack", "data-plane"):
+            relative = Path("cyber-stack/matrix/prod") / slice_name / "kustomization.yaml"
+            (self.root / relative).parent.mkdir(parents=True)
+            shutil.copyfile(ROOT / relative, self.root / relative)
+        self.executable("make", '''
+import json, sys
+from pathlib import Path
+metadata = next(arg.split("=", 1)[1] for arg in sys.argv[1:] if arg.startswith("PUBLISH_METADATA_FILE="))
+digest = "sha256:" + ("a" if "publish-delip-queve-manager" in sys.argv else "b") * 64
+Path(metadata).write_text(json.dumps({"containerimage.digest": digest}))
+''')
+        result = self.run_script(
+            "publish", CHANGED_SERVICES="", REGISTRY="registry.example:5000",
+            REGISTRY_PLAIN_HTTP="1", RELEASE_MANIFEST="artifacts/release.json",
+            BUMP_COMMANDS_REPORT="artifacts/commands.txt",
+            SHOULD_PUBLISH_REDPANDA_MAINT="false", SHOULD_PUBLISH_OCTOPUS_METRICS="false",
+            SHOULD_PUBLISH_DQ="true",
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        manifest = json.loads((self.root / "artifacts/release.json").read_text())
+        self.assertEqual([], manifest["images"])
+        candidates = manifest["candidateImages"]
+        self.assertEqual(["delip-queve-manager", "delip-queve-worker"], [x["service"] for x in candidates])
+        self.assertEqual(["sha256:" + "a" * 64, "sha256:" + "b" * 64], [x["digest"] for x in candidates])
+        self.assertTrue(all(x["activationRequired"] and x["slice"] == "app-stack" for x in candidates))
+        self.assertEqual("registry.example:5000/delip-queve-manager", candidates[0]["repository"])
+        report = (self.root / "artifacts/commands.txt").read_text()
+        self.assertIn("Published candidates requiring activation:", report)
+        self.assertNotIn("make bump-digest-delip", report)
+
+
     def test_standalone_publication_keeps_full_sha_tags_and_metadata(self) -> None:
         for repository, images in (
             ("apps/integration-console", ("atheros-search", "atheros-search-ui")),

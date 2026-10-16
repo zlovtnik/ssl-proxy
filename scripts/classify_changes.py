@@ -16,6 +16,7 @@ SUBMODULE_IMAGES = {
     "apps/schema-migrator": ("schema-migrator-backend", "schema-migrator-ui"),
     "apps/wg-key-rotator": (),
     "services/octopus": ("java-coordinator",),
+    "services/dq": (),  # Candidate images are published before their first promotion.
 }
 RUST_INPUTS = ("Cargo.toml", "Cargo.lock", "Dockerfile", "crates/")
 ALL_IMAGE_INPUTS = ("Makefile", ".dockerignore")
@@ -65,7 +66,7 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         if bumped[path]:
             services.update(images)
 
-    search_contracts = bumped["apps/integration-console"] or bumped["services/octopus"] or changed(
+    search_contracts = bumped["apps/integration-console"] or bumped["services/octopus"] or bumped["services/dq"] or changed(
         "sql/postgres/atheros_search/", "sql/postgres/octopus_core/",
         "sql/postgres/contracts/", "cyber-stack/base/atheros-search/",
         "cyber-stack/matrix/prod/", "scripts/tests/test_atheros_reporting.py",
@@ -85,6 +86,7 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
     )
     if metrics_image:
         services.add("octopus-metrics")
+    dq_images = bumped["services/dq"] or changed(*ALL_IMAGE_INPUTS)
     tests = {
         "platform_sync": changed("services/platform-sync/"),
         "stats_reader": changed("services/stats-reader/", "Makefile"),
@@ -93,6 +95,10 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         "schema_migrator": bumped["apps/schema-migrator"],
         "octopus": bumped["services/octopus"],
         "octopus_metrics": metrics_tests,
+        "dq": dq_images or bumped["services/octopus"] or changed(
+            "scripts/ci/dq.sh", "scripts/ci/publish.sh", "Jenkinsfile",
+            "scripts/classify_changes.py", "scripts/tests/test_classify_changes.py",
+        ),
         "sensor": changed("services/atheros-sensor/", *RUST_INPUTS),
     }
     return {
@@ -102,6 +108,7 @@ def classify_paths(paths: set[str], bumped: dict[str, bool], *, full: bool) -> d
         "changedServices": [service for service in FIRST_PARTY_SERVICES if service in services],
         "publishRedpandaMaint": changed("cyber-stack/base/redpanda-maintenance/"),
         "publishOctopusMetrics": metrics_image,
+        "publishDQ": dq_images,
         "tests": tests,
     }
 
@@ -138,6 +145,7 @@ def env_lines(result: dict) -> str:
         lines.append(f"SHOULD_RUN_{name.upper()}={str(value).lower()}")
     lines.append(f"SHOULD_PUBLISH_REDPANDA_MAINT={str(result['publishRedpandaMaint']).lower()}")
     lines.append(f"SHOULD_PUBLISH_OCTOPUS_METRICS={str(result['publishOctopusMetrics']).lower()}")
+    lines.append(f"SHOULD_PUBLISH_DQ={str(result['publishDQ']).lower()}")
     for path, bumped in result["submoduleBumped"].items():
         key = path.upper().replace("/", "_").replace("-", "_")
         lines.append(f"SUBMODULE_BUMPED_{key}={str(bumped).lower()}")

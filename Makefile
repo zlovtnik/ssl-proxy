@@ -41,7 +41,7 @@ ATHEROS_SEARCH_UI_KEYCLOAK_URL ?= https://gateway.rclabs.uk
 ATHEROS_SEARCH_UI_KEYCLOAK_REALM ?= middleware
 ATHEROS_SEARCH_UI_KEYCLOAK_CLIENT_ID ?= atheros-search-ui
 
-SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui postgres-runtime-schema redpanda-maint stats-reader octopus-metrics
+SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui postgres-runtime-schema redpanda-maint stats-reader octopus-metrics delip-queve-manager delip-queve-worker
 
 OCTOPUS_METRICS_BUILD_DIR ?= /tmp/ssl-proxy-octopus-metrics-build
 .PHONY: octopus-metrics-test
@@ -50,9 +50,8 @@ octopus-metrics-test:
 	cmake --build $(OCTOPUS_METRICS_BUILD_DIR) --parallel 2
 	ctest --test-dir $(OCTOPUS_METRICS_BUILD_DIR) --output-on-failure
 # wg-key-rotator is an operational tool, not a long-lived Kubernetes workload.
-# redpanda-maint joins the image contract after
-# its first reviewed digest pin; Jenkins publishes its bootstrap image.
-DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator redpanda-maint,$(SERVICES))
+# Candidates join the deployed image contract after their first reviewed pin.
+DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator redpanda-maint delip-queve-manager delip-queve-worker,$(SERVICES))
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
@@ -444,6 +443,8 @@ $(eval $(call service_rules,postgres-runtime-schema,k8s/postgres-schema-executor
 $(eval $(call service_rules,redpanda-maint,cyber-stack/base/redpanda-maintenance/Dockerfile,,redpanda-maint,cyber-stack/base/redpanda-maintenance))
 $(eval $(call service_rules,stats-reader,services/stats-reader/Dockerfile,,stats-reader,.))
 $(eval $(call service_rules,octopus-metrics,services/octopus-metrics/Dockerfile,,octopus-metrics,.))
+$(eval $(call service_rules,delip-queve-manager,services/dq/Dockerfile,--target manager,delip-queve-manager,.))
+$(eval $(call service_rules,delip-queve-worker,services/dq/Dockerfile,--target worker,delip-queve-worker,.))
 
 ifneq ($(BUILDX_READY),1)
 $(BUILD_TARGETS) $(PUBLISH_TARGETS): buildx-ready

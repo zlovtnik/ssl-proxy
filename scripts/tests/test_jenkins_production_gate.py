@@ -180,6 +180,15 @@ class JenkinsProductionGateTest(unittest.TestCase):
         ):
             self.assertIn(contract, pipeline)
 
+    def test_dq_is_validated_and_published_as_an_unpromoted_candidate(self) -> None:
+        pipeline = pipeline_source()
+        self.assertLess(pipeline.index("stage('DQ')"), pipeline.index("stage('Publish immutable images')"))
+        self.assertIn("SHOULD_RUN_DQ", pipeline)
+        self.assertIn("SHOULD_PUBLISH_DQ", pipeline)
+        self.assertIn('"publish-$service"', pipeline)
+        self.assertIn('("delip-queve-manager", "app-stack", dq)', pipeline)
+        self.assertIn('("delip-queve-worker", "app-stack", dq)', pipeline)
+
     def test_external_multibranch_jobs_are_declared(self) -> None:
         config = (REPOSITORY_ROOT / "docker/jenkins/casc/jenkins.yaml").read_text(encoding="utf-8")
         for name, url in (

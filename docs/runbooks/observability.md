@@ -151,6 +151,16 @@ an ingest problem rather than expected sampling.
 Check working set, container limit, span ingest rate, and Badger pressure. Error
 and slow traces are retained at 100 percent plus a 10 percent baseline sample.
 
+Production reserves 2 GiB and permits 4 GiB for Jaeger; the previous 2 GiB limit
+was repeatedly OOM-killed during recovery of 431 Badger tables on October 16,
+2026, holding the ApplicationSet at the data-plane step. The production
+[recovery patch](../../cyber-stack/matrix/prod/patches/jaeger-recovery.yaml)
+sets `GOMEMLIMIT=3GiB` to leave headroom below the container limit. This is a
+[Go runtime soft limit](https://go.dev/doc/gc-guide#Memory_limit);
+Badger mappings and other memory outside the Go runtime can still exceed it.
+Verify recovery, steady ingestion, working set, and absence of new OOM events
+after Git reconciliation before considering the application rollout complete.
+
 ## Traces absent
 
 Verify the service OTLP endpoint and service name, then check collector accepted

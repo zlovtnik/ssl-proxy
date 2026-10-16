@@ -125,18 +125,24 @@ Each run:
    inspects every pinned submodule, so this checkout remains necessary;
 3. prepares Docker access and always runs delivery checks, then runs platform
    sync, Stats Reader, Atheros Search, Schema Migrator, Octopus, Octopus Metrics,
-   and Sensor validation only
+   DQ, and Sensor validation only
    for their changed owner paths or bumped submodule pins;
 4. creates and bootstraps its shared Buildx builder after bounded registry
    checks when an image is selected;
 5. publishes only the selected Kubernetes image contracts with at most three
    concurrent workers, using a 12-character commit tag plus the mutable
-   `latest` channel. Redpanda maintenance
-   publishes candidate images separately until its first reviewed stack pin; and
+   `latest` channel. Redpanda maintenance and DQ manager/worker
+   publish candidate images separately until their first reviewed stack pins; and
 6. archives the release manifest and prints a final report containing the
    `make bump-digest-<service> ENV=prod DIGEST=<digest>` commands required by
    newly published deployed images, plus digests and activation requirements
    for candidates without a production pin.
+
+The `services/dq` gitlink selects DQ Go/race checks, UI checks and both candidate
+images. The candidates use the existing DQ Dockerfile's `manager` and `worker`
+targets. Their pushed manifest digests and source revision are archived under
+`candidateImages` in the release manifest; publication never enables DQ.
+See the [DQ production promotion](runbooks/dq-production.md) prerequisites.
 
 `services/octopus` is a Git submodule in this checkout. Its gitlink bump
 selects `java-coordinator`; ordinary `services/octopus/**` paths are not

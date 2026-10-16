@@ -454,12 +454,15 @@ def _check_prod_jaeger_recovery(
     errors: list[str] = []
     memory_request = _quantity_bytes(_path(container, "resources", "requests", "memory"))
     memory_limit = _quantity_bytes(_path(container, "resources", "limits", "memory"))
-    if memory_request is None or memory_request < 512 * 1024**2:
+    if memory_request is None or memory_request < 2 * 1024**3:
         errors.append(
-            f"{relative}: production Jaeger needs at least a 512 MiB memory request"
+            f"{relative}: production Jaeger needs at least a 2 GiB memory request"
         )
-    if memory_limit is None or memory_limit < 2 * 1024**3:
-        errors.append(f"{relative}: production Jaeger needs at least a 2 GiB memory limit")
+    if memory_limit is None or memory_limit < 4 * 1024**3:
+        errors.append(f"{relative}: production Jaeger needs at least a 4 GiB memory limit")
+    environment = {entry.get("name"): entry.get("value") for entry in _list(container.get("env"))}
+    if environment.get("GOMEMLIMIT") != "3GiB":
+        errors.append(f"{relative}: production Jaeger must reserve non-Go memory with GOMEMLIMIT=3GiB")
     startup = _mapping(container.get("startupProbe"))
     try:
         startup_budget = int(startup.get("failureThreshold", 0)) * int(
