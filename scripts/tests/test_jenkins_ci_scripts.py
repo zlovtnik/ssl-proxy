@@ -12,7 +12,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-REPOSITORIES = ("", "apps/integration-console", "apps/schema-migrator", "services/octopus", "apps/wg-key-rotator")
+# The pinned Key Rotator source has no Jenkinsfile or scripts/ci yet.
+REPOSITORIES = ("", "apps/integration-console", "apps/schema-migrator", "services/octopus")
 
 # Simulates only Docker's CLI boundary; no daemon, image pulls or pushes.
 DOCKER = r'''
@@ -344,7 +345,6 @@ Path(metadata).write_text(json.dumps({{"containerimage.digest": "sha256:" + "a" 
         for repository, images in (
             ("apps/integration-console", ("atheros-search", "atheros-search-ui")),
             ("apps/schema-migrator", ("schema-migrator-backend", "schema-migrator-ui")),
-            ("apps/wg-key-rotator", ("wg-key-rotator",)),
         ):
             with self.subTest(repository=repository):
                 self.copy_scripts(repository)
@@ -362,7 +362,7 @@ Path(metadata).write_text(json.dumps({{"containerimage.digest": "sha256:" + "a" 
                 self.assertFalse((self.root / "artifacts/build-context").exists())
 
     def test_standalone_publish_rejects_other_branches_and_empty_registry(self) -> None:
-        for repository in ("apps/integration-console", "apps/schema-migrator", "apps/wg-key-rotator"):
+        for repository in ("apps/integration-console", "apps/schema-migrator"):
             self.copy_scripts(repository)
             for env in ({"BRANCH_NAME": "feature/test"}, {"CI_REGISTRY": ""}):
                 result = self.run_script("publish", **env)
