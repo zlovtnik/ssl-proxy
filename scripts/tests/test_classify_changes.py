@@ -123,7 +123,7 @@ class ClassifyChangesTest(unittest.TestCase):
 
     def test_first_commit_selects_everything(self) -> None:
         result = classify_paths(set(), self.bumped(*SUBMODULE_IMAGES), full=True)
-        self.assertEqual(10, len(result["changedServices"]))
+        self.assertEqual(12, len(result["changedServices"]))
         self.assertTrue(all(result["tests"].values()))
         self.assertTrue(result["publishRedpandaMaint"])
         self.assertTrue(result["publishOctopusMetrics"])
@@ -160,7 +160,7 @@ class ClassifyChangesTest(unittest.TestCase):
             self.assertEqual(["postgres-runtime-schema"], result["changedServices"])
             self.assertEqual(2, len(result["changedMainPaths"]))
             first_build = classify_repository(root, base="missing")
-            self.assertEqual(10, len(first_build["changedServices"]))
+            self.assertEqual(12, len(first_build["changedServices"]))
             self.assertIn("services/platform-sync/main.go", first_build["changedMainPaths"])
 
 

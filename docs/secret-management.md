@@ -72,8 +72,10 @@ must remain untracked.
 
 The platform-owned Vault sync workflow must read every logical path under
 `secret/ssl-proxy/prod` declared by the contract. Before writing anything, it
-validates that all 21 Secrets and the PostgreSQL endpoint ConfigMap have every
-declared key. It must not log values, and its Kubernetes writer identity is
+validates that every Secret and ConfigMap in the contract has every declared
+key. The current contract contains 30 Secrets and the PostgreSQL endpoint
+ConfigMap, including seven staged DQ runtime inputs. It must not log values,
+and its Kubernetes writer identity is
 external to application workloads.
 
 The contract also pins the Wiretrap bootstrap substrate: PostgreSQL 16 from the

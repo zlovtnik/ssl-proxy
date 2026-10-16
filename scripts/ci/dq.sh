@@ -8,4 +8,4 @@ tar --exclude=.git --exclude=node_modules --exclude=dist -cf - services/dq | ci_
   sh -c 'tar --no-same-owner -xf - && apt-get update && apt-get install -y --no-install-recommends ripgrep make && cd services/dq && make check && make build'
 tar --exclude=node_modules --exclude=dist -cf - services/dq/ui | ci_run dq-ui --rm -i -w /workspace \
   oven/bun:1.4.0 \
-  sh -c 'tar --no-same-owner -xf - && cd services/dq/ui && bun install --frozen-lockfile && bun run test && bun run build'
+  sh -c 'tar --no-same-owner -xf - && apt-get update && apt-get install -y --no-install-recommends nodejs && cd services/dq/ui && bun install --frozen-lockfile && bun run test && bun run build'

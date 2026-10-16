@@ -28,6 +28,13 @@ rules:
   - schema-migrator-backend
   - schema-migrator-bootstrap
   - schema-migrator-keycloak
+  - ssl-proxy-dq-atheros-auth
+  - ssl-proxy-dq-broker-tls
+  - ssl-proxy-dq-control-auth
+  - ssl-proxy-dq-manager-auth
+  - ssl-proxy-dq-manager-tls
+  - ssl-proxy-dq-worker-auth
+  - ssl-proxy-dq-worker-tls
   - ssl-proxy-identity-tls
   - vault-server-ca
   - wireguard-config

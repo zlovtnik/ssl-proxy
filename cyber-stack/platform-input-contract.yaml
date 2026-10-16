@@ -73,6 +73,58 @@ spec:
         postgres-schema-owner: schema_owner
   inputs:
     - kind: Secret
+      name: ssl-proxy-dq-atheros-auth
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/ssl-proxy-dq-atheros-auth
+      keys:
+        - service-token
+    - kind: Secret
+      name: ssl-proxy-dq-control-auth
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/ssl-proxy-dq-control-auth
+      keys:
+        - control-token
+    - kind: Secret
+      name: ssl-proxy-dq-manager-auth
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/ssl-proxy-dq-manager-auth
+      keys:
+        - DQ_CONTROL_TOKEN
+        - DQ_WORKER_TOKEN
+        - DQ_IDENTITIES_JSON
+        - DQ_BROKER_SASL_PASSWORD
+    - kind: Secret
+      name: ssl-proxy-dq-worker-auth
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/ssl-proxy-dq-worker-auth
+      keys:
+        - service-token
+        - minio-access-key
+        - minio-secret-key
+        - redpanda-password
+    - kind: Secret
+      name: ssl-proxy-dq-manager-tls
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/ssl-proxy-dq-manager-tls
+      keys:
+        - ca.crt
+        - tls.crt
+        - tls.key
+    - kind: Secret
+      name: ssl-proxy-dq-worker-tls
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/ssl-proxy-dq-worker-tls
+      keys:
+        - ca.crt
+        - tls.crt
+        - tls.key
+    - kind: Secret
+      name: ssl-proxy-dq-broker-tls
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/ssl-proxy-dq-broker-tls
+      keys:
+        - ca.crt
+    - kind: Secret
       name: cloudflared-tunnel-credentials
       type: Opaque
       vaultPath: secret/ssl-proxy/prod/cloudflared-tunnel-credentials

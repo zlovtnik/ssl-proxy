@@ -1,6 +1,48 @@
 apiVersion: v1
 kind: Secret
 metadata:
+  name: ssl-proxy-dq-atheros-auth
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssl-proxy-dq-control-auth
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssl-proxy-dq-manager-auth
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssl-proxy-dq-worker-auth
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssl-proxy-dq-manager-tls
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssl-proxy-dq-worker-tls
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ssl-proxy-dq-broker-tls
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
   name: cloudflared-tunnel-credentials
 type: Opaque
 ---

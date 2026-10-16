@@ -9,6 +9,17 @@ selected_services="${CHANGED_SERVICES:-}"
 if [ "$SHOULD_PUBLISH_OCTOPUS_METRICS" = true ]; then
   selected_services="${selected_services:+$selected_services,}octopus-metrics"
 fi
+# DQ has reviewed pins for onboarding, but still requires explicit activation.
+# Publish it once through the candidate path, including on a full-image build.
+IFS=, read -r -a requested_services <<< "$selected_services"
+selected_services=""
+for service in "${requested_services[@]}"; do
+  case "$service" in
+    delip-queve-manager|delip-queve-worker) SHOULD_PUBLISH_DQ=true ;;
+    '') ;;
+    *) selected_services="${selected_services:+$selected_services,}$service" ;;
+  esac
+done
 env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
   DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" python3 scripts/publish_images.py \
   --environment prod --only "$selected_services" --reuse-submodules "$SUBMODULE_CI_READY" \
@@ -42,8 +53,7 @@ if [ "${SHOULD_PUBLISH_DQ:-false}" = true ]; then
 else
   echo 'skipped: no DQ image changes'
 fi
-# Candidate images have no deployed pin or bump target yet. Record their real
-# digests beside the deployable images and explain that in the final report.
+# Record candidate digests separately; a pin alone does not activate DQ.
 python3 - "$RELEASE_MANIFEST" "$BUMP_COMMANDS_REPORT" "$REGISTRY" \
   "$SHOULD_PUBLISH_REDPANDA_MAINT" "${SHOULD_PUBLISH_DQ:-false}" <<'PY'
 import json
@@ -80,7 +90,7 @@ if candidates:
         f"{entry['service']}: {entry['repository']}@{entry['digest']} ({entry['slice']})"
         for entry in candidates
     )
-    report += "\nProvision the required platform inputs, then add the base and digest pin in reviewed Git."
+    report += "\nVerify platform inputs and activation prerequisites, then promote the digest and matching processor manifest in reviewed Git."
 report_path.write_text(report + "\n")
 PY
 printf '\nManual production digest update report\n'

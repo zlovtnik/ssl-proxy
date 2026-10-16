@@ -1,0 +1,84 @@
+{
+  "implementation_digest": "sha256:f5ba34c90eec2d4d0ca250b50fba4c40a7da995d87488dfa9956a576c5a9cc31",
+  "inputs": [
+    {
+      "allowed_prefix": "wiretrap/prod-ssl-proxy/inputs",
+      "bucket": "dq-artifacts",
+      "direction": "input",
+      "max_bytes": 8388608,
+      "max_items": 1,
+      "name": "snapshot",
+      "required": true,
+      "schema_id": "atheros.dedup.snapshot.v1",
+      "semantics": "artifact_reference",
+      "transport": "minio"
+    }
+  ],
+  "installation_id": "wiretrap",
+  "manifest_sha256": "e2c53bf682ff208b8b6e44fff6696f183a26901d63be9cad88e5cb1e5de7c383",
+  "namespace": "prod-ssl-proxy",
+  "outputs": [
+    {
+      "allowed_prefix": "wiretrap/prod-ssl-proxy/runs",
+      "bucket": "dq-artifacts",
+      "direction": "output",
+      "max_bytes": 8388608,
+      "max_items": 1,
+      "name": "proposal",
+      "required": true,
+      "schema_id": "atheros.dedup.proposal.v1",
+      "semantics": "artifact_reference",
+      "transport": "minio"
+    }
+  ],
+  "owner_team": "wireless",
+  "parameter_schema": {
+    "$id": "urn:dq:atheros.dedup.parameters.v1",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "authorized_scope": {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+      },
+      "candidate_id": {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+      },
+      "max_candidates": {
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "policy_version": {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+      },
+      "snapshot_revision": {
+        "pattern": "^[a-f0-9]{64}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "authorized_scope",
+      "policy_version",
+      "max_candidates"
+    ],
+    "type": "object"
+  },
+  "parameter_schema_sha256": "0ef94c4e346b76861bd0057592a63ebe023f76e703949583a69515d4a14b45e3",
+  "policy_version": "wiretrap-dq-v1",
+  "processor_id": "atheros.dedup",
+  "protocol_version": "dq.v1",
+  "resources": {
+    "concurrency": 2,
+    "max_input_bytes": 8388608,
+    "max_output_bytes": 8388608,
+    "timeout_seconds": 45
+  },
+  "version": "0.1.0",
+  "worker_service": "ssl-proxy-dq-atheros-dedup-v0-1-0"
+}
