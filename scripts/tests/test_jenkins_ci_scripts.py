@@ -313,6 +313,7 @@ Path(metadata).write_text(json.dumps({{"containerimage.digest": "sha256:" + "a" 
                                          REGISTRY_PLAIN_HTTP="1", RELEASE_MANIFEST="artifacts/release.json",
                                          BUMP_COMMANDS_REPORT="artifacts/commands.txt",
                                          SHOULD_PUBLISH_REDPANDA_MAINT="false",
+                                         SHOULD_PUBLISH_DQ="false",
                                          SHOULD_PUBLISH_OCTOPUS_METRICS="true")
                 self.assertEqual(0, result.returncode, result.stderr)
                 manifest = json.loads((self.root / "artifacts/release.json").read_text())
