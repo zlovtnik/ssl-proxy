@@ -29,7 +29,7 @@ images:
 - digest: sha256:e6158c809c187d27a928d26f98a531997694ee77fc28160ab1c0c91301ba3a37
   name: atheros-sensor
   newName: 192.168.1.242:5000/atheros-sensor
-- digest: sha256:c9ed469c7ad7f25341c8481edd0de78f33fc7f6c6b00d244cbb92cf7a71feeaa
+- digest: sha256:331458e59a76dc5e3b57087f960953dadb1a5c31e55b19d103dbbb8c8b80fdca
   name: java-coordinator
   newName: 192.168.1.242:5000/java-coordinator
 - digest: sha256:1d35336ea640d18fa1168626d62805379ea54570cdf9ea2069a77a58f504c3ae
@@ -47,10 +47,10 @@ images:
 - digest: sha256:3e9852a3fcac850f03fff40e3de5d699c53d520414ad60be0bf696133d976714
   name: octopus-metrics
   newName: 192.168.1.242:5000/octopus-metrics
-- digest: sha256:a5289409f325b7a7a50f0d582263544f8b09210bf8b1269b51e732b547729e3a
+- digest: sha256:1d5e29a6f0696680afb6bd5fda672c58b855d65d9a1296b72d8a708dd106b4d5
   name: delip-queve-manager
   newName: 192.168.1.242:5000/delip-queve-manager
-- digest: sha256:f5ba34c90eec2d4d0ca250b50fba4c40a7da995d87488dfa9956a576c5a9cc31
+- digest: sha256:4ea545aeb7e17ab7cb0ef3669536f1a93f38ef34b4d435ac1b3bbd8f1f38bcf4
   name: delip-queve-worker
   newName: 192.168.1.242:5000/delip-queve-worker
 patches:

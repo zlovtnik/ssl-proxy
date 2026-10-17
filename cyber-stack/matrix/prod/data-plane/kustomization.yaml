@@ -35,7 +35,7 @@ configMapGenerator:
   name: ssl-proxy-telemetry-grafana-lan-proxy
   namespace: ssl-proxy
 images:
-- digest: sha256:0521270448f67a8d48602bc1c08ffa22c92091ebd77b8cb127599f5b4bebf304
+- digest: sha256:1b42a0bdbc739e3ed3e60a750357b934b6a5699e6ff7d9977982f0356d90fd84
   name: redpanda-maint
   newName: 192.168.1.242:5000/redpanda-maint
 - digest: sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
