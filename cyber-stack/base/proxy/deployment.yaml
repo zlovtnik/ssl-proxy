@@ -119,6 +119,8 @@ spec:
               value: "ssl_proxy=info"
             - name: EXPLICIT_PROXY_ENABLED
               value: "false"
+            - name: PAYLOAD_AUDIT_ENABLED
+              value: "false"
             - name: SYNC_OUTBOX_DIR
               value: "/sync-outbox"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

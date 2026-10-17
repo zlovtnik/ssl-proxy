@@ -100,6 +100,7 @@ struct TransparentFingerprint {
 struct TransparentMetrics {
     attempt_count: u64,
     total_blocked_bytes_approx: u64,
+    blocked_bytes_delta_approx: u64,
     frequency_hz: f64,
     risk_score: f64,
     iat_ms: Option<u64>,
@@ -129,6 +130,7 @@ struct TransparentBlockDecision {
     verdict: &'static str,
     attempts: u64,
     blocked_bytes: u64,
+    blocked_bytes_delta_approx: u64,
     frequency_hz: f64,
     iat_ms: Option<u64>,
     consecutive_blocks: u32,
@@ -415,6 +417,7 @@ async fn build_transparent_block_decision(
         verdict,
         attempts,
         blocked_bytes,
+        blocked_bytes_delta_approx: approx_bytes,
         frequency_hz,
         iat_ms,
         consecutive_blocks,

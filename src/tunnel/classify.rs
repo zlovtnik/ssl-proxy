@@ -1,7 +1,7 @@
 /// Classifies a destination host/port/ALPN tuple into a coarse, human-readable traffic category.
 ///
 /// The function normalizes `host` by trimming a trailing dot and lowercasing, then applies ordered
-/// substring- and suffix-based heuristics to map common services into the v1 proxy taxonomy:
+/// label- and suffix-based heuristics to map common services into the v1 proxy taxonomy:
 /// `ads_tracker`, `analytics`, `cdn`, `essential_api`, `auth`, or `unknown`.
 ///
 /// # Examples
@@ -10,9 +10,7 @@
 /// let cat = classify("SENTRY.IO.", 443, None);
 /// assert_eq!(cat, "analytics");
 /// ```
-// Timing-aware flow classification is intentionally deferred. The current
-// cutover keeps hostname/port/ALPN classification simple and cheap while the
-// sync-plane contract is hardened.
+// This category describes a hostname heuristic, never a policy decision.
 pub(crate) fn classify(host: &str, port: u16, alpn: Option<&str>) -> &'static str {
     let h = host.trim_end_matches('.').to_ascii_lowercase();
     let h = h.as_str();
@@ -34,6 +32,10 @@ pub(crate) fn classify(host: &str, port: u16, alpn: Option<&str>) -> &'static st
         || matches_domain!("datadoghq.com")
         || matches_domain!("newrelic.com")
         || matches_domain!("segment.io")
+        || matches_domain!("femetrics.grammarly.io")
+        || matches_domain!("bugsnag.com")
+        || matches_domain!("otel.cline.bot")
+        || matches_domain!("events.data.microsoft.com")
     {
         return "analytics";
     }
@@ -44,6 +46,7 @@ pub(crate) fn classify(host: &str, port: u16, alpn: Option<&str>) -> &'static st
         || matches_domain!("pubmatic.com")
         || matches_domain!("rubiconproject.com")
         || matches_domain!("scorecardresearch.com")
+        || label_matches("ads")
     {
         return "ads_tracker";
     }
@@ -72,38 +75,8 @@ pub(crate) fn classify(host: &str, port: u16, alpn: Option<&str>) -> &'static st
     {
         return "cdn";
     }
-    if matches_domain!("apple.com") {
-        return "essential_api";
-    }
-    if matches_domain!("icloud.com") {
-        return "essential_api";
-    }
-    if matches_domain!("googleapis.com") {
-        return "essential_api";
-    }
-    if matches_domain!("whatsapp.com") {
-        return "essential_api";
-    }
-    if matches_domain!("instagram.com") {
-        return "essential_api";
-    }
-    if matches_domain!("facebook.com") {
-        return "essential_api";
-    }
-    if matches_domain!("twitter.com") || matches_domain!("twimg.com") {
-        return "essential_api";
-    }
-    if matches_domain!("netflix.com") {
-        return "essential_api";
-    }
-    if matches_domain!("spotify.com") {
-        return "essential_api";
-    }
-    let _ = alpn;
-    match port {
-        443 | 80 | 22 | 5228 => "essential_api",
-        _ => "unknown",
-    }
+    let _ = (port, alpn);
+    "unknown"
 }
 
 /// Determines whether a hostname belongs to a domain that requires certificate-pinning bypass.
@@ -155,8 +128,9 @@ mod tests {
     }
 
     #[test]
-    fn classify_named_service_real_host_and_rejects_false_positive() {
-        assert_eq!(classify("web.whatsapp.com", 443, None), "essential_api");
+    fn broad_service_domain_does_not_imply_essential_purpose() {
+        assert_eq!(classify("web.whatsapp.com", 443, None), "unknown");
+        assert_eq!(classify("aet.spotify.com", 443, None), "unknown");
         assert_eq!(classify("foo.whatsapp.evil", 1234, None), "unknown");
     }
 
@@ -164,6 +138,18 @@ mod tests {
     fn classify_push_real_host_and_rejects_false_positive() {
         assert_eq!(classify("push.googleapis.com", 1234, None), "essential_api");
         assert_eq!(classify("foo.push.googleapis.evil", 1234, None), "unknown");
+    }
+
+    #[test]
+    fn common_ports_do_not_imply_essential_purpose() {
+        assert_eq!(classify("unrecognized.example", 443, None), "unknown");
+        assert_eq!(classify("unrecognized.example", 80, None), "unknown");
+        assert_eq!(classify("unrecognized.example", 5228, None), "unknown");
+        assert_eq!(
+            classify("inkwell.femetrics.grammarly.io", 443, None),
+            "analytics"
+        );
+        assert_eq!(classify("static.ads.brave.com", 443, None), "ads_tracker");
     }
 
     #[test]

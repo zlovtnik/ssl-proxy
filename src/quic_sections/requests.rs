@@ -129,6 +129,7 @@ async fn handle_h3_request(
             serde_json::json!({
                 "kind": "quic-h3",
                 "classification": initial_category,
+                "blocked_bytes_delta_approx": approx_bytes,
             }),
         );
 

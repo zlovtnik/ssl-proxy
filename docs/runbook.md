@@ -384,6 +384,33 @@ fresh startup while the topic bootstrap hook is still creating topics.
 8. Confirm `search_documents` and `embedding_jobs` exist before enabling Search
    workers, then check leases, terminal failures and vector counts.
 
+### Proxy event audit
+
+- Proxy classification describes a heuristic destination category. Check the
+  independent `blocked` flag and policy `reason` before interpreting an outcome.
+  Unmatched hosts now use `unknown`; retained events keep their original category.
+- `proxy_blocked_host_rollups.blocked_bytes` is an estimate for emitted blocked
+  attempts, not transferred bytes or proven bandwidth savings. The producer
+  emits `blocked_bytes_delta_approx` per event. Deploy Octopus before the proxy
+  so its transformer understands that field. After both are deployed and
+  `proxy.events` jobs drain, run the guarded
+  [rollup rebuild](../scripts/rebuild-proxy-blocked-bytes.sql). It refuses to
+  run if retained blocked events do not cover every rollup attempt.
+- Recheck tunnel pairs with the read-only
+  [completeness query](../ops/sql/proxy-tunnel-completeness.sql) for a window
+  inside the retained event range after proxy jobs drain. An open-only or
+  close-only row is incomplete evidence; do not infer dropped traffic or
+  calculate session duration from it.
+- Payload audit is off by default (`PAYLOAD_AUDIT_ENABLED=false`) and is not
+  enabled in the production proxy deployment. When explicitly enabled, only
+  forwarded plaintext HTTP requests on port 80 with allowed methods and
+  content types qualify. The capture inspects at most the first 4096 bytes of
+  a connection;
+  `CAPTURE_PLAINTEXT_PAYLOADS` is independent. The
+  `octopus_core.proxy_payload_audit` table holds metadata, not HTTP bodies.
+  Check the setting, eligible traffic, topic, consumer, and DLQ before
+  interpreting an empty table.
+
 ## Common incidents
 
 ### WireGuard handshake fails

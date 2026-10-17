@@ -9,14 +9,62 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 
 async fn test_state() -> SharedState {
+    test_state_with_config(crate::config::Config::for_tests()).await
+}
+
+async fn test_state_with_config(config: crate::config::Config) -> SharedState {
     let (stats_tx, _) = broadcast::channel(16);
     let (events_tx, _) = broadcast::channel(16);
     let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap();
     let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
         .build(hyper_util::client::legacy::connect::HttpConnector::new());
-    let config = crate::config::Config::for_tests();
-
     AppState::new(client, resolver, stats_tx, events_tx, config)
+}
+
+#[tokio::test]
+async fn blocked_tunnel_estimate_is_per_event() {
+    let state = test_state().await;
+    let host = "blocked.example";
+    state
+        .blocklist
+        .store(Arc::new(HashSet::from([host.to_string()])));
+    let destination = "127.0.0.1:443".parse().unwrap();
+    let tls = TlsInfo {
+        sni: Some(host.to_string()),
+        ..TlsInfo::default()
+    };
+
+    for expected_total in [65, 130] {
+        let decision = evaluate_transparent_policy(&state, destination, &tls, None).await;
+        let TransparentPolicyDecision::Block(block) = decision else {
+            panic!("expected blocked tunnel");
+        };
+        assert_eq!(block.blocked_bytes_delta_approx, 65);
+        assert_eq!(block.blocked_bytes, expected_total);
+    }
+}
+
+#[tokio::test]
+async fn payload_audit_collects_http_preview_without_general_payload_capture() {
+    let mut config = crate::config::Config::for_tests();
+    config.payload_audit.enabled = true;
+    config.proxy.capture_plaintext_payloads = false;
+    let state = test_state_with_config(config).await;
+    let mut observation = HttpTunnelObservation {
+        state,
+        destination: "127.0.0.1:80".parse().unwrap(),
+        started: Instant::now(),
+        flow: None,
+        bytes_up: 0,
+        bytes_down: 0,
+        up_preview: Vec::new(),
+        down_preview: Vec::new(),
+    };
+    observation.observe(b"POST / HTTP/1.1\r\n", PacketDirection::Upstream);
+    observation.observe(b"HTTP/1.1 200 OK\r\n", PacketDirection::Downstream);
+    assert_eq!(observation.up_preview, b"POST / HTTP/1.1\r\n");
+    assert!(observation.down_preview.is_empty());
+    assert_eq!(observation.bytes_down, 17);
 }
 
 #[test]

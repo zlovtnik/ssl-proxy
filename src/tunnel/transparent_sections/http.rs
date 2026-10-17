@@ -56,7 +56,9 @@ impl HttpTunnelObservation {
             PacketDirection::Downstream => (&mut self.bytes_down, &mut self.down_preview),
         };
         *counter += data.len() as u64;
-        if self.state.config.proxy.capture_plaintext_payloads {
+        if self.state.config.proxy.capture_plaintext_payloads
+            || (direction == PacketDirection::Upstream && self.state.config.payload_audit.enabled)
+        {
             let remaining = 4096usize.saturating_sub(preview.len());
             preview.extend_from_slice(&data[..data.len().min(remaining)]);
         }
@@ -297,7 +299,10 @@ async fn transparent_http_request(
     match decision {
         TransparentPolicyDecision::Block(decision)
         | TransparentPolicyDecision::Tarpit(decision) => {
-            state.record_peer_block(identity.wg_pubkey.as_deref(), decision.blocked_bytes);
+            state.record_peer_block(
+                identity.wg_pubkey.as_deref(),
+                decision.blocked_bytes_delta_approx,
+            );
             events::emit(
                 &state,
                 "http_blocked",
@@ -314,7 +319,11 @@ async fn transparent_http_request(
                     status_code: Some(403),
                     blocked: true,
                     obfuscation_profile: None,
-                    extra: serde_json::json!({"category": decision.flow.category, "reason": decision.flow.reason}),
+                    extra: serde_json::json!({
+                        "category": decision.flow.category,
+                        "reason": decision.flow.reason,
+                        "blocked_bytes_delta_approx": decision.blocked_bytes_delta_approx,
+                    }),
                 },
             );
             return Ok(response(StatusCode::FORBIDDEN));

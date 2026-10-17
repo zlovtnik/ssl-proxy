@@ -223,7 +223,7 @@ async fn emit_serializable_uses_one_timestamp_and_top_level_identity_fields() {
             .expect("event_id should be a string")
     )
     .is_ok());
-    assert_eq!(envelope["classification"], "essential_api");
+    assert_eq!(envelope["classification"], "unknown");
 
     let published = state.publisher.published_messages();
     assert_eq!(published.len(), 1);

@@ -97,7 +97,7 @@ async fn block_transparent_flow(
 ) {
     state.record_peer_block(
         identity.wg_pubkey.as_deref(),
-        (50 + decision.flow.audit_host.len()) as u64,
+        decision.blocked_bytes_delta_approx,
     );
 
     info!(
@@ -138,6 +138,7 @@ async fn block_transparent_flow(
             metrics: TransparentMetrics {
                 attempt_count: decision.attempts,
                 total_blocked_bytes_approx: decision.blocked_bytes,
+                blocked_bytes_delta_approx: decision.blocked_bytes_delta_approx,
                 frequency_hz: decision.frequency_hz,
                 risk_score: decision.risk_score,
                 iat_ms: decision.iat_ms,

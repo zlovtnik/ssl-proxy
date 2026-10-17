@@ -154,6 +154,7 @@ pub async fn handle(
                 "verdict": verdict,
                 "attempt_count": attempts,
                 "blocked_bytes": blocked_bytes,
+                "blocked_bytes_delta_approx": approx_bytes,
                 "risk_score": risk,
                 "consecutive_blocks": streak
             }),
