@@ -395,7 +395,7 @@ func octopusCoreGrants() []tableGrant {
 		"wireless_clients", "wireless_shadow_alerts", "wireless_frames", "wireless_frame_radio",
 		"wireless_frame_qos", "wireless_frame_network", "wireless_frame_app_signals",
 		"wireless_frame_identity", "wireless_frame_security", "wireless_inventory_projection_inputs",
-		"wireless_projection_receipts", "wireless_projection_hashes",
+		"wireless_projection_receipts", "wireless_projection_group_receipts", "wireless_projection_hashes",
 		"wireless_shadow_alert_inputs", "wireless_sensors", "wireless_audit_frames",
 		"wireless_bandwidth_windows", "wireless_client_inventory", "wireless_probe_requests",
 		"proxy_blocked_host_rollups", "proxy_payload_audit", "work_leases", "processor_state",
