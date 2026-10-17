@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -243,6 +244,29 @@ def _mapping_value(node: MappingNode, field: str) -> ScalarNode | SequenceNode |
     return None
 
 
+def _write_preserving_mode(path: Path, content: str) -> None:
+    mode = path.stat().st_mode
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as temporary:
+            temporary.write(content)
+            temporary_name = temporary.name
+        os.chmod(temporary_name, mode)
+        os.replace(temporary_name, path)
+    finally:
+        if temporary_name is not None:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+
+
 def update_image_digest(path: Path, service: str, digest: str) -> None:
     """Update one validated image digest without reformatting the Kustomization."""
 
@@ -284,26 +308,73 @@ def update_image_digest(path: Path, service: str, digest: str) -> None:
     )
     if updated == content:
         return
-    mode = path.stat().st_mode
-    temporary_name: str | None = None
+    _write_preserving_mode(path, updated)
+
+
+def update_dq_worker_digest(repository_root: Path, digest: str) -> None:
+    """Promote the worker image, manifest, and runtime digest as one contract."""
+
+    digest = validate_digest(digest)
+    production = repository_root / "cyber-stack/matrix/prod"
+    kustomization = production / "app-stack/kustomization.yaml"
+    manifest_path = production / "config/dq/atheros-dedup-v0.1.0.json"
+    patch_path = production / "patches/dq-preparation.yaml"
+
+    repository_from_kustomization(kustomization, "delip-queve-worker")
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            delete=False,
-        ) as temporary:
-            temporary.write(updated)
-            temporary_name = temporary.name
-        os.chmod(temporary_name, mode)
-        os.replace(temporary_name, path)
-    finally:
-        if temporary_name is not None:
-            try:
-                os.unlink(temporary_name)
-            except FileNotFoundError:
-                pass
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        patch = patch_path.read_text(encoding="utf-8")
+    except (OSError, json.JSONDecodeError) as error:
+        raise ImageContractError(f"cannot read DQ worker contract: {error}") from error
+    if not isinstance(manifest, dict):
+        raise ImageContractError(f"{manifest_path}: expected a JSON object")
+    checksum = manifest.pop("manifest_sha256", None)
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+    actual_checksum = hashlib.sha256(canonical.encode()).hexdigest()
+    if checksum != actual_checksum:
+        raise ImageContractError(f"{manifest_path}: invalid manifest_sha256")
+    implementation = manifest.get("implementation_digest")
+    if not isinstance(implementation, str):
+        raise ImageContractError(f"{manifest_path}: missing implementation_digest")
+    validate_digest(implementation, label="DQ implementation digest")
+
+    try:
+        documents = list(yaml.safe_load_all(patch))
+    except yaml.YAMLError as error:
+        raise ImageContractError(f"cannot parse {patch_path}: {error}") from error
+    configs = [
+        document
+        for document in documents
+        if isinstance(document, Mapping)
+        and document.get("kind") == "ConfigMap"
+        and isinstance(document.get("metadata"), Mapping)
+        and document["metadata"].get("name") == "ssl-proxy-dq-worker-config"
+    ]
+    if len(configs) != 1 or not isinstance(configs[0].get("data"), Mapping):
+        raise ImageContractError(f"{patch_path}: expected one DQ worker ConfigMap")
+    previous = configs[0]["data"].get("DQ_WORKER_IMPLEMENTATION_DIGEST")
+    if not isinstance(previous, str):
+        raise ImageContractError(f"{patch_path}: missing DQ_WORKER_IMPLEMENTATION_DIGEST")
+    validate_digest(previous, label="DQ worker configuration digest")
+    lines = patch.splitlines(keepends=True)
+    matches = [
+        index
+        for index, line in enumerate(lines)
+        if re.fullmatch(r"  DQ_WORKER_IMPLEMENTATION_DIGEST: sha256:[0-9a-f]{64}\n?", line)
+    ]
+    if len(matches) != 1:
+        raise ImageContractError(f"{patch_path}: expected one DQ worker digest scalar")
+
+    manifest["implementation_digest"] = digest
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+    manifest["manifest_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+    lines[matches[0]] = f"  DQ_WORKER_IMPLEMENTATION_DIGEST: {digest}\n"
+
+    update_image_digest(kustomization, "delip-queve-worker", digest)
+    _write_preserving_mode(
+        manifest_path, json.dumps(manifest, sort_keys=True, indent=2) + "\n"
+    )
+    _write_preserving_mode(patch_path, "".join(lines))
 
 
 def extract_buildx_digest(metadata: Mapping[str, Any]) -> str:
@@ -400,6 +471,11 @@ def _set_digest_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _set_dq_worker_digest_command(arguments: argparse.Namespace) -> int:
+    update_dq_worker_digest(arguments.repository_root, arguments.digest)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -442,6 +518,13 @@ def build_parser() -> argparse.ArgumentParser:
     set_digest.add_argument("--service", required=True)
     set_digest.add_argument("--digest", required=True)
     set_digest.set_defaults(handler=_set_digest_command)
+
+    dq_worker = subparsers.add_parser(
+        "set-dq-worker-digest", help="update the DQ worker image and manifest contract"
+    )
+    dq_worker.add_argument("--repository-root", type=Path, required=True)
+    dq_worker.add_argument("--digest", required=True)
+    dq_worker.set_defaults(handler=_set_dq_worker_digest_command)
     return parser
 
 

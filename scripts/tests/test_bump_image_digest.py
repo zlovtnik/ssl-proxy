@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -63,6 +65,13 @@ class BumpImageDigestTest(unittest.TestCase):
                     "images:\n" + images,
                     encoding="utf-8",
                 )
+        for relative in (
+            "cyber-stack/matrix/prod/config/dq/atheros-dedup-v0.1.0.json",
+            "cyber-stack/matrix/prod/patches/dq-preparation.yaml",
+        ):
+            destination = self.root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPOSITORY_ROOT / relative, destination)
         self.kustomize = self.root / "fake-kustomize"
         self.kustomize.write_text(
             "#!/usr/bin/env bash\n"
@@ -131,6 +140,46 @@ class BumpImageDigestTest(unittest.TestCase):
         app_stack = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
         self.assertIn(f"digest: {DIGEST}", data_plane.read_text())
         self.assertIn("digest: sha256:" + "b" * 64, app_stack.read_text())
+
+    def test_dq_worker_bump_updates_manifest_and_runtime_contract(self) -> None:
+        result = self.run_helper("delip-queve-worker", "prod", DIGEST)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        manifest_path = (
+            self.root / "cyber-stack/matrix/prod/config/dq/atheros-dedup-v0.1.0.json"
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        checksum = manifest.pop("manifest_sha256")
+        self.assertEqual(DIGEST, manifest["implementation_digest"])
+        self.assertEqual(
+            checksum,
+            hashlib.sha256(
+                json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+        )
+        patch = self.root / "cyber-stack/matrix/prod/patches/dq-preparation.yaml"
+        self.assertIn(f"DQ_WORKER_IMPLEMENTATION_DIGEST: {DIGEST}", patch.read_text())
+        owner = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
+        self.assertIn(f"digest: {DIGEST}", owner.read_text())
+        self.assertIn("build --load-restrictor LoadRestrictionsNone", self.log.read_text())
+
+    def test_dq_worker_bump_rejects_invalid_manifest_before_editing(self) -> None:
+        manifest_path = (
+            self.root / "cyber-stack/matrix/prod/config/dq/atheros-dedup-v0.1.0.json"
+        )
+        manifest_path.write_text(
+            manifest_path.read_text().replace('"manifest_sha256": "', '"manifest_sha256": "0'),
+            encoding="utf-8",
+        )
+        owner = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
+        before = owner.read_text()
+
+        result = self.run_helper("delip-queve-worker", "prod", DIGEST)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("invalid manifest_sha256", result.stderr)
+        self.assertEqual(before, owner.read_text())
+        self.assertFalse(self.log.exists())
 
     def test_accepts_every_first_party_image_contract_service(self) -> None:
         for service, slice_name in SERVICE_SLICES.items():

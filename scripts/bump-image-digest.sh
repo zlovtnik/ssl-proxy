@@ -84,10 +84,15 @@ update_overlay() {
 
   # Update only the digest scalar. `kustomize edit set image` rewrites the
   # entire file and can emit YAML 1.2 scalars that PyYAML 1.1 cannot load.
-  python3 "$repository_root/scripts/image_contract.py" set-digest \
-    --kustomization "$overlay/kustomization.yaml" \
-    --service "$service" \
-    --digest "$digest"
+  if [ "$service" = "delip-queve-worker" ]; then
+    python3 "$repository_root/scripts/image_contract.py" set-dq-worker-digest \
+      --repository-root "$repository_root" --digest "$digest"
+  else
+    python3 "$repository_root/scripts/image_contract.py" set-digest \
+      --kustomization "$overlay/kustomization.yaml" \
+      --service "$service" \
+      --digest "$digest"
+  fi
   "$kustomize" build --load-restrictor LoadRestrictionsNone "$overlay" >/dev/null
 }
 

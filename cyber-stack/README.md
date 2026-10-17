@@ -145,7 +145,8 @@ development overlay before documenting or automating local Kubernetes use.
 4. Complete the component acceptance checks against the published digest.
 5. Open a production pull request that records the accepted digest in the
    corresponding production Kustomizations. `scripts/bump-image-digest.sh` and its generated
-   `make bump-digest-<service>` targets update only the owning slice.
+   `make bump-digest-<service>` targets update the owning slice. The DQ worker
+   target also updates its processor manifest, checksum, and runtime digest.
 6. Merge the production pull request and verify all three prod Applications.
 
 Rollback is a Git revert of the promotion commit. Argo CD reconciles the prior
