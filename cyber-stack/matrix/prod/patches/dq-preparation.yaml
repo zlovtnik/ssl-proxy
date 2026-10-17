@@ -19,4 +19,4 @@ kind: ConfigMap
 metadata:
   name: ssl-proxy-dq-worker-config
 data:
-  DQ_WORKER_IMPLEMENTATION_DIGEST: sha256:f5ba34c90eec2d4d0ca250b50fba4c40a7da995d87488dfa9956a576c5a9cc31
+  DQ_WORKER_IMPLEMENTATION_DIGEST: sha256:4ea545aeb7e17ab7cb0ef3669536f1a93f38ef34b4d435ac1b3bbd8f1f38bcf4

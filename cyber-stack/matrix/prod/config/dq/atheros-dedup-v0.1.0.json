@@ -1,5 +1,5 @@
 {
-  "implementation_digest": "sha256:f5ba34c90eec2d4d0ca250b50fba4c40a7da995d87488dfa9956a576c5a9cc31",
+  "implementation_digest": "sha256:4ea545aeb7e17ab7cb0ef3669536f1a93f38ef34b4d435ac1b3bbd8f1f38bcf4",
   "inputs": [
     {
       "allowed_prefix": "wiretrap/prod-ssl-proxy/inputs",
@@ -15,7 +15,7 @@
     }
   ],
   "installation_id": "wiretrap",
-  "manifest_sha256": "e2c53bf682ff208b8b6e44fff6696f183a26901d63be9cad88e5cb1e5de7c383",
+  "manifest_sha256": "f51e846680248f68121d642e56cca72deba9bb0caa8407223d6056b1ce9f80df",
   "namespace": "prod-ssl-proxy",
   "outputs": [
     {
