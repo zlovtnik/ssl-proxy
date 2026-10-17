@@ -9,6 +9,10 @@ spec:
       containers:
         - name: java-coordinator
           env:
+            - name: WIRELESS_HEARTBEAT_CONSUMER
+              value: "wireless-sensor-heartbeat-postgres-v2"
+            - name: WIRELESS_AUDIT_CONSUMER
+              value: "wireless-audit-projection-v2"
             # The rebuilt broker reuses coordinates from the October 12 history.
             # New groups replay retained records without overwriting v1 evidence.
             - name: SYNC_SCAN_CONSUMER

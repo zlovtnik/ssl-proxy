@@ -12,7 +12,7 @@ PostgreSQL gate, or breaker violation fails the Job and applies no trims.
 
 `sync.scan.request` requires `octopus-scan-v2` in production and
 `octopus-scan-v1` in the base. `wireless.audit` requires
-`wireless-audit-projection-v1` and remains excluded from production cleanup
+`wireless-audit-projection-v2` in production and remains excluded from cleanup
 until a projector consumes that Kafka topic, commits offsets,
 and writes complete offset-linked rows to
 `octopus_core.ingestion_evidence`. Aggregate row coverage is not proof that a
@@ -32,13 +32,20 @@ removes unused PostgreSQL credentials and TLS mounts. The daily schedule is
 
 The broker reused scan and load coordinates already recorded in PostgreSQL
 on October 12. The [production recovery patch](../../cyber-stack/matrix/prod/patches/octopus-broker-recovery.yaml)
-selects `octopus-scan-v2`, `octopus-load-v2`, and `octopus-result-v2`.
+selects `octopus-scan-v2`, `octopus-load-v2`, and `octopus-result-v2`, plus
+`wireless-sensor-heartbeat-postgres-v2` and `wireless-audit-projection-v2`.
 Each new group starts at the earliest retained offset. Group-scoped evidence
 is recorded separately; existing event, job, batch, and outbox deduplication
 and dispatch authorization remain in effect. Keep the v2 identities after
 recovery; reverting to v1 restores the conflicting evidence namespace.
 
-After Argo CD reconciles the change, verify all three v2 groups have committed
+The wireless recovery needs new Octopus and schema-executor images built
+from the group-scoped receipt migration. Promote both reviewed digests
+together; the data-plane executor applies the new schema before app-stack
+starts the new coordinator. The new receipt table preserves the original
+wireless receipts and continues deduplicating effects by payload hash.
+
+After Argo CD reconciles the change, verify all five v2 groups have committed
 offsets for every partition and their lag drains. Check Octopus logs for new
 `changed after ingestion` errors and inspect any newly parked records. Replay
 of retained source topics recovers the conflicting records already parked in
