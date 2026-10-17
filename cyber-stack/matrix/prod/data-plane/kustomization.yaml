@@ -16,8 +16,14 @@ configMapGenerator:
 - behavior: merge
   literals:
   - ACTIVE_TOPICS=sync.scan.request
-  - DRY_RUN=false
+  # Preserve retained source records while the v2 consumers recover broker history.
+  - DRY_RUN=true
   name: redpanda-maint-env
+  namespace: ssl-proxy
+- behavior: merge
+  files:
+  - topics.tsv=../config/redpanda-maint-topics.tsv
+  name: redpanda-maint-config
   namespace: ssl-proxy
 - behavior: merge
   files:

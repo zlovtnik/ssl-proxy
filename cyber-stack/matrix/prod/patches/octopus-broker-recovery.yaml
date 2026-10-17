@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-java-coordinator
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: java-coordinator
+          env:
+            # The rebuilt broker reuses coordinates from the October 12 history.
+            # New groups replay retained records without overwriting v1 evidence.
+            - name: SYNC_SCAN_CONSUMER
+              valueFrom: null
+              value: "octopus-scan-v2"
+            - name: SYNC_LOAD_CONSUMER
+              valueFrom: null
+              value: "octopus-load-v2"
+            - name: SYNC_RESULT_CONSUMER
+              valueFrom: null
+              value: "octopus-result-v2"

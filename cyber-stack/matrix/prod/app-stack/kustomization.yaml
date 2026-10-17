@@ -64,6 +64,7 @@ patches:
 - path: ../patches/proxy.yaml
 - path: ../patches/java-coordinator.yaml
 - path: ../patches/java-coordinator-broker-drain.yaml
+- path: ../patches/octopus-broker-recovery.yaml
 - path: ../patches/atheros-search.yaml
 - path: ../patches/atheros-sensor.yaml
 - path: ../patches/schema-migrator-images.yaml

@@ -10,9 +10,10 @@ PostgreSQL gate, or breaker violation fails the Job and applies no trims.
 
 ## Current readiness
 
-`sync.scan.request` requires `octopus-scan-v1`. `wireless.audit` intentionally
-requires `wireless-audit-postgres-v1`, which does not exist yet. The latter must
-remain blocked until a projector consumes that Kafka topic, commits offsets,
+`sync.scan.request` requires `octopus-scan-v2` in production and
+`octopus-scan-v1` in the base. `wireless.audit` requires
+`wireless-audit-projection-v1` and remains excluded from production cleanup
+until a projector consumes that Kafka topic, commits offsets,
 and writes complete offset-linked rows to
 `octopus_core.ingestion_evidence`. Aggregate row coverage is not proof that a
 specific Kafka prefix was persisted.
@@ -20,9 +21,34 @@ specific Kafka prefix was persisted.
 The base ships with `DRY_RUN=true`. The production
 [data-plane slice](../../cyber-stack/matrix/prod/data-plane/kustomization.yaml)
 pins the maintenance image and selects only `sync.scan.request` with
-`DRY_RUN=false`. Its [scan-only patch](../../cyber-stack/matrix/prod/patches/redpanda-maint-scan-only.yaml)
+`DRY_RUN=true` during broker-history recovery. Its
+[topic configuration](../../cyber-stack/matrix/prod/config/redpanda-maint-topics.tsv)
+requires the recovering scan group before trimming can resume. Its
+[scan-only patch](../../cyber-stack/matrix/prod/patches/redpanda-maint-scan-only.yaml)
 removes unused PostgreSQL credentials and TLS mounts. The daily schedule is
 06:30 America/New_York.
+
+## October 2026 broker-history recovery
+
+The broker reused scan and load coordinates already recorded in PostgreSQL
+on October 12. The [production recovery patch](../../cyber-stack/matrix/prod/patches/octopus-broker-recovery.yaml)
+selects `octopus-scan-v2`, `octopus-load-v2`, and `octopus-result-v2`.
+Each new group starts at the earliest retained offset. Group-scoped evidence
+is recorded separately; existing event, job, batch, and outbox deduplication
+and dispatch authorization remain in effect. Keep the v2 identities after
+recovery; reverting to v1 restores the conflicting evidence namespace.
+
+After Argo CD reconciles the change, verify all three v2 groups have committed
+offsets for every partition and their lag drains. Check Octopus logs for new
+`changed after ingestion` errors and inspect any newly parked records. Replay
+of retained source topics recovers the conflicting records already parked in
+DLQs; records no longer retained in the source need a separate reviewed DLQ
+replay. Preserve the old evidence and DLQs for audit.
+
+Cleanup stays in dry-run mode during recovery. Restore `DRY_RUN=false` only
+through a reviewed production change after the groups catch up and the trim
+plan is verified. Do not delete evidence or reset existing group offsets to
+hide coordinate conflicts.
 
 Before enabling `wireless.audit`, remove the scan-only patch and provision the
 platform Secret `redpanda-maint-pg` with `username` and `password` keys. Provision its role
