@@ -111,6 +111,7 @@ readonly current_octopus_checksum="$(awk '/^manifest_sha256:/{print $2; exit}' "
 docker exec --interactive "${database_container}" psql \
   --username postgres --dbname sync --set=ON_ERROR_STOP=1 <<SQL
 DROP INDEX octopus_core.wireless_frames_cooccurrence_idx;
+DROP TABLE octopus_core.wireless_projection_group_receipts;
 DROP TABLE octopus_core.wireless_projection_hashes;
 DROP TABLE octopus_core.wireless_projection_receipts;
 DROP INDEX octopus_core.ingestion_evidence_first_seen_idx;
@@ -128,6 +129,7 @@ upgrade_output="$(run_executor 2>&1)" || {
 printf '%s\n' "${upgrade_output}" | grep -q "adopting trusted pre-ledger migrations: octopus_core (${previous_octopus_checksum})"
 printf '%s\n' "${upgrade_output}" | grep -q "migration already applied: runtime/octopus_core/01_tables/014_projection_dispatch_indexes.sql"
 printf '%s\n' "${upgrade_output}" | grep -q "migration applied: runtime/octopus_core/01_tables/015_projection_cooccurrence_indexes.sql"
+printf '%s\n' "${upgrade_output}" | grep -q "migration applied: runtime/octopus_core/01_tables/020_wireless_projection_group_receipts.sql"
 adopted_count="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align \
   --command="SELECT count(*) FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/octopus_core/%' AND applied_by = 'legacy-manifest-attestation'")"
 [ "${adopted_count}" -eq 14 ]
@@ -137,6 +139,7 @@ octopus_ready="$(docker exec "${database_container}" psql --username postgres --
 
 upgrade_replay_output="$(run_executor 2>&1)"
 printf '%s\n' "${upgrade_replay_output}" | grep -q "migration already applied: runtime/octopus_core/01_tables/015_projection_cooccurrence_indexes.sql"
+printf '%s\n' "${upgrade_replay_output}" | grep -q "migration already applied: runtime/octopus_core/01_tables/020_wireless_projection_group_receipts.sql"
 upgrade_replay_count="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align \
   --command="SELECT count(*) FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/%'")"
 [ "${upgrade_replay_count}" = "${first_count}" ]
