@@ -6,6 +6,39 @@ use tokio::sync::broadcast;
 use super::*;
 
 #[test]
+fn endpoint_rejects_userinfo_without_retaining_credentials() {
+    for authority in [
+        "user:secret@example.com:443",
+        "user@example.com",
+        "@example.com",
+        "secret@",
+    ] {
+        let evidence = endpoint(authority, "connect_authority", 8443);
+        assert!(evidence["authority_raw"].is_null());
+        assert!(evidence["host_raw"].is_null());
+        assert!(evidence["port"].is_null());
+        assert_eq!(evidence["parse_status"], "invalid");
+        assert_eq!(evidence["routing_port"], 8443);
+        assert_eq!(evidence["authority_source"], "connect_authority");
+    }
+}
+
+#[test]
+fn endpoint_preserves_observed_authority_separately_from_routing() {
+    for (authority, host, port) in [
+        ("example.com:443", "example.com", Some(443)),
+        ("example.com", "example.com", None),
+        ("[2001:db8::1]:8443", "2001:db8::1", Some(8443)),
+    ] {
+        let evidence = endpoint(authority, "quic_authority", 443);
+        assert_eq!(evidence["authority_raw"], authority);
+        assert_eq!(evidence["host_raw"], host);
+        assert_eq!(evidence["port"], serde_json::json!(port));
+        assert_eq!(evidence["routing_port"], 443);
+    }
+}
+
+#[test]
 fn frozen_proxy_envelopes_preserve_replay_ids_and_scan_contract() {
     let corpus: serde_json::Value = serde_json::from_str(include_str!(
         "../sql/postgres/contracts/fixtures/proxy-events-v1.json"

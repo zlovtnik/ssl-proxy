@@ -133,6 +133,25 @@ pub async fn handle(
             verdict,
             "blocked snitch"
         );
+        let mut extra = events::endpoint(&host, "connect_authority", port);
+        if let Some(map) = extra.as_object_mut() {
+            map.extend(
+                serde_json::json!({
+                    "attribution": identity.evidence(),
+                    "blocked_session_id": blocked_session_id,
+                    "category": category,
+                    "verdict": verdict,
+                    "attempt_count": attempts,
+                    "blocked_bytes": blocked_bytes,
+                    "blocked_bytes_delta_approx": approx_bytes,
+                    "risk_score": risk,
+                    "consecutive_blocks": streak
+                })
+                .as_object()
+                .expect("blocked event extra is an object")
+                .clone(),
+            );
+        }
         events::emit_serializable(
             &state,
             "session.blocked",
@@ -148,19 +167,7 @@ pub async fn handle(
             None,
             true,
             None,
-            serde_json::json!({
-                "authority_raw": events::bounded_host(&host), "authority_source": "connect_authority",
-                "port": req.uri().authority().and_then(|a| a.port_u16()), "routing_port": port,
-                "attribution": identity.evidence(),
-                "blocked_session_id": blocked_session_id,
-                "category": category,
-                "verdict": verdict,
-                "attempt_count": attempts,
-                "blocked_bytes": blocked_bytes,
-                "blocked_bytes_delta_approx": approx_bytes,
-                "risk_score": risk,
-                "consecutive_blocks": streak
-            }),
+            extra,
         );
 
         if verdict == "TARPIT" {

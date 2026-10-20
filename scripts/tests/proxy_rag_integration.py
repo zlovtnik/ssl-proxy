@@ -226,6 +226,47 @@ VALUES ('00000000-0000-0000-0000-000000000010','proxy_blocked_host_window','wind
         with self.assertRaises(RuntimeError):
             self.sql("DELETE FROM octopus_core.proxy_events", "proxy_audit")
 
+    def migration_upgrade(self, settings="", empty=False):
+        # Every probe rolls back, including psql disconnect after ON_ERROR_STOP.
+        # Only this suite's ephemeral database is modified.
+        migration = (ROOT / "sql/postgres/octopus_core/01_tables/021_proxy_evidence.sql").read_text()
+        return self.sql(
+            "BEGIN; ALTER TABLE octopus_core.proxy_events DROP COLUMN observation_revision, "
+            "DROP COLUMN evidence; "
+            + ("TRUNCATE octopus_core.proxy_events; " if empty else "")
+            + settings + migration
+            + "SELECT count(*) = count(DISTINCT observation_revision) "
+              "AND count(*) = count(observation_revision) FROM octopus_core.proxy_events; "
+            + migration
+            + "ROLLBACK;")
+
+    def test_populated_identity_upgrade_requires_explicit_maintenance(self):
+        with self.assertRaisesRegex(RuntimeError, "requires reviewed"):
+            self.migration_upgrade()
+
+    def maintenance_settings(self, ceiling="100000", timeout="5s", window="10 minutes"):
+        return (
+            f"SET LOCAL statement_timeout = '{timeout}'; "
+            f"SET LOCAL sslproxy.proxy_evidence_max_rows = '{ceiling}'; "
+            "SELECT set_config('sslproxy.proxy_evidence_window_end', "
+            f"(clock_timestamp() + interval '{window}')::text, true); ")
+
+    def test_populated_identity_upgrade_rejects_unreviewed_growth(self):
+        with self.assertRaisesRegex(RuntimeError, "exceed reviewed maintenance budget"):
+            self.migration_upgrade(self.maintenance_settings(ceiling="1"))
+
+    def test_populated_identity_upgrade_requires_finite_timeout_and_live_window(self):
+        for timeout, window in (("0", "10 minutes"), ("5s", "-1 minute"), ("5s", "1 second")):
+            with self.subTest(timeout=timeout, window=window):
+                with self.assertRaisesRegex(RuntimeError, "finite statement_timeout"):
+                    self.migration_upgrade(self.maintenance_settings(timeout=timeout, window=window))
+
+    def test_reviewed_identity_upgrade_populates_unique_revisions_and_replays(self):
+        self.assertEqual(self.migration_upgrade(self.maintenance_settings()).splitlines()[-1], "t")
+
+    def test_empty_identity_install_needs_no_maintenance_window(self):
+        self.assertEqual(self.migration_upgrade(empty=True), "t")
+
 
 if __name__ == "__main__":
     unittest.main()

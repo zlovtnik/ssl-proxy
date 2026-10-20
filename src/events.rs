@@ -396,6 +396,15 @@ pub(crate) fn bounded_host(value: &str) -> String {
 
 /// Observed authority evidence, separate from the port selected for routing.
 pub(crate) fn endpoint(authority: &str, source: &str, routing_port: u16) -> serde_json::Value {
+    // HTTP's Authority parser accepts userinfo. Never retain credentials as
+    // endpoint evidence, even when the authority is otherwise parseable.
+    if authority.contains('@') {
+        return serde_json::json!({
+            "authority_raw": null, "host_raw": null, "authority_source": source,
+            "authority_truncated": authority.len() > 1024, "parse_status": "invalid",
+            "port": null, "routing_port": routing_port
+        });
+    }
     let parsed = authority.parse::<axum::http::uri::Authority>().ok();
     let explicit_port = parsed.as_ref().and_then(|a| a.port_u16());
     serde_json::json!({

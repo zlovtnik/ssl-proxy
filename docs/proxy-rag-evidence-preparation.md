@@ -36,6 +36,32 @@ state. Earlier migration bytes are unchanged. Prior manifest baselines permit
 executor upgrades. Grants keep source rows and registration data private;
 Search reads the published whitelist and cannot update document content.
 
+### Populated-table maintenance gate
+
+Adding `observation_revision` as an identity column rewrites `proxy_events` and
+its indexes under an exclusive lock ([PostgreSQL ALTER TABLE](https://www.postgresql.org/docs/current/sql-altertable.html)).
+The migration deliberately retains this maintenance-window approach. Production
+row counts, rewrite time, WAL volume and temporary disk needs remain unmeasured;
+release is blocked until a representative rehearsal establishes the budget.
+
+Before promotion, record the measured retained row count/table and index sizes,
+available disk/WAL headroom, rehearsal duration, an approved downtime interval,
+and rollback criteria. Drain traffic through reviewed GitOps changes. Supply
+the provisioning executor's `PGOPTIONS` through the same reviewed Git change:
+`-c sslproxy.proxy_evidence_max_rows=<reviewed-row-ceiling>` and
+`-c sslproxy.proxy_evidence_window_end=<UTC-timestamp-without-spaces>`, together
+with `-c statement_timeout=<reviewed-duration>`. No values are enabled by default.
+
+Populated upgrades fail closed without these settings. The timeout must exceed
+one second and fit entirely before the window ends. Lock acquisition is capped
+at one second. After acquiring the exclusive lock, the migration counts at most
+the approved ceiling plus one row and rejects growth beyond that ceiling. The
+rewrite, evidence constraint and unique index build share one timed statement
+and the executor's migration transaction. Timeout/failure rolls back schema and
+ledger changes; retry requires a fresh window and reviewed budget. Empty fresh
+installs and already-applied replays need no maintenance approval. This gate
+does not establish production performance or authorize a rollout.
+
 Existing event document identities are retained. Blocked-window source keys
 retain the legacy raw-host/device/hour formula under UTC preparation. Host
 normalization is separate from that compatibility identity. The existing
@@ -129,6 +155,25 @@ Rollback uses compatible binaries with preparation/workers disabled or a
 compatible input profile; retain the additive schema and evidence.
 
 ## Verification record
+
+Review follow-up on 2026-10-20 rejected userinfo in endpoint evidence, routed
+CONNECT/QUIC blocked events through that helper, corrected the remaining legacy
+job conflict target in `CanonicalIngestionSql`, and added the maintenance gate
+above. Other Octopus and Go job/vector/similarity conflict targets already match
+the extended keys and needed no changes. Manifest checksums and consumer/Job
+references were refreshed together.
+
+Follow-up checks passed: 216 Rust tests; 44 focused Scala tests, including 35
+canonical persistence tests without skips; 34 Go database tests without skips;
+13 audit/migration tests; six executor unit tests; 20 production manifest tests;
+executor fresh/upgrade/replay/drift/ownership integration; schema, documentation,
+formatting, dependency-boundary and GitOps checks.
+
+An additional direct probe of the currently unreferenced
+`CanonicalIngestionSql.applyRecord` path stops before job insertion because its
+existing document INSERT omits required `source_key` (and `source_table`). That
+separate issue remains outside this review fix; the passing runtime suites do
+not establish end-to-end compatibility of that unused ingestion path.
 
 | Check | Result |
 | --- | --- |

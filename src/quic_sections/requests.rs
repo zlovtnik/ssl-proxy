@@ -111,6 +111,20 @@ async fn handle_h3_request(
             host = %host,
             "blocked snitch (QUIC/H3)"
         );
+        let mut extra = events::endpoint(&host, "quic_authority", port);
+        if let Some(map) = extra.as_object_mut() {
+            map.extend(
+                serde_json::json!({
+                    "attribution": identity.evidence(),
+                    "kind": "quic-h3",
+                    "classification": initial_category,
+                    "blocked_bytes_delta_approx": approx_bytes,
+                })
+                .as_object()
+                .expect("blocked event extra is an object")
+                .clone(),
+            );
+        }
         events::emit_serializable(
             &state,
             "block",
@@ -126,14 +140,7 @@ async fn handle_h3_request(
             None,
             true,
             None,
-            serde_json::json!({
-                "authority_raw": events::bounded_host(&host), "authority_source": "quic_authority",
-                "port": uri.authority().and_then(|a| a.port_u16()), "routing_port": port,
-                "attribution": identity.evidence(),
-                "kind": "quic-h3",
-                "classification": initial_category,
-                "blocked_bytes_delta_approx": approx_bytes,
-            }),
+            extra,
         );
 
         // Return 200 OK then immediately close (fast drop)
