@@ -1,0 +1,78 @@
+{
+  "actual_processor_enablement": "unavailable_requires_runtime_attestation",
+  "audit_version": "proxy-rag-measure-v1",
+  "backend_artifact_preprocessing": "unmeasured",
+  "capacity": {
+    "drain_seconds": null,
+    "missing": [
+      "interactive_p95_ms",
+      "interactive_p99_ms",
+      "current_ingest_lag_seconds",
+      "jobs_per_second",
+      "tokens_per_second",
+      "backend_error_rate",
+      "db_wait_ms",
+      "db_lock_waits",
+      "wal_bytes_per_second",
+      "memory_bytes",
+      "queue_growth_per_second",
+      "pending_jobs",
+      "current_reserve_jobs_per_second",
+      "queue_headroom_jobs",
+      "max_scan_rows",
+      "max_transaction_ms",
+      "pause_p99_ms",
+      "pause_ingest_lag_seconds",
+      "pause_backend_error_rate",
+      "pause_memory_bytes",
+      "measured_duration_seconds"
+    ],
+    "status": "blocked_unmeasured"
+  },
+  "coverage": {
+    "status": "unavailable_not_requested"
+  },
+  "desired_files": {
+    "cyber-stack/matrix/prod/patches/atheros-search.yaml": "ca1455f935aa5ce6ecf22bf910b8ab9a9443a2982a28c6486f5fe9c6cc17050d",
+    "cyber-stack/matrix/prod/patches/java-coordinator-broker-drain.yaml": "cfe2d60e641c29427ccaddb045db7c423cbf154e41055c3c011c54deb6327c7f"
+  },
+  "desired_images": "unavailable_not_rendered",
+  "embedding_dimensions": 768,
+  "historical_175519": "unverified_historical_input",
+  "installed_vector_extension": "unavailable_requires_database_audit",
+  "live": {
+    "reason": "TimeoutExpired",
+    "status": "unavailable_read_failed"
+  },
+  "live_image_ids": "unavailable_requires_live_inspection",
+  "measured_at": "2026-10-19T15:35:36.178132+00:00",
+  "model": "nomic-embed-text-v2-moe",
+  "preprocessing_identity": "unknown_legacy_unmeasured",
+  "processor_dependency_closure": "unavailable_requires_runtime_attestation",
+  "retained_source_range": "unavailable_requires_database_audit",
+  "revisions": {
+    "integration_console": {
+      "dirty": true,
+      "head": "6a648e8ecb6e84cb029e738b5df7409f6aee7797"
+    },
+    "octopus": {
+      "dirty": true,
+      "head": "c8d603ed015ea71484f06ca4dcb874d23b3d5d10"
+    },
+    "parent": {
+      "dirty": true,
+      "head": "99ed0dfbed057ac1fd2c574bcedbb338f90c85bc"
+    }
+  },
+  "schema_files": {
+    "atheros_search": {
+      "live_attestation": "unavailable_without_database",
+      "manifest_file_sha256": "d174b87faf56bff6cdb4ed8302a2f9d3f5bf6ccd5b83049c7beff13cec369789"
+    },
+    "octopus_core": {
+      "live_attestation": "unavailable_without_database",
+      "manifest_file_sha256": "16246e847bd4c8b0181b3f8bde1c7cf246b4f38c1fb392a03082450b5c10d0fc"
+    }
+  },
+  "worker_settings": "unavailable_requires_live_inspection"
+}
