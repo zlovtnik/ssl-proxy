@@ -15,13 +15,27 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 /// Future work: a fragmented-ClientHello parser can replace this bounded peek
 /// path once the cutover contract is stable. For now the proxy keeps the
 /// simpler low-overhead preview model.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct TlsInfo {
+    pub(crate) parse_status: &'static str,
     pub(crate) sni: Option<String>,
     pub(crate) alpn: Option<String>,
     pub(crate) tls_ver: Option<String>,
     pub(crate) cipher_suites_count: Option<u8>,
     pub(crate) ja3_lite: Option<String>,
+}
+
+impl Default for TlsInfo {
+    fn default() -> Self {
+        Self {
+            parse_status: "unavailable",
+            sni: None,
+            alpn: None,
+            tls_ver: None,
+            cipher_suites_count: None,
+            ja3_lite: None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -62,20 +76,45 @@ pub(crate) async fn peek_tls_info(stream: &mut tokio::net::TcpStream) -> TlsInfo
     loop {
         let mut buf = vec![0u8; peek_bytes];
         let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-            return TlsInfo::default();
+            return TlsInfo {
+                parse_status: "timeout",
+                ..Default::default()
+            };
         };
-        let n = tokio::time::timeout(remaining, stream.peek(&mut buf))
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-            .unwrap_or(0);
+        let n = match tokio::time::timeout(remaining, stream.peek(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(_)) => {
+                return TlsInfo {
+                    parse_status: "read_error",
+                    ..Default::default()
+                }
+            }
+            Err(_) => {
+                return TlsInfo {
+                    parse_status: "timeout",
+                    ..Default::default()
+                }
+            }
+        };
         if n == 0 {
             return TlsInfo::default();
         }
 
         match parse_tls_info_status(&buf[..n]) {
-            ParseTlsInfoStatus::Complete(info) => return info,
-            ParseTlsInfoStatus::Invalid => return TlsInfo::default(),
+            ParseTlsInfoStatus::Complete(mut info) => {
+                info.parse_status = "parsed";
+                return info;
+            }
+            ParseTlsInfoStatus::Invalid => {
+                return TlsInfo {
+                    parse_status: if buf[0] == 22 {
+                        "parse_failure"
+                    } else {
+                        "non_tls"
+                    },
+                    ..Default::default()
+                }
+            }
             ParseTlsInfoStatus::Incomplete => {
                 if peek_bytes < MAX_PEEK_BYTES {
                     peek_bytes = (peek_bytes * 2).min(MAX_PEEK_BYTES);
@@ -86,7 +125,10 @@ pub(crate) async fn peek_tls_info(stream: &mut tokio::net::TcpStream) -> TlsInfo
                         continue;
                     }
                 }
-                return TlsInfo::default();
+                return TlsInfo {
+                    parse_status: "incomplete",
+                    ..Default::default()
+                };
             }
         }
     }
@@ -110,7 +152,15 @@ where
     let mut bytes = vec![0u8; MAX_PREFIX_BYTES];
     let n = match tokio::time::timeout(TIMEOUT, stream.read(&mut bytes)).await {
         Ok(result) => result?,
-        Err(_) => 0,
+        Err(_) => {
+            return Ok(ConsumedTlsPrefix {
+                tls: TlsInfo {
+                    parse_status: "timeout",
+                    ..Default::default()
+                },
+                bytes: Vec::new(),
+            })
+        }
     };
     bytes.truncate(n);
     let tls = parse_tls_info(&bytes);
@@ -120,8 +170,22 @@ where
 /// Parse ClientHello metadata from a TLS record without panicking.
 pub(crate) fn parse_tls_info(buf: &[u8]) -> TlsInfo {
     match parse_tls_info_status(buf) {
-        ParseTlsInfoStatus::Complete(info) => info,
-        ParseTlsInfoStatus::Incomplete | ParseTlsInfoStatus::Invalid => TlsInfo::default(),
+        ParseTlsInfoStatus::Complete(mut info) => {
+            info.parse_status = "parsed";
+            info
+        }
+        ParseTlsInfoStatus::Incomplete => TlsInfo {
+            parse_status: "incomplete",
+            ..Default::default()
+        },
+        ParseTlsInfoStatus::Invalid => TlsInfo {
+            parse_status: if buf.first() == Some(&22) {
+                "parse_failure"
+            } else {
+                "non_tls"
+            },
+            ..Default::default()
+        },
     }
 }
 

@@ -38,6 +38,7 @@ impl AppState {
             forensic: crate::forensic::ForensicState::new(config.proxy.forensic_sentry_enabled),
             wg_relay_metrics: Arc::new(crate::wg_relay::RelayMetrics::default()),
             event_dedup: DashMap::new(),
+            event_coalescing: Mutex::new(HashMap::new()),
             dashboard_event_queue: Mutex::new(VecDeque::with_capacity(
                 DASHBOARD_EVENT_QUEUE_CAPACITY,
             )),
@@ -98,6 +99,62 @@ impl AppState {
 
         self.event_dedup.insert(key, now);
         true
+    }
+
+    /// Counts only suppression in this process and key's preceding window.
+    /// Final windows can be lost at exit/eviction; lifetime attempt counts are
+    /// deliberately not substituted for them. Saturation emits uncoalesced.
+    pub(crate) fn coalesce_event(
+        &self,
+        event: &str,
+        host: &str,
+        peer: Option<&str>,
+        key: Option<&str>,
+        device: Option<&str>,
+        reason: Option<&str>,
+    ) -> Option<serde_json::Value> {
+        let id = serde_json::to_string(&(event, host, peer, key, device, reason)).ok()?;
+        let now = Instant::now();
+        let mut entries = self
+            .event_coalescing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut suppressed = 0;
+        let wall_now = chrono::Utc::now();
+        let mut previous_start = None;
+        if let Some((started, count, wall_start)) = entries.get_mut(&id) {
+            if now.duration_since(*started) < EVENT_DEDUP_WINDOW {
+                *count = count.saturating_add(1);
+                return None;
+            }
+            suppressed = *count;
+            previous_start = Some(*wall_start);
+            *started = now;
+            *count = 0;
+            *wall_start = wall_now;
+        } else {
+            // No silent suppression when capacity is exhausted. Expired keys
+            // can be removed, but their final-window counts remain unknown.
+            if entries.len() >= EVENT_DEDUP_MAX_KEYS {
+                entries
+                    .retain(|_, (started, _, _)| now.duration_since(*started) < EVENT_DEDUP_WINDOW);
+            }
+            if entries.len() >= EVENT_DEDUP_MAX_KEYS {
+                return Some(serde_json::json!({"policy_version": "proxy-coalescing-v1",
+                    "status": "capacity_bypass", "suppressed_previous_window": null,
+                    "loss_disposition": "unreported_final_windows_possible"}));
+            }
+            entries.insert(id, (now, 0, wall_now));
+        }
+        Some(serde_json::json!({"policy_version": "proxy-coalescing-v1",
+            "status": "emitted", "window_ms": EVENT_DEDUP_WINDOW.as_millis() as u64,
+            "window_start": wall_now.to_rfc3339(),
+            "window_end": (wall_now + chrono::Duration::milliseconds(500)).to_rfc3339(),
+            "suppressed_window_start": previous_start.map(|value| value.to_rfc3339()),
+            "suppressed_window_end": previous_start.map(|value| (value + chrono::Duration::milliseconds(500)).to_rfc3339()),
+            "counter_scope": "process_event_host_peer_device_reason",
+            "suppressed_previous_window": suppressed,
+            "loss_disposition": "unreported_final_windows_possible"}))
     }
 
     pub fn queue_dashboard_event(&self, raw: &str, event_name: &str, host: &str) {

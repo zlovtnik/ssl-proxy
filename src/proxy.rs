@@ -196,6 +196,14 @@ pub async fn handler(
 
     // Check blocklist using the host from the URI or Host header.
     let (hostname, target_port) = request_target(&req).ok_or(StatusCode::BAD_REQUEST)?;
+    let raw_authority = req
+        .uri()
+        .authority()
+        .map(|a| a.as_str())
+        .or_else(|| req.headers().get("host").and_then(|v| v.to_str().ok()))
+        .unwrap_or("");
+    let endpoint = events::endpoint(raw_authority, "http_authority", target_port);
+    let attribution = identity.evidence();
     if hostname.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -204,6 +212,9 @@ pub async fn handler(
     if blocklist::is_blocked(&hostname, &state) {
         #[derive(Serialize)]
         struct HttpBlockedExtra {
+            #[serde(flatten)]
+            endpoint: serde_json::Value,
+            attribution: serde_json::Value,
             classification: &'static str,
             method: String,
             uri: String,
@@ -268,6 +279,8 @@ pub async fn handler(
             true,
             None,
             HttpBlockedExtra {
+                endpoint,
+                attribution,
                 classification,
                 method: req.method().as_str().to_string(),
                 uri: scrubbed,
@@ -445,6 +458,8 @@ pub async fn handler(
                         Some(profile.as_str().to_string())
                     },
                     extra: serde_json::json!({
+                        "authority_raw": endpoint["authority_raw"], "authority_source": "http_authority",
+                        "port": endpoint["port"], "routing_port": target_port, "attribution": attribution,
                         "classification": classification,
                         "method": method.as_str(),
                         "uri":    scrubbed_uri,
@@ -508,6 +523,8 @@ pub async fn handler(
                     blocked: false,
                     obfuscation_profile: None,
                     extra: serde_json::json!({
+                        "authority_raw": endpoint["authority_raw"], "authority_source": "http_authority",
+                        "port": endpoint["port"], "routing_port": target_port, "attribution": attribution,
                         "classification": classification,
                         "method": method.as_str(),
                         "uri":    scrubbed_uri,

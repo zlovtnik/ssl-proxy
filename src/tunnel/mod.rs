@@ -8,7 +8,7 @@ pub(crate) mod audit_event;
 mod classify;
 mod connect;
 mod dial;
-mod socket_tuning;
+pub(crate) mod socket_tuning;
 mod tarpit;
 pub(crate) mod tls;
 mod transparent;

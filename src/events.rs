@@ -135,23 +135,6 @@ pub(crate) fn emit_serializable<T>(
 ) where
     T: Serialize,
 {
-    if should_dedup_event(event, blocked)
-        && !state.should_emit_deduped_event(
-            event,
-            host,
-            peer_ip.as_deref(),
-            wg_pubkey.as_deref(),
-            device_id.as_deref(),
-        )
-    {
-        debug!(
-            event_name = event,
-            %host,
-            "coalesced duplicate event inside deduplication window"
-        );
-        return;
-    }
-
     let audit_sanitize = audit_sanitize_hostnames();
     let event_host = if audit_sanitize {
         sanitize_hostname(host)
@@ -171,6 +154,55 @@ pub(crate) fn emit_serializable<T>(
             return;
         }
     };
+    let coalescing = if should_dedup_event(event, blocked) {
+        let Some(evidence) = state.coalesce_event(
+            event,
+            host,
+            peer_ip.as_deref(),
+            wg_pubkey.as_deref(),
+            device_id.as_deref(),
+            extra.get("reason").and_then(serde_json::Value::as_str),
+        ) else {
+            return;
+        };
+        evidence
+    } else {
+        serde_json::json!({"policy_version": "proxy-coalescing-v1", "status": "not_applied"})
+    };
+    extra.insert("coalescing".into(), coalescing);
+    extra.insert(
+        "evidence_version".into(),
+        serde_json::json!("proxy-evidence-v1"),
+    );
+    extra.insert(
+        "sanitization_status".into(),
+        serde_json::json!(if audit_sanitize {
+            "sanitized"
+        } else {
+            "not_sanitized"
+        }),
+    );
+    // Legacy host is kept for compatibility. Only source paths that actually
+    // observe an authority supply authority_raw; routing defaults never do.
+    extra
+        .entry("host_raw")
+        .or_insert_with(|| serde_json::json!(bounded_host(host)));
+    extra.insert(
+        "host_truncated".into(),
+        serde_json::json!(host.len() > 1024),
+    );
+    extra
+        .entry("authority_source")
+        .or_insert(serde_json::json!("legacy_host"));
+    let has_duration = extra.contains_key("duration_ms");
+    extra.entry("measurement").or_insert_with(|| {
+        serde_json::json!({
+            "version": "proxy-measurement-v1", "bytes_status": "unavailable",
+            "duration_status": if has_duration { "header_latency" } else { "unavailable" },
+            "byte_unit": "bytes", "up_direction": "client_to_destination",
+            "down_direction": "destination_to_client", "source": "unavailable"
+        })
+    });
 
     if let Some(value) = peer_ip {
         extra.insert("peer_ip".to_string(), serde_json::Value::String(value));
@@ -319,9 +351,7 @@ fn sanitize_extra_host_fields(extra: &mut serde_json::Map<String, serde_json::Va
                 serde_json::Value::Object(map) => sanitize_extra_host_fields(map),
                 serde_json::Value::Array(values) => {
                     for value in values {
-                        if let serde_json::Value::Object(map) = value {
-                            sanitize_extra_host_fields(map);
-                        }
+                        sanitize_nested_host_fields(value);
                     }
                 }
                 _ => {}
@@ -337,6 +367,43 @@ fn is_hostname_field(key: &str) -> bool {
         || key.ends_with("_host")
         || key.ends_with("_hostname")
         || key.contains("hostname")
+        || matches!(
+            key,
+            "host_raw"
+                | "host_normalized"
+                | "authority_raw"
+                | "authority_normalized"
+                | "registrable_domain"
+                | "original_destination"
+        )
+}
+
+fn sanitize_nested_host_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => sanitize_extra_host_fields(map),
+        serde_json::Value::Array(values) => values.iter_mut().for_each(sanitize_nested_host_fields),
+        _ => {}
+    }
+}
+
+pub(crate) fn bounded_host(value: &str) -> String {
+    let mut end = value.len().min(1024);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
+}
+
+/// Observed authority evidence, separate from the port selected for routing.
+pub(crate) fn endpoint(authority: &str, source: &str, routing_port: u16) -> serde_json::Value {
+    let parsed = authority.parse::<axum::http::uri::Authority>().ok();
+    let explicit_port = parsed.as_ref().and_then(|a| a.port_u16());
+    serde_json::json!({
+        "authority_raw": bounded_host(authority), "authority_source": source,
+        "host_raw": parsed.as_ref().map(|a| bounded_host(a.host().trim_matches(['[', ']']))),
+        "authority_truncated": authority.len() > 1024,
+        "port": explicit_port, "routing_port": routing_port
+    })
 }
 
 fn sanitize_json_strings(value: &mut serde_json::Value) {

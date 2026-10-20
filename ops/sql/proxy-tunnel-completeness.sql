@@ -14,6 +14,8 @@ WITH seeds AS MATERIALIZED (
   ORDER BY event_time, event_id LIMIT :page_size
 ), candidates AS MATERIALIZED (
   SELECT DISTINCT correlation_id FROM seeds WHERE correlation_id IS NOT NULL
+    AND :'horizon_start'::timestamptz <= :'window_start'::timestamptz
+    AND :'horizon_end'::timestamptz >= :'window_end'::timestamptz
 ), evidence AS (
   SELECT c.correlation_id, e.* FROM candidates c
   CROSS JOIN LATERAL (
@@ -43,6 +45,8 @@ SELECT jsonb_build_object(
   'missing_correlation_observations', (SELECT count(*) FROM seeds WHERE correlation_id IS NULL),
   'cursor', (SELECT jsonb_build_array(event_time,event_id) FROM seeds ORDER BY event_time DESC,event_id DESC LIMIT 1),
   'horizon_start', :'horizon_start', 'horizon_end', :'horizon_end',
+  'horizon_covers_window', :'horizon_start'::timestamptz <= :'window_start'::timestamptz
+    AND :'horizon_end'::timestamptz >= :'window_end'::timestamptz,
   'limitation', 'candidate correlations repeat across pages; do not sum as validated flows; missing evidence outside horizon or retention remains unknown'
 )
 FROM sessions;

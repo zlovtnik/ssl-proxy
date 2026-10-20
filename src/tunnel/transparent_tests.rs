@@ -30,6 +30,7 @@ async fn blocked_tunnel_estimate_is_per_event() {
         .store(Arc::new(HashSet::from([host.to_string()])));
     let destination = "127.0.0.1:443".parse().unwrap();
     let tls = TlsInfo {
+        parse_status: "parsed",
         sni: Some(host.to_string()),
         ..TlsInfo::default()
     };
@@ -301,6 +302,7 @@ async fn blocked_non_tarpit_transparent_sessions_do_not_fall_through() {
 
     let tls = TlsInfo {
         sni: Some(blocked_host.to_string()),
+        parse_status: "parsed",
         alpn: None,
         tls_ver: None,
         cipher_suites_count: None,
@@ -364,6 +366,7 @@ async fn pinned_transparent_hosts_bypass_and_connect() {
             state_clone,
             orig_dst,
             TlsInfo {
+                parse_status: "parsed",
                 sni: Some("i.instagram.com".to_string()),
                 alpn: Some("h2".to_string()),
                 tls_ver: Some("TLS1.3".to_string()),

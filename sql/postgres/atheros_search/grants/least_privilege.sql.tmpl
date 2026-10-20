@@ -12,6 +12,13 @@ GRANT SELECT ON atheros_search.wireless_observation_summaries,
   atheros_search.wireless_topology_nodes, atheros_search.wireless_topology_edges TO {{ATHEROS_SEARCH_ACCOUNT}};
 
 GRANT SELECT ON atheros_search.schema_readiness TO {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.proxy_event_evidence,
+  atheros_search.proxy_document_state TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT ON atheros_search.proxy_event_evidence TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT ON atheros_search.embedding_repair_receipts TO {{OCTOPUS_ACCOUNT}}, {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE ON atheros_search.embedding_repair_progress TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE ON atheros_search.proxy_preparation_policy TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT ON atheros_search.proxy_preparation_policy TO {{ATHEROS_SEARCH_ACCOUNT}};
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.search_documents TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.embedding_jobs TO {{OCTOPUS_ACCOUNT}};

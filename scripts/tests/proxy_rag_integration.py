@@ -149,12 +149,28 @@ FROM atheros_search.search_documents WHERE source_key='job-state-9';
     def test_lifecycle_crosses_both_boundaries(self):
         result = json.loads(self.sql((ROOT / "ops/sql/proxy-tunnel-completeness.sql").read_text(), "proxy_audit", self.variables()))
         self.assertEqual(result["seed_rows"], 2)
+        self.assertTrue(result["horizon_covers_window"])
         self.assertEqual(result["cross_boundary_pairs"], 2)
         self.assertEqual(result["single_ordered_pair_within_horizon"], 2)
         variables = self.variables()
         variables["horizon_start"], variables["horizon_end"] = variables["window_start"], variables["window_end"]
         result = json.loads(self.sql((ROOT / "ops/sql/proxy-tunnel-completeness.sql").read_text(), "proxy_audit", variables))
+        self.assertTrue(result["horizon_covers_window"])
         self.assertEqual(result["missing_side_unknown_beyond_horizon"], 2)
+
+    def test_lifecycle_requires_horizon_to_cover_full_window(self):
+        for bounds in (dict(horizon_start="2026-10-19T00:01Z"),
+                       dict(horizon_end="2026-10-19T23:59Z")):
+            with self.subTest(bounds=bounds):
+                variables = self.variables()
+                variables.update(bounds)
+                result = json.loads(self.sql((ROOT / "ops/sql/proxy-tunnel-completeness.sql").read_text(),
+                                             "proxy_audit", variables))
+                self.assertFalse(result["horizon_covers_window"])
+                self.assertEqual(result["seed_rows"], 2)
+                self.assertEqual(result["candidate_correlations"], 0)
+                self.assertEqual(result["single_ordered_pair_within_horizon"], 0)
+                self.assertEqual(result["counterpart_rows_returned"], 0)
 
     def test_explain_bounded_volume(self):
         query = (ROOT / "ops/sql/proxy-rag-coverage.sql").read_text().replace(

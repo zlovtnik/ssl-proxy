@@ -325,6 +325,7 @@ pub struct AppState {
     pub forensic: crate::forensic::SharedForensicState,
     pub wg_relay_metrics: Arc<crate::wg_relay::RelayMetrics>,
     event_dedup: DashMap<String, Instant>,
+    event_coalescing: Mutex<HashMap<String, (Instant, u64, chrono::DateTime<chrono::Utc>)>>,
     pub config: crate::config::Config,
 
     /// Bandwidth rate calculation snapshot

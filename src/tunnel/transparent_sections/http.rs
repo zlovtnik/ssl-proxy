@@ -16,7 +16,12 @@ struct HttpTunnelObservation {
 }
 
 impl HttpTunnelObservation {
-    fn open(&mut self, host: &str, identity: &crate::identity::ResolvedIdentity) {
+    fn open(
+        &mut self,
+        host: &str,
+        identity: &crate::identity::ResolvedIdentity,
+        endpoint: serde_json::Value,
+    ) {
         if self.flow.is_some() {
             return;
         }
@@ -34,7 +39,8 @@ impl HttpTunnelObservation {
         .with_resolution(
             vec![self.destination.ip().to_string()],
             self.destination.ip().to_string(),
-        );
+        )
+        .with_endpoint(endpoint);
         context.emit_open(&self.state, host, identity);
         self.state
             .record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
@@ -294,6 +300,15 @@ async fn transparent_http_request(
         crate::identity::extract_device_token(req.headers()),
         crate::identity::extract_user_agent(req.headers()),
     );
+    let raw_authority = req
+        .uri()
+        .authority()
+        .map(|a| a.as_str())
+        .or_else(|| req.headers().get("host").and_then(|v| v.to_str().ok()))
+        .unwrap_or("");
+    let mut endpoint = events::endpoint(raw_authority, "http_authority", orig_dst.port());
+    endpoint["original_destination"] = serde_json::json!(orig_dst.to_string());
+    let attribution = identity.evidence();
     let decision =
         evaluate_transparent_policy(&state, orig_dst, &tls, Some(hostname.clone())).await;
     match decision {
@@ -320,6 +335,8 @@ async fn transparent_http_request(
                     blocked: true,
                     obfuscation_profile: None,
                     extra: serde_json::json!({
+                        "authority_raw": endpoint["authority_raw"], "authority_source": "http_authority", "port": endpoint["port"],
+                        "original_destination": endpoint["original_destination"], "routing_port": orig_dst.port(), "attribution": attribution,
                         "category": decision.flow.category,
                         "reason": decision.flow.reason,
                         "blocked_bytes_delta_approx": decision.blocked_bytes_delta_approx,
@@ -359,7 +376,7 @@ async fn transparent_http_request(
     observation
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .open(&hostname, &identity);
+        .open(&hostname, &identity, endpoint.clone());
     tokio::spawn(async move {
         let _ = connection.with_upgrades().await;
     });

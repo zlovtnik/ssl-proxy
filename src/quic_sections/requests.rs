@@ -127,6 +127,9 @@ async fn handle_h3_request(
             true,
             None,
             serde_json::json!({
+                "authority_raw": events::bounded_host(&host), "authority_source": "quic_authority",
+                "port": uri.authority().and_then(|a| a.port_u16()), "routing_port": port,
+                "attribution": identity.evidence(),
                 "kind": "quic-h3",
                 "classification": initial_category,
                 "blocked_bytes_delta_approx": approx_bytes,
@@ -199,6 +202,7 @@ async fn handle_h3_request(
     state.record_classification(category);
     let context = TunnelAuditContext::new("quic-h3", category, None, profile)
         .with_resolution(resolved_ips.clone(), selected_ip.clone())
+        .with_endpoint(events::endpoint(&host, "quic_authority", port))
         .with_tls(tls.clone());
 
     info!(
@@ -248,11 +252,14 @@ async fn handle_h3_request(
     let h3_to_upstream = async {
         let mut total: u64 = 0;
         if !first_up_chunk.is_empty() {
-            if let Err(e) = upstream_write.write_all(&first_up_chunk).await {
+            let (written, result) =
+                crate::tunnel::socket_tuning::write_prefix(&mut upstream_write, &first_up_chunk)
+                    .await;
+            total += written;
+            if let Err(e) = result {
                 debug!(%host, %e, "QUIC: upstream first write failed");
                 return total;
             }
-            total += first_up_chunk.len() as u64;
             if capture_payloads && up_buf.len() < PAYLOAD_PREVIEW_LIMIT {
                 let take = (PAYLOAD_PREVIEW_LIMIT - up_buf.len()).min(first_up_chunk.len());
                 up_buf.extend_from_slice(&first_up_chunk[..take]);
@@ -264,11 +271,14 @@ async fn handle_h3_request(
                     while bytes::Buf::has_remaining(&buf) {
                         let chunk: &[u8] = bytes::Buf::chunk(&buf);
                         let len = chunk.len();
-                        if let Err(e) = upstream_write.write_all(chunk).await {
+                        let (written, result) =
+                            crate::tunnel::socket_tuning::write_prefix(&mut upstream_write, chunk)
+                                .await;
+                        total += written;
+                        if let Err(e) = result {
                             debug!(%host, %e, "QUIC: upstream write failed");
                             return total;
                         }
-                        total += len as u64;
 
                         // Capture first N bytes only if payload capture is enabled
                         if capture_payloads && up_buf.len() < PAYLOAD_PREVIEW_LIMIT {

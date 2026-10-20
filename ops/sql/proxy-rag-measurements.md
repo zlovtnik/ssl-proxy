@@ -145,10 +145,13 @@ used; retained range, schema attestations, production vector extension and all
 production counts remain unavailable. Desired file hashes are intent only.
 Expected unchanged manifest identities are:
 
-| Domain | Version | Manifest SHA-256 |
+| Domain | Version | Manifest `manifest_sha256` field |
 | --- | --- | --- |
 | octopus_core | 2026101701 | `38f44137d93d46615bc99090dea2149637b8be5ce7c4d8dfdd0b60d9b8f170fc` |
 | atheros_search | 011 | `cf93e7e611ddfa897f36e68f454160ef9dfd57686fbbb262bb030ca050ba912f` |
+
+These values are the manifests' `manifest_sha256` fields, not SHA-256 digests of
+the manifest files.
 
 The synthetic database contains 20,000 older background observations. Its frozen
 2026-10-19 interval has 10 observations: seven eligible (including one sanitized),

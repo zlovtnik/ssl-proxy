@@ -65,6 +65,10 @@ GRANT USAGE ON SEQUENCE octopus_core.proxy_blocked_host_rollups_id_seq TO {{OCTO
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.proxy_payload_audit TO {{OCTOPUS_ACCOUNT}};
 GRANT USAGE ON SEQUENCE octopus_core.proxy_payload_audit_id_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.work_leases TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.proxy_preparation_dirty,
+  octopus_core.proxy_preparation_progress, octopus_core.proxy_window_dirty TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE, SELECT ON SEQUENCE octopus_core.proxy_window_revision_seq TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE, SELECT ON SEQUENCE octopus_core.proxy_events_observation_revision_seq TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.processor_state TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.retention_runs TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.reconciliation_findings TO {{OCTOPUS_ACCOUNT}};

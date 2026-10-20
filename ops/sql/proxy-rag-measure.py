@@ -81,6 +81,13 @@ def metadata(live=False, namespace="prod-ssl-proxy"):
               "backend_artifact_preprocessing": "unmeasured", "historical_175519": "unverified_historical_input"}
     for name, path in (("parent", ROOT), ("octopus", ROOT / "services/octopus"),
                        ("integration_console", ROOT / "apps/integration-console")):
+        try:
+            checkout_root = pathlib.Path(run(["git", "rev-parse", "--show-toplevel"], path)).resolve()
+        except (OSError, subprocess.SubprocessError):
+            checkout_root = None
+        if checkout_root != path.resolve():
+            result["revisions"][name] = {"status": "unavailable_not_checked_out"}
+            continue
         result["revisions"][name] = {"head": run(["git", "rev-parse", "HEAD"], path),
                                      "dirty": bool(run(["git", "status", "--porcelain"], path))}
     for domain in ("octopus_core", "atheros_search"):
@@ -143,7 +150,8 @@ def measure(args):
                                         ("document_cursor", "document_after_time", "document_after_id")):
             cursor = page.pop(field)
             if cursor is not None:
-                if (timestamp(cursor[0]), cursor[1]) <= (timestamp(variables[time_key]), variables[id_key]):
+                cursor_time, previous_time = timestamp(cursor[0]), timestamp(variables[time_key])
+                if cursor_time < previous_time or (cursor_time == previous_time and cursor[1] == variables[id_key]):
                     raise ValueError("nonadvancing audit cursor")
                 variables[time_key], variables[id_key] = cursor
         pages.append(page)

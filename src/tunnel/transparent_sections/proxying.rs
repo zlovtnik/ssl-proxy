@@ -48,6 +48,7 @@ pub(crate) async fn run_transparent(
             let start = Instant::now();
             let context = TunnelAuditContext::new("transparent", category, Some(reason), profile)
                 .with_resolution(vec![orig_dst.ip().to_string()], orig_dst.ip().to_string())
+                .with_endpoint(transparent_endpoint(orig_dst, &tls, None))
                 .with_tls(tls.clone());
             info!(
                 target: "audit",
@@ -104,7 +105,10 @@ pub(crate) async fn run_transparent(
                     if n == 0 {
                         break;
                     }
-                    if let Err(e) = upstream_write.write_all(&buf[..n]).await {
+                    let (written, result) =
+                        super::socket_tuning::write_prefix(&mut upstream_write, &buf[..n]).await;
+                    up_counter.fetch_add(written, Ordering::Relaxed);
+                    if let Err(e) = result {
                         // Log sizes only: the captured buffer is raw plaintext
                         // and must never reach debug logs. Byte-level payload
                         // evidence flows exclusively through the redacted
@@ -119,7 +123,6 @@ pub(crate) async fn run_transparent(
                         return Err(e);
                     }
                     total += n as u64;
-                    up_counter.fetch_add(n as u64, Ordering::Relaxed);
                     observe_forensic_chunk(
                         &state,
                         &host,
@@ -146,7 +149,10 @@ pub(crate) async fn run_transparent(
                     if n == 0 {
                         break;
                     }
-                    if let Err(e) = client_write.write_all(&buf[..n]).await {
+                    let (written, result) =
+                        super::socket_tuning::write_prefix(&mut client_write, &buf[..n]).await;
+                    down_counter.fetch_add(written, Ordering::Relaxed);
+                    if let Err(e) = result {
                         // Log sizes only: the captured buffer is raw plaintext
                         // and must never reach debug logs.
                         debug!(
@@ -159,7 +165,6 @@ pub(crate) async fn run_transparent(
                         return Err(e);
                     }
                     total += n as u64;
-                    down_counter.fetch_add(n as u64, Ordering::Relaxed);
                     observe_forensic_chunk(
                         &state,
                         &host,
@@ -210,7 +215,7 @@ pub(crate) async fn run_transparent(
                         )
                     });
 
-                    context.emit_close(
+                    context.with_transfer_status(true).emit_close(
                         &state,
                         &host,
                         &identity,
@@ -228,7 +233,7 @@ pub(crate) async fn run_transparent(
                         bytes_up,
                         bytes_down,
                     );
-                    context.emit_close(
+                    context.with_transfer_status(false).emit_close(
                         &state,
                         &host,
                         &identity,

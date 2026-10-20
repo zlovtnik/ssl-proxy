@@ -15,6 +15,26 @@ pub struct ResolvedIdentity {
     pub identity_source: Option<String>,
     pub peer_hostname: Option<String>,
     pub client_ua: Option<String>,
+    pub attribution_method: Option<String>,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
+}
+
+impl ResolvedIdentity {
+    pub(crate) fn evidence(&self) -> serde_json::Value {
+        static SCOPE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let scope = SCOPE.get_or_init(|| uuid::Uuid::new_v4().to_string());
+        let peer_reference = self.wg_pubkey.as_ref().map(|key| {
+            let encoded = serde_json::to_vec(&(scope, key)).unwrap_or_default();
+            format!("{:x}", Sha256::digest(encoded))
+        });
+        serde_json::json!({"version": "proxy-attribution-v1", "method": self.attribution_method.as_deref().unwrap_or("unknown"),
+            "valid_from": self.valid_from, "valid_until": self.valid_until,
+            "mapping_revision": self.valid_from, "peer_reference": peer_reference,
+            "reference_scope": "process_wireguard_peer", "reference_rotation": "process_restart_or_key_change",
+            "reference_expiry": "process_lifetime",
+            "ownership": "registration_claim_only"})
+    }
 }
 
 pub fn mint_device_token() -> String {
@@ -68,6 +88,9 @@ pub fn resolve_identity(
         identity_source: None,
         peer_hostname,
         client_ua: client_ua.map(|value| truncate(&value, 512)),
+        attribution_method: None,
+        valid_from: None,
+        valid_until: None,
     };
 
     if let Some(token) = device_token {
@@ -77,6 +100,11 @@ pub fn resolve_identity(
         {
             resolved.device_id = Some(device.device_id.clone());
             resolved.identity_source = Some("registered".to_string());
+            resolved.attribution_method = Some("device_token".into());
+            if let Some(claim) = state.find_claim(wg_pubkey.as_deref(), peer_ip.as_deref()) {
+                resolved.valid_from = Some(claim.claimed_at);
+                resolved.valid_until = Some(claim.expires_at);
+            }
             return resolved;
         }
     }
@@ -84,6 +112,9 @@ pub fn resolve_identity(
     if let Some(claim) = state.find_claim(wg_pubkey.as_deref(), peer_ip.as_deref()) {
         resolved.device_id = Some(claim.device_id);
         resolved.identity_source = Some("registered".to_string());
+        resolved.attribution_method = Some("peer_claim".into());
+        resolved.valid_from = Some(claim.claimed_at);
+        resolved.valid_until = Some(claim.expires_at);
         return resolved;
     }
 

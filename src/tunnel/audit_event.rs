@@ -24,6 +24,8 @@ pub(crate) struct TunnelAuditContext {
     pub(crate) selected_ip: Option<String>,
     pub(crate) tls: TlsInfo,
     pub(crate) bypass_reason: Option<&'static str>,
+    pub(crate) transfer_status: &'static str,
+    pub(crate) endpoint: serde_json::Value,
 }
 
 impl TunnelAuditContext {
@@ -47,6 +49,8 @@ impl TunnelAuditContext {
             selected_ip: None,
             tls: TlsInfo::default(),
             bypass_reason: None,
+            transfer_status: "unavailable",
+            endpoint: json!({}),
         }
     }
 
@@ -69,6 +73,19 @@ impl TunnelAuditContext {
 
     pub(crate) fn with_tls(mut self, tls: TlsInfo) -> Self {
         self.tls = tls;
+        self
+    }
+
+    pub(crate) fn with_endpoint(mut self, evidence: serde_json::Value) -> Self {
+        self.endpoint = evidence;
+        self
+    }
+    pub(crate) fn with_transfer_status(mut self, complete: bool) -> Self {
+        self.transfer_status = if complete {
+            "measured_terminal"
+        } else {
+            "partial"
+        };
         self
     }
 
@@ -96,9 +113,24 @@ impl TunnelAuditContext {
             "alpn": self.tls.alpn.clone(),
             "cipher_suites_count": self.tls.cipher_suites_count,
             "ja3_lite": self.tls.ja3_lite.clone(),
+            "tls_evidence": {
+                "source": "client_hello", "parser_version": "proxy-clienthello-v1",
+                "parse_status": self.tls.parse_status, "semantics": "offered_not_negotiated",
+                "offered_version": self.tls.tls_ver, "offered_alpn": self.tls.alpn,
+                "ja3_lite": self.tls.ja3_lite,
+            },
+            "measurement": {
+                "version": "proxy-measurement-v1", "bytes_status": if event_sequence == 1 { "unavailable" } else { self.transfer_status },
+                "duration_status": if duration.is_some() { "connection_elapsed" } else { "unavailable" },
+                "byte_unit": "bytes", "up_direction": "client_to_destination", "down_direction": "destination_to_client",
+                "source": "successful_socket_writes", "termination": self.transfer_status,
+            },
         });
 
         if let serde_json::Value::Object(ref mut map) = extra {
+            if let Some(endpoint) = self.endpoint.as_object() {
+                map.extend(endpoint.clone());
+            }
             if let Some(reason) = self.bypass_reason {
                 map.insert("bypass_reason".to_string(), json!(reason));
             }
@@ -127,7 +159,7 @@ impl TunnelAuditContext {
                 status_code: None,
                 blocked: false,
                 obfuscation_profile: self.obfuscation_profile.clone(),
-                extra: self.event_extra(1, 0, 0, None, None),
+                extra: self.identity_extra(identity, self.event_extra(1, 0, 0, None, None)),
             },
         );
     }
@@ -159,9 +191,21 @@ impl TunnelAuditContext {
                 status_code: None,
                 blocked: false,
                 obfuscation_profile: self.obfuscation_profile.clone(),
-                extra: self.event_extra(2, bytes_up, bytes_down, Some(duration), payload_preview),
+                extra: self.identity_extra(
+                    identity,
+                    self.event_extra(2, bytes_up, bytes_down, Some(duration), payload_preview),
+                ),
             },
         );
+    }
+
+    fn identity_extra(
+        &self,
+        identity: &ResolvedIdentity,
+        mut extra: serde_json::Value,
+    ) -> serde_json::Value {
+        extra["attribution"] = identity.evidence();
+        extra
     }
 }
 
@@ -183,6 +227,7 @@ mod tests {
             identity_source: Some("registered".to_string()),
             peer_hostname: Some("phone.local".to_string()),
             client_ua: Some("UA".to_string()),
+            ..Default::default()
         }
     }
 
@@ -212,6 +257,7 @@ mod tests {
         )
         .with_resolution(vec!["192.0.2.10".to_string()], "192.0.2.10".to_string())
         .with_tls(TlsInfo {
+            parse_status: "parsed",
             sni: Some("example.com".to_string()),
             alpn: Some("h2".to_string()),
             tls_ver: Some("TLS1.3".to_string()),

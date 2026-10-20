@@ -11,7 +11,7 @@ remain stages 3, 4 and 7 of the [workmap](../advisor-plans/002-proxy-rag-ml-work
 
 | Field | Meaning |
 | --- | --- |
-| `authority_raw` | Original authority input, including explicitly observed port; null for unsafe encoding, controls or input over 1024 UTF-8 bytes |
+| `authority_raw` | Original authority input, including explicitly observed port; null for userinfo indicated by `@`, unsafe encoding, controls or input over 1024 UTF-8 bytes |
 | `host_raw` | Extracted host spelling, without brackets or port; null when parsing stopped before extraction |
 | `host_normalized` | Lowercase ASCII DNS name without its final root dot, strict IPv4, or compressed lowercase IPv6; null unless valid |
 | `port` | Explicit decimal port 1..65535; absent stays null, including absent default ports |
@@ -27,6 +27,8 @@ contract. A legacy host with no sanitization flag does not establish the origina
 privacy policy. Preserve that provenance separately when stage 3 adds evidence.
 Sanitized inputs never acquire normalized host/domain/port grouping keys.
 Invalid values may retain private raw evidence but never valid grouping keys.
+Any input containing `@` has null raw authority and `invalid` parse status,
+including inputs marked sanitized.
 Raw evidence is not embedding prose, logging content or exported diagnostics.
 Existing hostname privacy policy must run before any future raw-field persistence.
 

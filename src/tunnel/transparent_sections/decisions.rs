@@ -128,6 +128,8 @@ async fn block_transparent_flow(
         true,
         None,
         TransparentBlockExtra {
+            endpoint: transparent_endpoint(orig_dst, tls, decision.flow.hostname.as_deref()),
+            attribution: identity.evidence(),
             category: decision.flow.category,
             fingerprint: TransparentFingerprint {
                 tls_ver: tls.tls_ver.clone(),
@@ -226,16 +228,19 @@ async fn bypass_transparent_flow(
             super::socket_tuning::configure_tunnel_tcp(&upstream);
             let context = TunnelAuditContext::bypass("transparent", flow.category, flow.reason)
                 .with_resolution(vec![orig_dst.ip().to_string()], orig_dst.ip().to_string())
+                .with_endpoint(transparent_endpoint(
+                    orig_dst,
+                    &tls,
+                    flow.hostname.as_deref(),
+                ))
                 .with_tls(tls);
             state.record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
             context.emit_open(&state, &flow.authority, &identity);
 
-            let (bytes_up, bytes_down) =
-                super::socket_tuning::copy_bidirectional(&mut stream, &mut upstream)
-                    .await
-                    .unwrap_or((0, 0));
+            let (bytes_up, bytes_down, complete) =
+                super::socket_tuning::measured_copy(&mut stream, &mut upstream).await;
             state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), bytes_up, bytes_down);
-            context.emit_close(
+            context.with_transfer_status(complete).emit_close(
                 &state,
                 &flow.authority,
                 &identity,
@@ -252,6 +257,23 @@ async fn bypass_transparent_flow(
             error!(host = %flow.audit_host, reason = flow.reason, "transparent bypass connect timed out")
         }
     }
+}
+
+fn transparent_endpoint(
+    orig_dst: SocketAddr,
+    tls: &TlsInfo,
+    host: Option<&str>,
+) -> serde_json::Value {
+    let (raw, source) = if let Some(sni) = &tls.sni {
+        (sni.clone(), "sni")
+    } else if let Some(host) = host {
+        (host.to_string(), "http_authority")
+    } else {
+        (orig_dst.to_string(), "original_destination")
+    };
+    let mut value = events::endpoint(&raw, source, orig_dst.port());
+    value["original_destination"] = serde_json::json!(orig_dst.to_string());
+    value
 }
 
 /// Retrieve the original destination address set by the kernel (SO_ORIGINAL_DST).
