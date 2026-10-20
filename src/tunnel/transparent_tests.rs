@@ -106,6 +106,7 @@ async fn plaintext_keepalive_checks_every_request_before_original_destination_co
     };
     use hyper::{Request, Response};
     let state = test_state().await;
+    let mut events_rx = state.events_tx.subscribe();
     state
         .blocklist
         .store(Arc::new(HashSet::from(["blocked.example".to_string()])));
@@ -159,6 +160,12 @@ async fn plaintext_keepalive_checks_every_request_before_original_destination_co
     assert_eq!(state.tunnels_opened.load(Ordering::Relaxed), 1);
     assert!(state.bytes_up.load(Ordering::Relaxed) > 100);
     assert!(state.bytes_down.load(Ordering::Relaxed) > 0);
+    let close = std::iter::from_fn(|| events_rx.try_recv().ok())
+        .map(|raw| serde_json::from_str::<serde_json::Value>(&raw).unwrap())
+        .find(|event| event["type"] == "tunnel_close")
+        .expect("plaintext connection emits a close observation");
+    assert_eq!(close["measurement"]["bytes_status"], "unavailable");
+    assert_eq!(close["measurement"]["source"], "unavailable");
     origin.abort();
 }
 

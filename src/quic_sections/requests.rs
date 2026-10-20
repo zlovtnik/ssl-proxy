@@ -191,7 +191,7 @@ async fn handle_h3_request(
     let (mut h3_send, mut h3_recv) = stream.split();
     let (mut upstream_read, mut upstream_write) = upstream.split();
     let mut first_up_chunk = Vec::new();
-    match timeout(Duration::from_millis(500), h3_recv.recv_data()).await {
+    let first_recv_ok = match timeout(Duration::from_millis(500), h3_recv.recv_data()).await {
         Ok(Ok(Some(mut buf))) => {
             while bytes::Buf::has_remaining(&buf) {
                 let chunk: &[u8] = bytes::Buf::chunk(&buf);
@@ -199,11 +199,15 @@ async fn handle_h3_request(
                 first_up_chunk.extend_from_slice(chunk);
                 bytes::Buf::advance(&mut buf, len);
             }
+            true
         }
-        Ok(Ok(None)) => {}
-        Ok(Err(e)) => debug!(%host, %e, "QUIC: first H3 recv failed"),
-        Err(_) => {}
-    }
+        Ok(Ok(None)) => true,
+        Ok(Err(e)) => {
+            debug!(%host, %e, "QUIC: first H3 recv failed");
+            false
+        }
+        Err(_) => true,
+    };
     let tls = parse_tls_info(&first_up_chunk);
     let category = classify(&hostname, port, tls.alpn.as_deref());
     state.record_classification(category);
@@ -265,7 +269,7 @@ async fn handle_h3_request(
             total += written;
             if let Err(e) = result {
                 debug!(%host, %e, "QUIC: upstream first write failed");
-                return total;
+                return (total, false);
             }
             if capture_payloads && up_buf.len() < PAYLOAD_PREVIEW_LIMIT {
                 let take = (PAYLOAD_PREVIEW_LIMIT - up_buf.len()).min(first_up_chunk.len());
@@ -284,7 +288,7 @@ async fn handle_h3_request(
                         total += written;
                         if let Err(e) = result {
                             debug!(%host, %e, "QUIC: upstream write failed");
-                            return total;
+                            return (total, false);
                         }
 
                         // Capture first N bytes only if payload capture is enabled
@@ -299,25 +303,25 @@ async fn handle_h3_request(
                 Ok(None) => break,
                 Err(e) => {
                     debug!(%host, %e, "QUIC: H3 recv failed");
-                    break;
+                    return (total, false);
                 }
             }
         }
-        total
+        (total, first_recv_ok)
     };
 
     // upstream → H3: read TCP and send as H3 data
     let upstream_to_h3 = async {
         let mut total: u64 = 0;
         let mut buf = vec![0u8; 16384];
-        loop {
+        let clean_eof = loop {
             match upstream_read.read(&mut buf).await {
-                Ok(0) => break,
+                Ok(0) => break true,
                 Ok(n) => {
                     let data = Bytes::copy_from_slice(&buf[..n]);
                     if let Err(e) = h3_send.send_data(data).await {
                         debug!(%host, %e, "QUIC: H3 send failed");
-                        break;
+                        break false;
                     }
                     total += n as u64;
 
@@ -329,15 +333,21 @@ async fn handle_h3_request(
                 }
                 Err(e) => {
                     debug!(%host, %e, "QUIC: upstream read failed");
-                    break;
+                    break false;
                 }
             }
-        }
-        h3_send.finish().await.ok();
-        total
+        };
+        let finished = match h3_send.finish().await {
+            Ok(()) => true,
+            Err(e) => {
+                debug!(%host, %e, "QUIC: H3 finish failed");
+                false
+            }
+        };
+        (total, clean_eof && finished)
     };
 
-    let (up, down) = tokio::join!(h3_to_upstream, upstream_to_h3);
+    let ((up, up_ok), (down, down_ok)) = tokio::join!(h3_to_upstream, upstream_to_h3);
     state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), up, down);
 
     let payload_preview = capture_payloads
@@ -354,7 +364,7 @@ async fn handle_h3_request(
         "QUIC tunnel closed"
     );
 
-    context.emit_close(
+    context.with_transfer_status(up_ok && down_ok).emit_close(
         &state,
         &host,
         &identity,

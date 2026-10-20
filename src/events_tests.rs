@@ -93,6 +93,37 @@ fn frozen_proxy_envelopes_preserve_replay_ids_and_scan_contract() {
 }
 
 #[tokio::test]
+async fn http_failure_duration_is_not_response_header_latency() {
+    let state = create_test_state().await;
+    let mut rx = state.events_tx.subscribe();
+    for (event_type, expected_status) in [
+        ("http_error", "unavailable"),
+        ("http_proxied", "header_latency"),
+    ] {
+        emit_serializable(
+            &state,
+            event_type,
+            "example.com",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            0,
+            None,
+            false,
+            None,
+            serde_json::json!({"duration_ms": 123}),
+        );
+        let event: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(event["duration_ms"], 123);
+        assert_eq!(event["measurement"]["duration_status"], expected_status);
+    }
+}
+
+#[tokio::test]
 async fn additive_endpoint_fields_obey_nested_hostname_privacy() {
     let _lock = env_lock();
     std::env::set_var("AUDIT_SANITIZE_HOSTNAMES", "true");

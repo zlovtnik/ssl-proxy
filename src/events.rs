@@ -194,11 +194,11 @@ pub(crate) fn emit_serializable<T>(
     extra
         .entry("authority_source")
         .or_insert(serde_json::json!("legacy_host"));
-    let has_duration = extra.contains_key("duration_ms");
+    let has_header_duration = event != "http_error" && extra.contains_key("duration_ms");
     extra.entry("measurement").or_insert_with(|| {
         serde_json::json!({
             "version": "proxy-measurement-v1", "bytes_status": "unavailable",
-            "duration_status": if has_duration { "header_latency" } else { "unavailable" },
+            "duration_status": if has_header_duration { "header_latency" } else { "unavailable" },
             "byte_unit": "bytes", "up_direction": "client_to_destination",
             "down_direction": "destination_to_client", "source": "unavailable"
         })

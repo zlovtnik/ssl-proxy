@@ -123,7 +123,8 @@ impl TunnelAuditContext {
                 "version": "proxy-measurement-v1", "bytes_status": if event_sequence == 1 { "unavailable" } else { self.transfer_status },
                 "duration_status": if duration.is_some() { "connection_elapsed" } else { "unavailable" },
                 "byte_unit": "bytes", "up_direction": "client_to_destination", "down_direction": "destination_to_client",
-                "source": "successful_socket_writes", "termination": self.transfer_status,
+                "source": if event_sequence == 1 || self.transfer_status == "unavailable" { "unavailable" } else { "successful_socket_writes" },
+                "termination": self.transfer_status,
             },
         });
 
@@ -291,5 +292,41 @@ mod tests {
         assert_eq!(close["ja3_lite"], "ja3-lite");
         assert_eq!(close["selected_ip"], "192.0.2.10");
         assert_eq!(close["resolved_ips"][0], "192.0.2.10");
+    }
+
+    #[test]
+    fn terminal_measurement_requires_both_directions_to_complete() {
+        for (up_ok, down_ok) in [(true, true), (false, true), (true, false), (false, false)] {
+            let context =
+                TunnelAuditContext::new("quic-h3", "unknown", None, obfuscation::Profile::None)
+                    .with_transfer_status(up_ok && down_ok);
+            let close = context.event_extra(2, 12, 34, Some(Duration::from_millis(56)), None);
+            let expected = if up_ok && down_ok {
+                "measured_terminal"
+            } else {
+                "partial"
+            };
+            assert_eq!(close["measurement"]["bytes_status"], expected);
+            assert_eq!(close["measurement"]["termination"], expected);
+            assert_eq!(close["measurement"]["source"], "successful_socket_writes");
+            assert_eq!(close["bytes_up"], 12);
+            assert_eq!(close["bytes_down"], 34);
+            let open = context.event_extra(1, 0, 0, None, None);
+            assert_eq!(open["measurement"]["source"], "unavailable");
+        }
+    }
+
+    #[test]
+    fn unmeasured_tunnel_bytes_do_not_claim_successful_socket_writes() {
+        let context = TunnelAuditContext::new(
+            "transparent",
+            "unknown",
+            Some("allowed_plaintext"),
+            obfuscation::Profile::None,
+        );
+        let close = context.event_extra(2, 12, 34, Some(Duration::from_millis(56)), None);
+        assert_eq!(close["measurement"]["bytes_status"], "unavailable");
+        assert_eq!(close["measurement"]["source"], "unavailable");
+        assert_eq!(close["bytes_up"], 12);
     }
 }

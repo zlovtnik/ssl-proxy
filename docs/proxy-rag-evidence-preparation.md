@@ -13,9 +13,13 @@ host strings do not establish an explicitly observed port. The existing
 [authority contract](proxy-authority-v1.md) supplies normalization and PSL rules.
 Hostname sanitization also covers new fields and nested arrays.
 
-CONNECT, bypass and transparent forwarding count successful writes, retaining
-partial totals on failure. An open or header-only observation does not establish
-a measured zero. ClientHello versions and ALPN remain offers. Coalescing is
+CONNECT, QUIC and TCP bypass/transparent forwarding count successful writes,
+retaining partial totals on failure. QUIC terminal status requires both transfer
+directions and H3 finish to succeed. Transparent plaintext HTTP socket counters
+remain observations with unavailable byte status/source: uploads can include
+rejected pipelined requests. An open or header-only observation does not establish
+a measured zero. HTTP failure durations remain unavailable rather than response
+header latency. ClientHello versions and ALPN remain offers. Coalescing is
 scoped to a process/event/host/peer/device/reason key, with a 500 ms window and
 4096-key capacity. Capacity bypass and potentially unreported final windows are
 explicit; these counters do not establish physical attempts or validated flows.
@@ -149,12 +153,26 @@ or mutate managed Kubernetes resources. Publish compatible pinned executor,
 Octopus and Search images together under the release workmap before rollout;
 the currently pinned images are not evidence of compatibility with this code.
 
+The image-promotion review finding remains unresolved as of 2026-10-20: the
+configured registry at `192.168.1.242:5000` is offline (confirmed by the operator),
+and the production schema digest is absent from the local image cache. No
+replacement digest was invented or promoted. Local Octopus publication preflight
+also rejects the checkout because its revision differs from the parent gitlink.
+Reconcile the compatible source pins, publish/verify all three candidate images,
+and promote executor plus Octopus/Search digests with their checksum references
+before merging deployment desired state. These manifests are not release-ready.
+
 Old binaries using the former job/vector conflict keys are incompatible with
 the extended unique keys. Do not deploy these manifests with those binaries.
 Rollback uses compatible binaries with preparation/workers disabled or a
 compatible input profile; retain the additive schema and evidence.
 
 ## Verification record
+
+Measurement review follow-up on 2026-10-20 passed all 219 Rust library tests,
+including clean/partial measurement status, plaintext pipelining source semantics
+and HTTP failure-duration labels. Registry image verification/promotion remains
+blocked as recorded above; cluster resources were not mutated.
 
 Review follow-up on 2026-10-20 rejected userinfo in endpoint evidence, routed
 CONNECT/QUIC blocked events through that helper, corrected the remaining legacy
