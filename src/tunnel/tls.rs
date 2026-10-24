@@ -21,6 +21,7 @@ pub(crate) struct TlsInfo {
     pub(crate) sni: Option<String>,
     pub(crate) alpn: Option<String>,
     pub(crate) tls_ver: Option<String>,
+    pub(crate) offered_version: Option<String>,
     pub(crate) cipher_suites_count: Option<u8>,
     pub(crate) ja3_lite: Option<String>,
 }
@@ -32,9 +33,21 @@ impl Default for TlsInfo {
             sni: None,
             alpn: None,
             tls_ver: None,
+            offered_version: None,
             cipher_suites_count: None,
             ja3_lite: None,
         }
+    }
+}
+
+impl TlsInfo {
+    pub(crate) fn evidence(&self) -> serde_json::Value {
+        serde_json::json!({
+            "source": "client_hello", "parser_version": "proxy-clienthello-v2",
+            "parse_status": self.parse_status, "semantics": "offered_not_negotiated",
+            "offered_version": self.offered_version, "offered_alpn": self.alpn,
+            "ja3_lite": self.ja3_lite,
+        })
     }
 }
 
@@ -239,6 +252,10 @@ fn parse_client_hello(hs: &[u8], mut info: TlsInfo) -> ParseTlsInfoStatus {
         return ParseTlsInfoStatus::Invalid;
     }
 
+    // The record header can use a compatibility version. Keep tls_ver and
+    // ja3_lite stable; offer evidence comes from ClientHello itself.
+    info.offered_version = offered_tls_version((hs[4], hs[5]));
+
     let mut pos = 4 + 2 + 32;
     let sid_len = match hs.get(pos) {
         Some(&v) => v as usize,
@@ -295,6 +312,21 @@ fn parse_client_hello(hs: &[u8], mut info: TlsInfo) -> ParseTlsInfoStatus {
             }
             43 if ext_len >= 3 => {
                 let list_len = ext_data[0] as usize;
+                info.offered_version = if list_len > 0
+                    && list_len.is_multiple_of(2)
+                    && list_len + 1 == ext_data.len()
+                {
+                    ext_data[1..]
+                        .chunks_exact(2)
+                        .filter_map(|version| {
+                            offered_tls_version((version[0], version[1]))
+                                .map(|name| (u16::from_be_bytes([version[0], version[1]]), name))
+                        })
+                        .max_by_key(|(version, _)| *version)
+                        .map(|(_, name)| name)
+                } else {
+                    None
+                };
                 let mut i = 1;
                 while i + 2 <= (1 + list_len).min(ext_data.len()) {
                     if ext_data[i] == 0x03 && ext_data[i + 1] == 0x04 {
@@ -304,6 +336,7 @@ fn parse_client_hello(hs: &[u8], mut info: TlsInfo) -> ParseTlsInfoStatus {
                     i += 2;
                 }
             }
+            43 => info.offered_version = None,
             10 if ext_len >= 4 => {
                 let list_len = u16::from_be_bytes([ext_data[0], ext_data[1]]) as usize;
                 let mut i = 2;
@@ -360,6 +393,14 @@ fn record_tls_version(version: (u8, u8)) -> Option<String> {
         (3, 3) => Some("TLS1.2".into()),
         (3, 1) => Some("TLS1.0".into()),
         _ => None,
+    }
+}
+
+fn offered_tls_version(version: (u8, u8)) -> Option<String> {
+    if version == (3, 2) {
+        Some("TLS1.1".into())
+    } else {
+        record_tls_version(version)
     }
 }
 

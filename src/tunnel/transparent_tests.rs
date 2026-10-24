@@ -22,6 +22,128 @@ async fn test_state_with_config(config: crate::config::Config) -> SharedState {
 }
 
 #[tokio::test]
+async fn cancelled_transparent_direction_keeps_successfully_written_bytes() {
+    use std::pin::Pin;
+    use std::sync::atomic::AtomicBool;
+    use std::task::{Context, Poll};
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+    struct CancellationIo {
+        input: std::io::Cursor<Vec<u8>>,
+        partial_writer: bool,
+        write_started: Arc<AtomicBool>,
+    }
+
+    impl AsyncRead for CancellationIo {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            if self.partial_writer {
+                // The opposite copy fails only after this socket has accepted
+                // part of the chunk that its write future cannot finish.
+                if self.write_started.load(Ordering::Relaxed) {
+                    return Poll::Ready(Err(std::io::ErrorKind::ConnectionReset.into()));
+                }
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            Pin::new(&mut self.input).poll_read(cx, buf)
+        }
+    }
+
+    impl AsyncWrite for CancellationIo {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            bytes: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            if self.partial_writer {
+                if self.write_started.swap(true, Ordering::Relaxed) {
+                    return Poll::Pending;
+                }
+                return Poll::Ready(Ok(bytes.len().min(3)));
+            }
+            Poll::Ready(Ok(bytes.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    for partial_upstream in [true, false] {
+        let write_started = Arc::new(AtomicBool::new(false));
+        let socket = |partial_writer| CancellationIo {
+            input: std::io::Cursor::new(b"outbound".to_vec()),
+            partial_writer,
+            write_started: Arc::clone(&write_started),
+        };
+        let (mut up_preview, mut down_preview) = (Vec::new(), Vec::new());
+        let (up, down, result) = tokio::time::timeout(
+            Duration::from_secs(1),
+            copy_transparent(
+                socket(!partial_upstream),
+                socket(partial_upstream),
+                &mut up_preview,
+                &mut down_preview,
+                4096,
+                |_, _| {},
+            ),
+        )
+        .await
+        .expect("the opposite read error must cancel the pending write");
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::ConnectionReset
+        );
+        assert_eq!((up, down), if partial_upstream { (3, 0) } else { (0, 3) });
+        assert!(up_preview.is_empty() && down_preview.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn transparent_copy_preserves_bidirectional_observations_and_preview_limits() {
+    for preview_limit in [0, 3] {
+        let (client, mut client_peer) = tokio::io::duplex(64);
+        let (upstream, mut upstream_peer) = tokio::io::duplex(64);
+        client_peer.write_all(b"upload").await.unwrap();
+        client_peer.shutdown().await.unwrap();
+        upstream_peer.write_all(b"download").await.unwrap();
+        upstream_peer.shutdown().await.unwrap();
+        let (mut up_preview, mut down_preview) = (Vec::new(), Vec::new());
+        let observations = std::cell::RefCell::new(Vec::new());
+        let (up, down, result) = copy_transparent(
+            client,
+            upstream,
+            &mut up_preview,
+            &mut down_preview,
+            preview_limit,
+            |direction, n| observations.borrow_mut().push((direction, n)),
+        )
+        .await;
+        result.unwrap();
+        assert_eq!((up, down), (6, 8));
+        let mut received = Vec::new();
+        upstream_peer.read_to_end(&mut received).await.unwrap();
+        assert_eq!(received, b"upload");
+        received.clear();
+        client_peer.read_to_end(&mut received).await.unwrap();
+        assert_eq!(received, b"download");
+        assert_eq!(up_preview, &b"upload"[..preview_limit]);
+        assert_eq!(down_preview, &b"download"[..preview_limit]);
+        let observations = observations.into_inner();
+        assert!(observations.contains(&(PacketDirection::Upstream, 6)));
+        assert!(observations.contains(&(PacketDirection::Downstream, 8)));
+    }
+}
+
+#[tokio::test]
 async fn blocked_tunnel_estimate_is_per_event() {
     let state = test_state().await;
     let host = "blocked.example";
@@ -311,7 +433,8 @@ async fn blocked_non_tarpit_transparent_sessions_do_not_fall_through() {
         sni: Some(blocked_host.to_string()),
         parse_status: "parsed",
         alpn: None,
-        tls_ver: None,
+        tls_ver: Some("TLS1.0".to_string()),
+        offered_version: Some("TLS1.2".to_string()),
         cipher_suites_count: None,
         ja3_lite: None,
     };
@@ -328,6 +451,14 @@ async fn blocked_non_tarpit_transparent_sessions_do_not_fall_through() {
     let event: serde_json::Value = serde_json::from_str(&events_rx.recv().await.unwrap())
         .expect("transparent block event should serialize");
     assert_eq!(event["reason"], POLICY_REASON_MATCHED_BLOCKLIST);
+    assert_eq!(event["fingerprint"]["tls_ver"], "TLS1.0");
+    assert_eq!(event["tls_evidence"]["offered_version"], "TLS1.2");
+    assert_eq!(
+        event["tls_evidence"]["parser_version"],
+        "proxy-clienthello-v2"
+    );
+    assert_eq!(event["tls_evidence"]["parse_status"], "parsed");
+    assert_eq!(event["tls_evidence"]["semantics"], "offered_not_negotiated");
 }
 
 #[tokio::test]
@@ -379,6 +510,7 @@ async fn pinned_transparent_hosts_bypass_and_connect() {
                 tls_ver: Some("TLS1.3".to_string()),
                 cipher_suites_count: Some(4),
                 ja3_lite: Some("771,4865-4866,0-16,29-23,0".to_string()),
+                ..TlsInfo::default()
             },
         )
         .await;

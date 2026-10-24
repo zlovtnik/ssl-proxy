@@ -1,7 +1,7 @@
 # Proxy RAG evidence and preparation
 
 > **Status: Application changes verified; production activation and recovery remain gated.**
-> Verification date: 2026-10-20 UTC. Implements the stage 3 and stage 4 code in
+> Latest verification: 2026-10-24 UTC. Implements the stage 3 and stage 4 code in
 > the [workmap](../advisor-plans/002-proxy-rag-ml-workmap.md).
 
 ## Evidence and compatibility
@@ -168,6 +168,89 @@ Rollback uses compatible binaries with preparation/workers disabled or a
 compatible input profile; retain the additive schema and evidence.
 
 ## Verification record
+
+### SRC01-SRC07 follow-up: 2026-10-24
+
+The first seven source references in the workmap already had application code.
+This follow-up closes remaining replay, measurement and correction gaps:
+
+- SRC01: the canonical PostgreSQL integration suite now sends all frozen retained
+  envelopes and their original scan identities through ingestion and the real
+  transform/sink. It checks same-offset replay and later-offset duplicate delivery
+  without minting replacement observations.
+- SRC02-SRC03: existing endpoint, nested hostname sanitization and bounded
+  coalescing contracts remain covered by the Rust regression suite.
+- SRC04: transparent forwarding keeps successful-write counters outside the two
+  cancellable copy futures. A partial write survives a sibling read failure in
+  either direction. The shared copy loop also preserves successful forwarding,
+  bounded previews and forensic observation callbacks.
+- SRC05: additive TLS offer evidence comes from ClientHello legacy_version or
+  the highest recognized supported_versions offer, rather than the record
+  compatibility version. Unsupported or malformed version lists remain unknown.
+  Legacy tls_ver and ja3_lite are preserved. Transparent blocks publish the same
+  parser/status/offer evidence as tunnel lifecycle observations. The corrected
+  parser is proxy-clienthello-v2; published evidence preserves supported v1/v2
+  revisions and reports absent/unsupported revisions as legacy_unknown. This follows
+  the compatibility distinction in [RFC 8446 section 5.1](https://www.rfc-editor.org/rfc/rfc8446#section-5.1).
+- SRC06: normalized and public Search evidence retain whitelisted measurement
+  source and termination fields; unsupported or unversioned provenance is
+  explicitly legacy_unknown. No DDL, manifest, grant or image changes are needed.
+- SRC07: source corrections retire excluded/missing observations, refresh
+  published timestamps and invalidate previous blocked-window groupings. Queue
+  saturation permits bounded invalidation without enqueueing new work; one-item
+  batches alternate event/window validation. Event metadata retains only an
+  opaque former-window key. Recovering privacy-filtered grouping scans at most
+  501 private source rows; overflow leaves the old window retired with an explicit
+  retired_reconciliation_required disposition.
+
+The checks below record local code acceptance, not production coverage. Existing
+prepared historical rows need bounded retained-source reconciliation to receive
+new measurement provenance fields and the opaque former-window key before
+rollout. Activation, image promotion and recovery
+remain subject to the existing M07, D07 and release gates.
+
+Changed runtime paths are the [TLS parser](../src/tunnel/tls.rs),
+[tunnel audit context](../src/tunnel/audit_event.rs),
+[transparent forwarding](../src/tunnel/transparent_sections/proxying.rs),
+[blocked event builder](../src/tunnel/transparent_sections/decisions.rs),
+[transparent event types](../src/tunnel/transparent_sections/listener.rs),
+[evidence projection](../services/octopus/src/main/scala/com/sslproxy/coordinator/processor/ProxyEvidence.scala)
+and [preparation SQL](../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/sql/ProxyPreparationSql.scala).
+Matching Rust and Scala regression tests and the embedding feature contract were
+updated. The payload-audit integration fixture now initializes the additive
+identity fields. No new dependencies or generated source files were added.
+
+Broader checks exposed existing repository issues outside these changes:
+`cargo test -p ssl-proxy` fails
+`shim_unit_requires_separate_containment_without_network_admin` because the
+unchanged [shim unit](../config/client/wg-obfs-shim.service) lacks the containment
+dependency expected by [its test](../tests/wireguard_template.rs). The broker
+payload-audit test remains explicitly ignored without Redpanda. Workspace-wide
+format checking reports existing differences in unrelated files; scoped Rust
+format checking passes. Clippy completes with existing warnings outside the
+modified runtime paths. These checks do not establish a clean repository-wide
+release gate.
+
+| Follow-up check | Result |
+| --- | --- |
+| `cargo test -p ssl-proxy --lib` | 223 passed |
+| `cargo test -p sync-plane` | 12 passed |
+| Octopus `OCTOPUS_REQUIRE_DOCKER=true sbt test` | 573 passed; one opt-in live probe skipped |
+| Focused canonical persistence, evidence and preparation SQL suites | 61 passed; zero skipped, including all 46 canonical persistence tests |
+| `cargo clippy -p ssl-proxy --lib --tests` | Completed with existing warnings; none in changed runtime paths |
+| Scoped `rustfmt --check`, dependency boundaries, `git diff --check`, documentation checker | Passed |
+
+Before fixes, the TLS compatibility-record test reported TLS1.0 instead of
+TLS1.2, the cancellation test lost three accepted bytes, the provenance test
+dropped measurement source, and both original source-correction regressions
+left stale documents active. The final suites include their passing replacements
+and the subsequent queue-fairness and private-grouping regressions.
+
+The checkout began at parent `f745f937329e17a5b21107e9cf5777f0ed6f44f9`,
+Octopus `9c47daffa33bf016b8a0f9fe23d5821a0c5cb65c` and Integration Console
+`69db6850d8b4570987ecc3702c98db2501eb0e95`. Existing submodule pointer differences
+were preserved. The changes remain uncommitted; no images were promoted,
+production data replayed or managed Kubernetes resources changed.
 
 Measurement review follow-up on 2026-10-20 passed all 219 Rust library tests,
 including clean/partial measurement status, plaintext pipelining source semantics

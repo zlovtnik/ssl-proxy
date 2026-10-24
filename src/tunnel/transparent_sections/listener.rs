@@ -1,8 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
+use std::sync::{atomic::Ordering, Arc};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -112,6 +109,7 @@ struct TransparentBlockExtra {
     #[serde(flatten)]
     endpoint: serde_json::Value,
     attribution: serde_json::Value,
+    tls_evidence: serde_json::Value,
     category: &'static str,
     fingerprint: TransparentFingerprint,
     metrics: TransparentMetrics,

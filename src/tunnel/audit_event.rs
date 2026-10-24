@@ -113,12 +113,7 @@ impl TunnelAuditContext {
             "alpn": self.tls.alpn.clone(),
             "cipher_suites_count": self.tls.cipher_suites_count,
             "ja3_lite": self.tls.ja3_lite.clone(),
-            "tls_evidence": {
-                "source": "client_hello", "parser_version": "proxy-clienthello-v1",
-                "parse_status": self.tls.parse_status, "semantics": "offered_not_negotiated",
-                "offered_version": self.tls.tls_ver, "offered_alpn": self.tls.alpn,
-                "ja3_lite": self.tls.ja3_lite,
-            },
+            "tls_evidence": self.tls.evidence(),
             "measurement": {
                 "version": "proxy-measurement-v1", "bytes_status": if event_sequence == 1 { "unavailable" } else { self.transfer_status },
                 "duration_status": if duration.is_some() { "connection_elapsed" } else { "unavailable" },
@@ -262,6 +257,7 @@ mod tests {
             sni: Some("example.com".to_string()),
             alpn: Some("h2".to_string()),
             tls_ver: Some("TLS1.3".to_string()),
+            offered_version: Some("TLS1.3".to_string()),
             cipher_suites_count: Some(4),
             ja3_lite: Some("ja3-lite".to_string()),
         });
@@ -292,6 +288,23 @@ mod tests {
         assert_eq!(close["ja3_lite"], "ja3-lite");
         assert_eq!(close["selected_ip"], "192.0.2.10");
         assert_eq!(close["resolved_ips"][0], "192.0.2.10");
+    }
+
+    #[test]
+    fn offered_version_uses_client_hello_instead_of_record_compatibility_version() {
+        // TLS1.2 ClientHello carried in a TLS1.0 compatibility record.
+        let mut hello = vec![22, 3, 1, 0, 47, 1, 0, 0, 43, 3, 3];
+        hello.extend_from_slice(&[0; 32]);
+        hello.extend_from_slice(&[0, 0, 2, 0, 47, 1, 0, 0, 0]);
+        let tls = crate::tunnel::tls::parse_tls_info(&hello);
+        assert_eq!(tls.parse_status, "parsed");
+        let context =
+            TunnelAuditContext::new("transparent", "unknown", None, obfuscation::Profile::None)
+                .with_tls(tls);
+        let event = context.event_extra(1, 0, 0, None, None);
+        assert_eq!(event["tls_ver"], "TLS1.0");
+        assert_eq!(event["ja3_lite"], "769,47,,,");
+        assert_eq!(event["tls_evidence"]["offered_version"], "TLS1.2");
     }
 
     #[test]

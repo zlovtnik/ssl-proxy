@@ -123,6 +123,37 @@ fn parses_fragmented_client_hello_across_tls_records() {
 }
 
 #[test]
+fn offered_version_uses_handshake_and_supported_versions() {
+    for (versions, expected) in [
+        (None, Some("TLS1.2")),
+        (Some(vec![4, 3, 3, 3, 4]), Some("TLS1.3")),
+        (Some(vec![4, 3, 2, 3, 1]), Some("TLS1.1")),
+        (Some(vec![4, 0x0a, 0x0a, 3, 3]), Some("TLS1.2")),
+        (Some(vec![2, 0x0a, 0x0a]), None),
+        (Some(vec![3, 3, 4, 3]), None),
+    ] {
+        let mut hello = crafted_client_hello();
+        hello[2] = 1;
+        if let Some(versions) = versions {
+            let extension_len = u16::from_be_bytes([hello[52], hello[53]]) as usize;
+            let mut extension = vec![0, 43];
+            extension.extend_from_slice(&(versions.len() as u16).to_be_bytes());
+            extension.extend_from_slice(&versions);
+            hello[52..54]
+                .copy_from_slice(&((extension_len + extension.len()) as u16).to_be_bytes());
+            hello.extend_from_slice(&extension);
+            let record_len = hello.len() - 5;
+            hello[3..5].copy_from_slice(&(record_len as u16).to_be_bytes());
+            let handshake_len = hello.len() - 9;
+            hello[6..9].copy_from_slice(&(handshake_len as u32).to_be_bytes()[1..]);
+        }
+        let info = parse_tls_info(&hello);
+        assert_eq!(info.parse_status, "parsed");
+        assert_eq!(info.offered_version.as_deref(), expected);
+    }
+}
+
+#[test]
 fn handles_invalid_input() {
     let info = parse_tls_info(&[]);
     assert_eq!(info.sni, None);

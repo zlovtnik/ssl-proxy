@@ -130,6 +130,7 @@ async fn block_transparent_flow(
         TransparentBlockExtra {
             endpoint: transparent_endpoint(orig_dst, tls, decision.flow.hostname.as_deref()),
             attribution: identity.evidence(),
+            tls_evidence: tls.evidence(),
             category: decision.flow.category,
             fingerprint: TransparentFingerprint {
                 tls_ver: tls.tls_ver.clone(),

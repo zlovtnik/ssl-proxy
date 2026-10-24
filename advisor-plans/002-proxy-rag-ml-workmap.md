@@ -82,6 +82,12 @@ appears in the task tables, not as a claim of an existing capability.
 
 Current excerpts to preserve or replace deliberately:
 
+SRC01-SRC07 received a further implementation and regression pass on 2026-10-24.
+See the [source-evidence follow-up](../docs/proxy-rag-evidence-preparation.md#src01-src07-follow-up-2026-10-24)
+for retained-envelope replay, cancellation counters, ClientHello offers,
+measurement provenance and correction invalidation. These are local acceptance
+results; production activation and recovery gates remain open.
+
 ```text
 SearchDocumentPreparation.scala:87-91
   checksum = sha256Hex(normalizedText.getBytes(UTF_8))
