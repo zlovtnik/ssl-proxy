@@ -336,6 +336,10 @@ def self_test():
         bad = copy.deepcopy(row)
         bad["scenario"] = "certificate-failure"
         variants.append(bad)
+        bad = copy.deepcopy(row)
+        bad["scenario"] = "network-change"
+        bad["failure_window_expected"] = bad["failure_window_success"] = dict.fromkeys(TRAFFIC, False)
+        variants.append(bad)
         for bad in variants:
             try:
                 validate_row(bad, directory)

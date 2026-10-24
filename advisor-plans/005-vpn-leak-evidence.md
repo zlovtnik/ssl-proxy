@@ -110,7 +110,7 @@ boot-time WG ordering and effective policy are checked on the target OS.
 IPv4-only static reference unit bodies follow. Supply the root-owned rendered
 policy, replace all interface/address/UID values, verify executable paths on the
 target distribution, and first test them in the disposable namespace. These units
-does not implement DHCP, endpoint refresh or a network-manager adapter. A real
+do not implement DHCP, endpoint refresh or a network-manager adapter. A real
 boot profile stays blocked until those applicable lifecycle paths are validated.
 
 ```ini
