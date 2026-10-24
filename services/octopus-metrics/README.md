@@ -1,16 +1,22 @@
 # Octopus Metrics
 
-Dedicated C++23 replacement for Octopus's Scala snapshot materializer. It reads
+Dedicated C++23 snapshot materializer. It reads
 authoritative ingestion evidence, samples coordinator telemetry, and publishes
 the existing snapshot v2 to Redis and MinIO. Kafka ingestion, deduplication,
 leases, processor supervision, projections, and MinIO payload archival stay
 in [Octopus](../octopus/README.md). The public
 [stats reader](../stats-reader/README.md) remains a store-only Go service.
 
-The service is implemented and independently buildable. Production promotion
-requires a reviewed image digest, a provisioned metrics account, and GitOps
-integration. The public gateway uses the store-only stats reader; activation
-of this publisher is still a separate prerequisite for fresh C++ snapshots.
+The service is independently buildable inside the parent workspace, whose
+canonical PostgreSQL manifest supplies the compiled schema checksum. Both
+environment app-stack slices already include the Deployment and image digest.
+Promotion and fresh snapshots still require the dedicated read-only account,
+store credentials, bucket and paired coordinator revision described below.
+Committed manifests do not establish live deployment health.
+
+Start with [configuration](#configuration) and [build and verification](#build-and-verification)
+for local work. The extraction review below records design rationale; the
+runtime contract is in the current source and canonical manifests.
 
 ## Step-by-step review of the extracted Scala worker
 
@@ -135,7 +141,7 @@ from historical evidence counts. `pendingLedgerCount` covers pending/processing
 ledger rows. Optional `brokerLagCount` covers fresh fetch-position lag across the
 source coordinator's consumers and excludes already-fetched records. Older
 bridges omit it; missing or null remains null, never zero. Store readers must
-allowlist this field before the source revision is promoted.
+allowlist this field; the current stats reader already does so.
 
 Redis's Lua comparison normalizes fractional UTC timestamps before comparing.
 MinIO reads the current object and ETag, compares `asOf`, then uses `If-Match` or
@@ -163,7 +169,7 @@ All listed values are validated at startup. Secrets come from deployment inputs.
 | `POSTGRES_DATABASE` | `sync` | Required nonempty domain database |
 | `POSTGRES_USER` | `octopus_metrics` | Separate read-only runtime role; `postgres` rejected |
 | `POSTGRES_PASSWORD` | empty | Required secret; mutually exclusive with password file |
-| `POSTGRES_PASSWORD_FILE` | unset | Optional bounded secret file, preferred over environment password |
+| `POSTGRES_PASSWORD_FILE` | unset | Optional bounded secret file; setting both password sources is rejected |
 | `POSTGRES_SSL_MODE` | `verify-full` | Only verified TLS in production |
 | `POSTGRES_SSL_CA_PATH` | `/etc/postgres/tls/ca.crt` | Mounted CA, required in production |
 | `POSTGRES_SSL_SERVER_NAME` | `postgres-pgbouncer` | TLS identity; destination is resolved separately when different |
@@ -202,6 +208,8 @@ need access to event payloads. The compiled checksum comes from the
 
 Dependencies: C++23 compiler/library with `expected` and stop-token waits,
 CMake 3.25+, libpq, libcurl 7.85+, hiredis 1.2+, and simdjson 3+.
+Run these commands from the repository root; a service-only checkout lacks the
+canonical schema consumed by CMake.
 
 ```sh
 cmake -S services/octopus-metrics -B /tmp/octopus-metrics -DCMAKE_BUILD_TYPE=Release
@@ -299,8 +307,8 @@ is configured; application runtimes never apply grants or DDL.
 1. Provision the separate read-only PostgreSQL account using the canonical
    grant fixture; provision the stats bucket and a scoped object credential.
    Confirm the deployed manifest matches the binary's compiled checksum.
-2. Build and review the service image digest. Activate the prepared base in the
-   single app-stack slice per environment through reviewed changes under `cyber-stack/`.
+2. Build and review the service image digest. Update the existing image pin in
+   each environment's app-stack slice through reviewed changes under `cyber-stack/`.
    Render all environment variables, CA mount, secret references, health probes,
    resource limits, and network-policy access together. No placeholder digest
    or automatic production promotion is supplied by this change.

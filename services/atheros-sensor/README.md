@@ -5,6 +5,11 @@ AR9271/`ath9k_htc` adapter. It captures 802.11 frames, constructs
 schema-versioned audit and alert events, publishes them through Redpanda and
 keeps a bounded local backlog. It never writes PostgreSQL directly.
 
+Run the commands below from the repository root. Building requires Rust and
+libpcap development headers; live capture additionally needs Linux wireless
+tools and a monitor-mode adapter. See the [workspace README](../../README.md)
+for the complete producer/coordinator/query architecture.
+
 ## Topic direction
 
 Published topics include:
@@ -53,9 +58,15 @@ Core capture settings:
 | `ATH_SENSOR_METRICS_TEXTFILE_PATH` | Atomic node-exporter textfile output path |
 | `ATH_SENSOR_REQUIRE_HOST_ENDPOINTS` | Reject container-only endpoints in host mode |
 
-Detection and persistence settings include the `ATH_SENSOR_CLIENT_*`,
-`ATH_SENSOR_SIGNAL_*`, `ATH_SENSOR_DEAUTH_*`, `ATH_SENSOR_BACKLOG_*`,
-`ATH_SENSOR_MAC_*` and `AUDIT_WINDOW_*` families.
+Detection settings include the `ATH_SENSOR_CLIENT_*`, `ATH_SENSOR_SIGNAL_*`,
+`ATH_SENSOR_DEAUTH_*`, `ATH_SENSOR_MAC_*` and `AUDIT_WINDOW_*` families.
+Bound the in-memory retry backlog with `ATH_SENSOR_MEMORY_BACKLOG_SIZE` and
+set its retry cadence with `ATH_SENSOR_MEMORY_BACKLOG_FLUSH_INTERVAL_SECS`.
+`ATH_SENSOR_PUBLISH_JOURNAL_PATH` selects the local JSONL recovery journal
+(default `/tmp/atheros-sensor-publish-journal.jsonl`). Use durable, writable
+storage when retries must survive host restarts; the default temporary path
+does not establish that guarantee. The complete parser and defaults live in
+[`src/config_sections/env.rs`](src/config_sections/env.rs).
 
 Redpanda uses `SYNC_REDPANDA_BOOTSTRAP_SERVERS` plus the existing
 `SYNC_REDPANDA_*` security settings. Secrets use the plain environment variable
@@ -117,5 +128,13 @@ make dependency-boundaries
 
 The systemd template is [`atheros-sensor.service`](atheros-sensor.service).
 Update paths, interface settings and TLS credential locations before
-installation. Hardware capture still requires validation on the target Linux
-host.
+installation. In particular, workspace builds place the binary under
+`target/release/atheros-sensor` at the repository root; adjust the template's
+`ExecStart` to the deployed artifact. Hardware capture still requires validation
+on the target Linux host. The optional metrics listener serves only `/metrics`;
+it does not provide an HTTP readiness endpoint.
+
+`cargo run -p atheros-sensor -- healthcheck` checks configuration, interface
+discovery and MAC access, then initializes publishing. A coordinator backlog
+request failure is a degraded warning, so a successful healthcheck alone does
+not prove end-to-end persistence.

@@ -1,28 +1,38 @@
 # Platform Sync
 
-Host-side Vault-to-Kubernetes secret synchronization for the ssl-proxy production stack.
+Host-side Vault-to-Kubernetes secret synchronization for the ssl-proxy production
+stack. This is the platform input writer, separate from Argo CD's workload
+reconciliation. The [input contract](../../cyber-stack/platform-input-contract.yaml)
+declares every object, Vault path and allowed key.
 
 ## Architecture
 
-```
-┌─────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Vault     │────▶│ platform-sync│────▶│  Kubernetes  │
-│  (KV-v2)    │     │   (Go binary)│     │   (prod-ssl-proxy) │
-└─────────────┘     └──────────────┘     └──────────────┘
-                           │
-                    ┌──────┴──────┐
-                    │  cred-gen   │
-                    │ (short-lived│
-                    │  K8s token) │
-                    └─────────────┘
+```text
+Vault KV-v2 -> platform-sync -> existing Kubernetes platform inputs
+                    ^
+                cred-gen (short-lived Kubernetes token)
 ```
 
-The platform sync program reads all 22 required inputs from Vault, retains only contract-declared keys, validates them (TLS chains, key pairs, DNS identities including the PgBouncer listener, live PostgreSQL identity/grants, Loki, PgBouncer, and WireGuard), and performs Kubernetes server-side dry runs before applying. If a later apply fails, it restores objects already changed in that run from its in-memory preflight snapshot.
+Each run renews its Vault token, reads every declared input, retains only
+contract-declared keys, and validates TLS chains, key pairs, DNS identities,
+live PostgreSQL identity/grants, Loki, PgBouncer and WireGuard. It then fetches
+the existing Kubernetes objects and performs server-side dry runs before
+updating them. The program does not create missing objects; their shells, the
+readiness ConfigMap and lock ConfigMap must already be provisioned by the
+platform control plane.
+
+If a later update fails, it attempts to restore already changed objects from
+the run's in-memory preflight snapshot and reports incomplete rollback as an
+error. The on-disk snapshot contains only object identities, resource versions
+and checksums, never secret data. The readiness ConfigMap is written last, with
+the contract checksum and success timestamp.
 
 ## Prerequisites
 
-- Vault server with KV-v2 engine enabled at `secret/ssl-proxy/prod`
-- Kubernetes cluster with the `ssl-proxy-platform-sync` ServiceAccount (Phase 1 RBAC)
+- Vault server with the KV-v2 engine mounted at `secret` and contract values
+  under `ssl-proxy/prod`
+- Kubernetes cluster with the `ssl-proxy-platform-sync` ServiceAccount and
+  contract-scoped platform RBAC
 - Renewable read-only Vault token created by `scripts/bootstrap-vault-platform-sync.sh`
 - Vault CA certificate available as a host file
 - The same CA at `secret/ssl-proxy/prod/vault-server-ca` with key `ca.crt` for the in-cluster Vault availability probe
@@ -31,6 +41,10 @@ The platform sync program reads all 22 required inputs from Vault, retains only 
   Go builder container and installs only the resulting static binaries.
 
 ## Installation
+
+Run the host installation commands from the repository root. These install the
+platform synchronizer and its credentials on the intended Ubuntu host; they are
+not local application setup.
 
 ```bash
 export VAULT_ADDR=https://192.168.1.242:8200
@@ -170,7 +184,12 @@ If the sync fails:
    PY
    ```
 3. Check the health file: `jq . /run/platform-sync/health.json`
-4. Run a dry run: `SYNC_DRY_RUN=true /opt/platform-sync/bin/platform-sync`
+4. For a service dry run, set `SYNC_DRY_RUN=true` in
+   `/etc/platform-sync/platform-sync.conf` and start `vault-k8s-sync.service`
+   through systemd. This retains the installed contract checksum check,
+   Kubernetes credential generation and Vault credential mounts. Restore the
+   normal setting after diagnosis. A direct binary invocation does not inherit
+   those service credentials.
 
 ### Lock Contention
 
@@ -192,6 +211,23 @@ systemd credentials. The sync renews the token before reading Vault.
 
 **Never commit kubeconfig or Vault tokens to Git.**
 
+## Build and unit checks
+
+Use Go 1.25 or newer. Start from the workspace root:
+
+```bash
+cd services/platform-sync
+go test ./...
+go test -race ./...
+go vet ./...
+go build -o /tmp/platform-sync .
+go build -o /tmp/platform-sync-cred-gen ./cmd/cred-gen
+```
+
+Unit checks use fakes for external services. The tagged PostgreSQL integration
+tests need the isolated database supplied by the runner below; the tag alone
+does not provision its prerequisites.
+
 ## PostgreSQL privilege regression tests
 
 The metrics credential validator rejects table and column write privileges on
@@ -212,7 +248,10 @@ to the integration tests and removes the disposable database on exit.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VAULT_ADDR` | `https://192.168.1.242:8200` | Vault server address |
+| `VAULT_ADDR` | packaged config: `https://192.168.1.242:8200` | Vault server address; the binary otherwise uses Vault client defaults |
+| `VAULT_TOKEN_FILE` | systemd credential path | Renewable read-only Vault token used by the systemd service; `VAULT_TOKEN` is removed from its environment |
+| `VAULT_TOKEN` | empty | Manual/local invocation only; takes precedence over `VAULT_TOKEN_FILE` outside the packaged systemd service |
+| `VAULT_CACERT` | systemd credential path | CA for the Vault HTTPS endpoint |
 | `VAULT_KV_MOUNT` | `secret` | KV v2 mount path |
 | `VAULT_KV_PREFIX` | `ssl-proxy/prod` | Secret path prefix |
 | `SYNC_NAMESPACE` | `prod-ssl-proxy` | Target Kubernetes namespace |
@@ -221,4 +260,6 @@ to the integration tests and removes the disposable database on exit.
 | `SYNC_LOCK_TTL_SECONDS` | `600` | Lock TTL in seconds |
 | `SYNC_HEALTH_PATH` | `/run/platform-sync/health.json` | Last-run health artifact |
 | `SYNC_METRICS_PATH` | `/run/platform-sync/metrics.prom` | Prometheus textfile metrics |
+| `SYNC_SNAPSHOT_PATH` | `/run/platform-sync/last-known-good.json` | Pre-write metadata and checksums; no secret values |
+| `KUBECONFIG` | `/run/platform-sync/kubeconfig` | Short-lived Kubernetes writer credential |
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |

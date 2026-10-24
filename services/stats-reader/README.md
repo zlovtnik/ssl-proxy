@@ -4,8 +4,10 @@ Tiny always-Ready HTTP service that serves precomputed public stats JSON
 for the product site. It is passive: the request path never computes
 metrics and never touches Postgres or Kafka. Snapshots are published to Redis
 and MinIO; the dedicated [C++ materializer](../octopus-metrics/README.md) owns
-the replacement publisher. Keep the existing publisher image until that
-service's separate account, image and GitOps cutover are ready.
+the publisher. The reader and publisher both have committed GitOps resources;
+fresh snapshots also require the publisher's account, stores, schema proof and
+runtime configuration. This README describes the source contract, not live
+deployment health.
 
 ## Endpoints
 
@@ -28,6 +30,11 @@ service's separate account, image and GitOps cutover are ready.
 - A payload is served only when it parses and carries `asOf`. Unknown
   keys are stripped before emit. Missing fields stay missing or null -
   the service never invents zeros and never reports store hostnames.
+- Snapshots are limited to 16 KiB, and `asOf` must be an RFC3339 timestamp no
+  more than five seconds ahead of the reader clock. A slower request or an older
+  store cannot replace a newer in-process snapshot. Last-good data has no
+  age-based expiry and survives only for the process lifetime; consumers must
+  use `asOf` to evaluate freshness.
 
 ### Snapshot v2 allowlist
 
@@ -37,7 +44,7 @@ Top-level: `asOf`, `peaksComputedAt`, `peakRecordsDay`,
 `throughput7d`.
 
 Nested: `liveStrip` keeps `ingestProcessedRatePerSec`,
-`pendingLedgerCount`, `lastIngestSuccessAt`, `backpressureActive`.
+`pendingLedgerCount`, `brokerLagCount`, `lastIngestSuccessAt`, `backpressureActive`.
 `lifetimeTotals` keeps `recordsTotal`, `daysCounted`, `computedAt`.
 `throughput24h` / `throughput7d` keep `bucket` and `series` (array of
 `{bucketStart, records}`).
@@ -65,15 +72,24 @@ process reads: `redis-runtime/password` feeds `REDIS_PASSWORD`, and
 
 ## Build and test
 
+Use Go 1.25 or newer. Start from the workspace root:
+
 ```sh
+cd services/stats-reader
 make test
+make vet
+make fmt-check
 make build
 ```
 
+`make build` writes `/tmp/stats-reader`. To run locally, configure reachable
+Redis and MinIO endpoints and credentials, then use `go run ./cmd/stats-reader`.
+Missing snapshots return 503 while `/ready` and `/live` continue returning 200.
+The default service DNS names are intended for the Kubernetes deployment.
+
 The `Dockerfile` is multi-stage and runs as nonroot on
 `gcr.io/distroless/static-debian12:nonroot`, exposing port 8080. Base
-images use version tags (same pattern as
-`apps/integration-console/atheros-search`). Jenkins publishes this service
+images use version tags. Jenkins publishes this service
 through the regular deployable image contract and records selected digests in
 `artifacts/release-manifest.json`. Both app-stack Kustomizations include the
 reader and an immutable image pin; the public gateway delegates `/public/stats`

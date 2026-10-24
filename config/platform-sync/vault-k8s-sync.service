@@ -12,6 +12,7 @@ Environment=CONTRACT_PATH=/opt/platform-sync/contract/platform-input-contract.ya
 LoadCredential=vault-token:/etc/platform-sync/vault-token
 LoadCredential=vault-ca:/etc/platform-sync/vault-ca.crt
 Environment=VAULT_TOKEN_FILE=%d/vault-token
+UnsetEnvironment=VAULT_TOKEN
 Environment=VAULT_CACERT=%d/vault-ca
 ExecStartPre=/usr/bin/test -f /run/platform-sync/kubeconfig
 ExecStartPre=/usr/bin/sha256sum --check --status /opt/platform-sync/contract/platform-input-contract.sha256

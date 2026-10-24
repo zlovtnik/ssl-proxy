@@ -1,7 +1,9 @@
 # Kubernetes GitOps Guide
 
 This directory is the only source of Kubernetes desired state for ssl-proxy.
-Kustomize renders the production and staging slices, which Argo CD reconciles from `main`.
+Kustomize renders the production and staging slices. The committed ApplicationSet
+reconciles the three production Applications from `main`; staging registration
+is a separate prerequisite.
 Configuration, releases, rollbacks and workload onboarding happen by reviewed
 Git changes.
 
@@ -13,17 +15,20 @@ The platform team provides and operates:
 - registration of `cyber-stack/argocd` as this repository's control-plane path
   and of the dedicated staging cluster;
 - registry access for `192.168.1.242:5000`;
-- workload Secrets and the production PostgreSQL endpoint ConfigMap required by the
-  rendered manifests, sourced through the value-free
+- Vault values for workload Secrets and the production PostgreSQL endpoint
+  ConfigMap, described by the
   [`platform-input-contract.yaml`](platform-input-contract.yaml);
 - Cloudflare Tunnel credentials and an `ssl-proxy-identity-tls` certificate for
   `gateway.rclabs.uk`.
 
-Platform inputs must be delivered by the platform's declarative control plane.
-Do not create or patch them by hand. This repository owns the
+The bootstrap slice creates empty input objects and scoped synchronization RBAC.
+The host-side [platform-sync service](../services/platform-sync/README.md)
+validates all contract inputs before updating those objects and writes
+`platform-ready` last. Argo CD ignores the synchronizer-owned data fields.
+Do not create or patch inputs by hand. This repository owns the
 `ssl-proxy` AppProject, one list-generated workload ApplicationSet,
 and all workload desired state after registration. Local development Secrets
-and DNS are outside this production-only Kustomize matrix and must never be
+and DNS are outside these environment matrices and must never be
 copied into the production cluster as a shortcut.
 
 ## Layout and applications
@@ -33,31 +38,29 @@ lives under `matrix/prod/` and `matrix/staging/`.
 
 | Slice | Production application | Responsibility |
 |---|---|---|
-| `bootstrap` | `ssl-proxy-prod-bootstrap` | Namespace, service account and shared ConfigMaps |
+| `bootstrap` | `ssl-proxy-prod-bootstrap` | Namespace, shared configuration, input shells, synchronization RBAC and Reloader |
 | `data-plane` | `ssl-proxy-prod-data-plane` | PostgreSQL integration, Redpanda, MinIO, Redis, schema execution and telemetry |
-| `app-stack` | `ssl-proxy-prod-app-stack` | Proxy, Octopus, Search/UI, sensor and Schema Migrator |
+| `app-stack` | `ssl-proxy-prod-app-stack` | Proxy, Octopus, Search/UI, sensor, Schema Migrator, public stats and staged DQ workloads |
 
 The production bootstrap slice also runs a namespace-scoped Reloader controller.
 It watches only `prod-ssl-proxy` and rolls opted-in Deployments when referenced
 platform Secrets or ConfigMaps change. The controller-owned pod-template reload
 annotation is the only Reloader field excluded from Argo CD reconciliation.
 
-`applicationset-workloads.yaml` creates the three slice Applications for each
-environment. They track `main`, use automated sync with pruning and
+[`applicationset-workloads.yaml`](argocd/applicationset-workloads.yaml) creates
+the three production slice Applications. RollingSync orders bootstrap,
+data-plane, then app-stack. They track `main`, use automated sync with pruning and
 self-healing, and refuse empty desired state. The data-plane entry retains the
 StatefulSet PVC-template ignore rule. Namespace deletion requires explicit
 confirmation. Dev Applications and dev controllers are prohibited on the
 production server.
 
-After the platform registers its dedicated staging cluster, enable matching
-`ssl-proxy-staging-{bootstrap,data-plane,app-stack}` Applications in
-`staging-ssl-proxy`. Until then, the staging matrix is rendered and validated
-locally only. It uses Vault inputs under
-`secret/ssl-proxy/staging`, `sync_staging`, and the
-`ssl-proxy-staging-postgres-endpoint` ConfigMap. Production deployer RBAC stays
-production-only. The platform-operated Image Updater is configured only on
-staging Applications; it tracks `staging` tags, writes immutable digests only
-under `cyber-stack/matrix/staging/`, and commits to `main`.
+The [production prerequisites](matrix/prod/README.md) describe the active
+render. The [staging prerequisites](matrix/staging/README.md) describe the
+separate namespace and endpoint patches. The AppProject allows a dedicated
+staging destination, but the ApplicationSet contains no staging entries or
+Image Updater configuration. Registering staging requires reviewed control-plane
+and platform-input changes; the production deployer RBAC stays production-only.
 
 The single-node topology intentionally has no PodDisruptionBudgets: a PDB
 cannot create redundancy on one node and can block voluntary maintenance. The
@@ -76,8 +79,8 @@ The same control-plane Kustomization owns K3s's
 `kube-system/HelmChartConfig/traefik`. Traefik is an IPv4 `ClusterIP`, exposes
 only HTTPS to two in-cluster `cloudflared` replicas, and watches approved CRDs
 only in `prod-ssl-proxy`. The public route admits the middleware OIDC paths,
-Schema Migrator `/api/` except health, and Atheros Search `/v1/`; all other
-paths have no router. Grafana is available only at
+Schema Migrator `/api/` except health, Atheros Search `/v1/`, and the public
+`/public/stats` snapshot endpoint; all other paths have no router. Grafana is available only at
 `https://gateway.rclabs.uk:30000` from the trusted LAN through its direct TLS
 NodePort; every other administrative or data-plane endpoint remains internal.
 Router and host-firewall state are platform prerequisites documented in the
@@ -130,9 +133,9 @@ development overlay before documenting or automating local Kubernetes use.
 
 1. Let the private Jenkins `ssl-proxy-images` pipeline publish all first-party
    images from `main` through the unchanged `make publish-all REGISTRY=...`
-   interface. For an environment-aware manual publication of the eight
+   interface. For an environment-aware manual publication of the twelve
    Kubernetes images, run `make publish ENV=prod`
-   (`prod` is the default). This target derives every repository and current pin
+   (`prod` is the supported deployed environment). This target derives every repository and current pin
    from its owning slice; `REGISTRY` and image tags do
    not define deployment identity.
 2. Use the pushed manifest digest and exact bump command printed by
@@ -140,7 +143,8 @@ development overlay before documenting or automating local Kubernetes use.
    already pins that content; `UNPINNED` still means publication succeeded and
    requires a reviewed `make bump-digest-<service> ENV=prod
    DIGEST=sha256:<digest>` Git change. The helper keeps the owning production
-   slice as the single source of truth.
+   slice as the single source of truth. The bump targets require `ENV=prod`;
+   staging is not supported by this publication/promotion interface.
 3. CI must pass `make gitops-check`, documentation checks and component tests.
 4. Complete the component acceptance checks against the published digest.
 5. Open a production pull request that records the accepted digest in the
@@ -182,10 +186,11 @@ rotation harness through the Docker API.
 
 ## Verification and diagnosis
 
-Render and validate every canonical source path:
+Run from the repository root with Python, PyYAML and `kustomize` installed:
 
 ```bash
 make gitops-check
+make docs-check
 ```
 
 Read-only cluster checks:
@@ -231,8 +236,7 @@ PostgreSQL endpoint ConfigMap must instead go through the platform's declarative
 control plane; they are prerequisite contracts and are not owned by an
 unspecified workload repository.
 
-The current stack-recovery incident is blocked by missing platform-owned
-Secrets, not by first-party image publication. Publishing tags again cannot
-materialize those prerequisites. Recovery must proceed through the platform's
-declarative control plane, after which Argo CD can reconcile the unchanged
-digest-pinned workload sources.
+If required platform input values are absent, inspect the host synchronizer's
+health and contract validation before publishing images again. An existing
+Secret shell does not prove that its required keys are populated, and an image
+publication cannot supply missing Vault inputs.
