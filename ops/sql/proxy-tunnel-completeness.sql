@@ -13,7 +13,7 @@ WITH seeds AS MATERIALIZED (
     AND event_type IN ('tunnel_open', 'tunnel_close')
   ORDER BY event_time, event_id LIMIT :page_size
 ), candidates AS MATERIALIZED (
-  SELECT DISTINCT correlation_id FROM seeds WHERE correlation_id IS NOT NULL
+  SELECT DISTINCT correlation_id FROM seeds WHERE correlation_id ~ '[^[:space:]]'
     AND :'horizon_start'::timestamptz <= :'window_start'::timestamptz
     AND :'horizon_end'::timestamptz >= :'window_end'::timestamptz
 ), evidence AS (
@@ -42,7 +42,8 @@ SELECT jsonb_build_object(
   'duplicate_or_conflicting', count(*) FILTER (WHERE opens>1 OR closes>1 OR closed_at<opened_at),
   'counterpart_page_saturated', count(*) FILTER (WHERE evidence_rows>=:counterpart_limit),
   'missing_side_unknown_beyond_horizon', count(*) FILTER (WHERE opens=0 OR closes=0),
-  'missing_correlation_observations', (SELECT count(*) FROM seeds WHERE correlation_id IS NULL),
+  'missing_correlation_observations', (SELECT count(*) FROM seeds
+    WHERE correlation_id IS NULL OR correlation_id !~ '[^[:space:]]'),
   'cursor', (SELECT jsonb_build_array(event_time,event_id) FROM seeds ORDER BY event_time DESC,event_id DESC LIMIT 1),
   'horizon_start', :'horizon_start', 'horizon_end', :'horizon_end',
   'horizon_covers_window', :'horizon_start'::timestamptz <= :'window_start'::timestamptz

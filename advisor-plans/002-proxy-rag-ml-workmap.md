@@ -88,6 +88,18 @@ for retained-envelope replay, cancellation counters, ClientHello offers,
 measurement provenance and correction invalidation. These are local acceptance
 results; production activation and recovery gates remain open.
 
+SRC08-SRC14 received the next implementation and regression pass on 2026-10-25.
+The [document, scope and embedding follow-up](../docs/proxy-rag-evidence-preparation.md#src08-src14-follow-up-2026-10-25)
+records compatibility coverage, stale-signal resolution, event-time rollups,
+vector parity and backend response association. Stage 5 recovery and live
+backend/capacity acceptance remain gated.
+
+SRC15-SRC21 received the next implementation and regression pass on 2026-10-25.
+The [retrieval, operations and fencing follow-up](../docs/proxy-rag-evidence-preparation.md#src15-src21-follow-up-2026-10-25)
+records current-vector context, bounded repair isolation, actual provisioner
+grants, production-equivalent test roles, lifecycle bounds and stale-owner tests.
+Live enablement, capacity, backend verification and recovery remain release gates.
+
 ```text
 SearchDocumentPreparation.scala:87-91
   checksum = sha256Hex(normalizedText.getBytes(UTF_8))

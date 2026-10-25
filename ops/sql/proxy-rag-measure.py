@@ -13,7 +13,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 MODEL = "nomic-embed-text-v2-moe"
 SAFE_ENV = {
     "OCTOPUS_ENABLED_PROCESSORS", "OCTOPUS_CONSUMERS_ENABLED",
-    "ATHSEARCH_WORKER_ENABLED", "ATHSEARCH_WORKER_COUNT", "ATHSEARCH_WORKER_BATCH_SIZE",
+    "ATHSEARCH_WORKER_ENABLED", "ATHSEARCH_WORKER_COUNT", "ATHSEARCH_WORKER_SOURCE_KINDS",
+    "ATHSEARCH_EMBEDDING_BATCH_SIZE", "ATHSEARCH_EMBEDDING_REQUEST_CONCURRENCY",
+    "ATHSEARCH_EMBEDDING_QUERY_RESERVED_SLOTS", "ATHSEARCH_EMBEDDING_MAX_TOKENS",
+    "ATHSEARCH_EMBEDDING_MAX_CHUNKS_PER_INPUT", "ATHSEARCH_EMBEDDING_INPUT_REVISION",
+    "ATHSEARCH_EMBEDDING_PREFIX_OWNER",
     "ATHSEARCH_EMBEDDING_MODEL", "ATHSEARCH_EMBEDDING_DIMENSIONS",
 }
 
@@ -96,6 +100,7 @@ def metadata(live=False, namespace="prod-ssl-proxy"):
                                            "live_attestation": "unavailable_without_database"}
     # Desired file hashes do not assert effective rendered configuration or live state.
     result["desired_files"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in (
+        ROOT / "cyber-stack/base/atheros-search/deployment.yaml",
         ROOT / "cyber-stack/matrix/prod/patches/java-coordinator-broker-drain.yaml",
         ROOT / "cyber-stack/matrix/prod/patches/atheros-search.yaml")}
     if live:
@@ -116,7 +121,7 @@ def metadata(live=False, namespace="prod-ssl-proxy"):
             result["live"] = {"status": "observed_pod_specs_only", "workloads": workloads,
                               "limitation": "spec settings are not runtime enablement or dependency closure"}
             result["live_image_ids"] = [w["image_ids"] for w in workloads]
-            result["worker_settings"] = [{k: v for k, v in w["settings"].items() if k.startswith("ATHSEARCH_WORKER_")}
+            result["worker_settings"] = [{k: v for k, v in w["settings"].items() if k.startswith("ATHSEARCH_")}
                                          for w in workloads]
         except (OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
             result["live"] = {"status": "unavailable_read_failed", "reason": type(error).__name__}

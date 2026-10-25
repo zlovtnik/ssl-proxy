@@ -69,6 +69,37 @@ class ProxyRagMeasureTest(unittest.TestCase):
         self.assertIsNone(result["drain_seconds"])
         self.assertIn("current_reserve_jobs_per_second", result["missing"])
 
+    def test_live_specs_report_scope_and_input_identity_without_runtime_attestation(self):
+        settings = {
+            "ATHSEARCH_WORKER_ENABLED": "true", "ATHSEARCH_WORKER_SOURCE_KINDS": "proxy_event",
+            "ATHSEARCH_EMBEDDING_BATCH_SIZE": "32", "ATHSEARCH_EMBEDDING_REQUEST_CONCURRENCY": "4",
+            "ATHSEARCH_EMBEDDING_QUERY_RESERVED_SLOTS": "1",
+            "ATHSEARCH_EMBEDDING_INPUT_REVISION": "legacy_unknown",
+            "ATHSEARCH_EMBEDDING_PREFIX_OWNER": "legacy",
+        }
+        pod = {"metadata": {"name": "ssl-proxy-atheros-search-abc"},
+               "spec": {"containers": [{"name": "atheros-search", "image": "search@sha256:fixture",
+                   "env": [dict(name=key, value=value) for key, value in settings.items()] + [
+                       dict(name="ATHSEARCH_POSTGRES_PASSWORD", value="must-not-appear")]}]},
+               "status": {"containerStatuses": [{"name": "atheros-search", "imageID": "running-image"}]}}
+
+        def run(command, cwd=ROOT, timeout=30):
+            if command[0] == "kubectl":
+                return json.dumps({"items": [pod]})
+            if command == ["git", "rev-parse", "--show-toplevel"]:
+                return str(cwd.resolve())
+            return "head" if command[-1] == "HEAD" else ""
+
+        with patch.object(measure, "run", side_effect=run):
+            result = measure.metadata(live=True)
+        self.assertEqual(result["live"]["workloads"][0]["settings"], settings)
+        self.assertEqual(result["worker_settings"], [settings])
+        self.assertEqual(result["live"]["status"], "observed_pod_specs_only")
+        self.assertEqual(result["actual_processor_enablement"], "unavailable_requires_runtime_attestation")
+        self.assertEqual(result["backend_artifact_preprocessing"], "unmeasured")
+        self.assertNotIn("must-not-appear", json.dumps(result))
+        self.assertIn("cyber-stack/base/atheros-search/deployment.yaml", result["desired_files"])
+
     def test_measured_capacity_reserves_current_traffic_and_pauses(self):
         fields = measure.capacity({})["missing"]
         values = dict.fromkeys(fields, 1)

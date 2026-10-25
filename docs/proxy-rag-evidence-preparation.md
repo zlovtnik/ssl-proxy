@@ -1,7 +1,7 @@
 # Proxy RAG evidence and preparation
 
 > **Status: Application changes verified; production activation and recovery remain gated.**
-> Latest verification: 2026-10-24 UTC. Implements the stage 3 and stage 4 code in
+> Latest verification: 2026-10-25 UTC. Implements the stage 3 and stage 4 code in
 > the [workmap](../advisor-plans/002-proxy-rag-ml-workmap.md).
 
 ## Evidence and compatibility
@@ -168,6 +168,177 @@ Rollback uses compatible binaries with preparation/workers disabled or a
 compatible input profile; retain the additive schema and evidence.
 
 ## Verification record
+
+### SRC15-SRC21 follow-up: 2026-10-25
+
+This batch covers the remaining seven source references. It preserves the
+earlier SRC01-SRC14 changes and reuses the existing schema, lease and repair
+contracts without new dependencies or deployment changes.
+
+- SRC15: canonical retrieval tests cover both proxy kinds sharing event
+  embeddings, current normalized-text checksums, input revisions and host
+  substring filtering before the candidate limit. The existing dense path
+  already enforces these conditions; no runtime rewrite was needed.
+- SRC16: record context joins vectors by model, kind, input revision and content
+  hash. Current coverage also requires completed work, active unchanged text
+  and a nonzero vector. Proxy records cannot use a legacy MAC to anchor wireless
+  activity. Their timeline remains explicitly unavailable. The explain panel
+  preserves and displays input revision so coexisting work stays distinguishable.
+  Legacy reset/retry operations now take one limited, locked page of active
+  non-proxy jobs; they cannot bypass the scoped proxy campaign controls.
+  Aggregate ETL gauges remain distinct from proxy source coverage.
+- SRC17: the real provisioning-executor test checks coordinator write grants,
+  Search read-only evidence access, denial of private sources/preparation state
+  and matching ready schema proofs. Existing canonical grants needed no change.
+- SRC18: audit metadata captures the actual safe worker batch, concurrency,
+  source-kind and input-revision settings instead of an unused batch variable.
+  Desired-file hashes include the base Search deployment. Pod specifications
+  remain labelled as specifications; runtime enablement, capacity and backend
+  behavior remain unattested. Credential environment values are excluded.
+- SRC19: blank/whitespace correlation IDs count as missing observations rather
+  than false tunnel pairs. Tests cover counterpart saturation, bounded horizon
+  matching, same-time keyset pages and physical exclusion of retained history
+  before aggregation. Synthetic query plans do not attest production plans.
+- SRC20: the Go canonical runner pins the same pgvector image digest as the
+  executor harness and uses production role search paths without public schema
+  fallback. Required database tests execute actual manifests and runtime grants.
+- SRC21: existing proxy lease/source-revision guards pass new regressions for
+  stale replay after a legitimate text rollback and wrong owner/token/fence
+  before expiry. Older work cannot reactivate an intermediate document or
+  change current jobs. Generic wireless persistence remains outside this scope.
+
+Affected runtime paths are [record context](../apps/integration-console/atheros-search/internal/search/record_context.go),
+[legacy repair](../apps/integration-console/atheros-search/internal/app/repair/repair.go),
+[explain UI](../apps/integration-console/atheros-search-ui/src/components/explain/EmbeddingWork.tsx),
+[audit metadata](../ops/sql/proxy-rag-measure.py) and
+[lifecycle measurement](../ops/sql/proxy-tunnel-completeness.sql).
+Regression coverage uses the existing
+[Go database runner](../scripts/tests/test_atheros_reporting.py),
+[provisioner integration](../scripts/tests/test-postgres-schema-executor-integration.sh),
+[audit integration](../scripts/tests/proxy_rag_integration.py) and
+[Octopus canonical suite](../services/octopus/src/test/scala/com/sslproxy/coordinator/ingest/OctopusPersistenceIntegrationSuite.scala).
+
+Verification completed for this batch:
+
+- Octopus `OCTOPUS_REQUIRE_DOCKER=true sbt test`: 586 passed, one opt-in live
+  probe skipped. Canonical Docker integration executed. Compilation retains
+  `-Wunused:all -Werror`. The focused lease/revision run passed 19 tests.
+- Search `PATH=/Users/rcs/go/bin:$PATH GOTOOLCHAIN=go1.26.1 make quality-go`:
+  formatting, vet, race tests, both lint profiles, boundaries, protobuf and
+  shared fixtures passed. The pinned lint binary is 2.13.2.
+- Root `scripts/tests/test_atheros_reporting.py --required`: 35 top-level
+  tests (43 including subtests), all eight consumers, zero skips/failures.
+  The final run includes the exhausted/superseded repair assertion.
+- Root `scripts/tests/test-postgres-schema-executor-integration.sh`: fresh
+  provisioning, proxy grants/readiness, upgrade, replay, checksum drift and
+  ownership checks passed. `scripts/tests/proxy_rag_integration.py`: 16 tests
+  passed, zero skips. Measurement unit tests: nine passed; executor unit tests:
+  six passed.
+- Search `make ui-check`: 165 tests in 28 files and production build passed,
+  including input-revision normalization/display. `make stack-contract` passed
+  with `ATHSEARCH_STACK_ROOT=/Users/rcs/git/ssl-proxy`.
+- Documentation checks and diff whitespace checks passed in the root and
+  affected nested repositories. Independent scoped review found no remaining
+  correctness defects.
+
+Docker tests used `DOCKER_HOST=unix:///Users/rcs/.docker/run/docker.sock`.
+The Go runner used the existing temporary test environment at
+`/private/tmp/src08-src14-test-venv`, `GOTOOLCHAIN=go1.26.1`, and
+`TESTCONTAINERS_HOST_OVERRIDE=172.20.10.9` for its isolated local database;
+the repair CLI rejects loopback DSNs. No repository dependency was added.
+Checkout HEADs remain parent `9692492026800615798bb9846341bb34d221eece`,
+Octopus `9c47daffa33bf016b8a0f9fe23d5821a0c5cb65c` and Integration Console
+`69db6850d8b4570987ecc3702c98db2501eb0e95`, each with the documented dirty
+implementation changes. No commits were created.
+
+Verification runs use isolated local databases. No production replay, DDL,
+image promotion or configuration activation occurred. M07/D07 and V01/V02
+remain open, as do the later campaign and timeline delivery gates.
+
+### SRC08-SRC14 follow-up: 2026-10-25
+
+This batch covers the next seven source references, preserving the earlier
+SRC01-SRC07 work and all unrelated checkout changes.
+
+- SRC08: golden tests freeze the exact proxy normalized-text checksum and
+  document UUID. Metadata and preprocessing changes preserve text identity;
+  endpoint normalization stays separate from compatibility prose hashing.
+- SRC09: supervisor tests execute a proxy-only workload selection and observe
+  no shared/wireless preparation. Consumer enablement still explicitly includes
+  wireless ingestion IDs. Existing runtime paths needed no change.
+- SRC10: bounded stale-signal resolution preserves history and clears signals
+  whose qualifying retained observations expired or were corrected. Eligible
+  observations can reopen them. Future event times do not qualify. Legacy
+  score/severity behavior remains compatible for valid inputs, with additive
+  uncalibrated/observation/scalar-byte provenance and confirmed_threat=false.
+  Invalid negative counts and excess recency cannot inflate the calculation.
+  Blocked-host rollups use event time for first/latest metadata, so late older
+  observations add counters without replacing newer metadata.
+- SRC11: similarity anchors and candidates require exact current-content and
+  vector parity between unified/per-kind stores on both sides. Scope, model,
+  normalization and input-revision checks and independent checkpoints remain.
+- SRC12: canonical PostgreSQL tests admit the two implemented proxy kinds and
+  four legacy kinds, retain separate preprocessing revisions in jobs and both
+  vector stores, reject exact duplicates and reject unimplemented proxy_flow.
+  Existing append-only schema contracts needed no DDL or manifest changes.
+- SRC13: canonical worker tests retain scoped claims/recovery, checksum
+  attachment, lease fencing and atomic completion. Existing code needed no change.
+- SRC14: indexed backend responses are reordered by input index. Duplicate,
+  out-of-range or mixed indexed/unindexed responses fail closed; legacy
+  unindexed responses remain supported. Tokenizer readiness checks exact token
+  identities after round-trip, including same-length corruption. The index
+  association follows the [official embedding response contract](https://developers.openai.com/api/reference/resources/embeddings/methods/create).
+
+Runtime changes are localized to
+[signal reconciliation](../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/PostgresRepository.scala),
+[signal SQL](../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/sql/ThreatRiskSql.scala),
+[score evidence](../services/octopus/src/main/scala/com/sslproxy/coordinator/processor/IntelligencePreparation.scala),
+[rollup binding](../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/PostgresTransactor.scala),
+[rollup SQL](../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/sql/BatchSinkSql.scala),
+[similarity SQL](../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/sql/IntelligenceSql.scala)
+and the [embedding client](../apps/integration-console/atheros-search/internal/embed/client.go).
+Acceptance coverage is in the
+[canonical persistence suite](../services/octopus/src/test/scala/com/sslproxy/coordinator/ingest/OctopusPersistenceIntegrationSuite.scala),
+[document suite](../services/octopus/src/test/scala/com/sslproxy/coordinator/processor/SearchDocumentPreparationSuite.scala),
+[supervisor suite](../services/octopus/src/test/scala/com/sslproxy/coordinator/processor/ProcessorSupervisorSuite.scala),
+[processor tests](../services/octopus/src/test/scala/com/sslproxy/coordinator/processor)
+(including the new `ProxyIntelligenceEvidenceSuite.scala`),
+[backend response tests](../apps/integration-console/atheros-search/internal/embed/response_contract_test.go)
+and [tokenizer tests](../apps/integration-console/atheros-search/internal/embed/preflight_test.go).
+The [processor feature](../services/octopus/src/test/resources/features/search-projection.feature)
+and [backend contract inventory](../apps/integration-console/atheros-search/docs/contracts.md)
+describe the updated behavior. Existing processor, job and schema contracts are
+reused; no dependency or parallel pipeline was added.
+
+Final verification at parent `9692492026800615798bb9846341bb34d221eece`, Octopus
+`9c47daffa33bf016b8a0f9fe23d5821a0c5cb65c` and Integration Console
+`69db6850d8b4570987ecc3702c98db2501eb0e95`, plus uncommitted changes:
+
+- Mandatory Docker-enabled `sbt test`: 584 passed, one opt-in live probe skipped.
+  The focused canonical/intensity pass ran 52 tests without skips.
+  Two similarity tests passed again after adding the anchor-store mismatch case.
+- Go 1.26.1 with pinned golangci-lint 2.13.2: `make quality-go` passed race,
+  vet, both lint profiles (zero issues), package boundaries, protobuf and fixtures.
+  `make stack-contract ATHSEARCH_STACK_ROOT=/Users/rcs/git/ssl-proxy` passed.
+- Required canonical Go database runner: 32 top-level tests, 38 including
+  subtests, across all eight consumer packages passed with zero skips. The
+  isolated container's non-loopback host was supplied through
+  TESTCONTAINERS_HOST_OVERRIDE because the repair CLI correctly rejects loopback.
+- `make ui-check`: 165 tests and the production build passed.
+- Documentation cross-references and `git diff --check` passed in all affected
+  repositories.
+- The rollup, stale-signal, vector-parity, response-index and tokenizer corruption
+  regressions were observed failing before their fixes.
+
+Local acceptance does not authorize activation. M07/D07 capacity and physical
+plans, V01 deployed backend behavior and V02 prefix activation remain open.
+Legacy rollups created with ingestion-time timestamps require bounded
+retained-source reconciliation before rollout; this patch does not rewrite
+existing rows. Equal event timestamps retain legacy arrival-order metadata;
+validated Stage 6 projections still need B04 deterministic event-ID tie-breaks.
+Legacy severity bands remain uncalibrated, and retained observations cannot
+establish attempts or validated transfer. No production replay, image promotion,
+DDL application or managed-cluster mutation was performed.
 
 ### SRC01-SRC07 follow-up: 2026-10-24
 

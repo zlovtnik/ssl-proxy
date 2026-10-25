@@ -172,6 +172,62 @@ FROM atheros_search.search_documents WHERE source_key='job-state-9';
                 self.assertEqual(result["single_ordered_pair_within_horizon"], 0)
                 self.assertEqual(result["counterpart_rows_returned"], 0)
 
+    def test_lifecycle_rejects_blank_correlations_and_reports_saturation(self):
+        self.sql("""INSERT INTO octopus_core.proxy_events(event_id,event_time,event_type,host,correlation_id) VALUES
+('blank-open','2026-10-15T01:00Z','tunnel_open','example.com',''),
+('blank-close','2026-10-15T01:00Z','tunnel_close','example.com',''),
+('space-open','2026-10-15T01:00Z','tunnel_open','example.com',E' \\t'),
+('space-close','2026-10-15T01:00Z','tunnel_close','example.com',E' \\t'),
+('saturated-a','2026-10-15T01:00Z','tunnel_open','example.com','saturated'),
+('saturated-b','2026-10-15T01:01Z','tunnel_close','example.com','saturated'),
+('saturated-c','2026-10-15T01:02Z','tunnel_open','example.com','saturated');""")
+        variables = self.variables()
+        variables.update(window_start="2026-10-15T00:00Z", window_end="2026-10-16T00:00Z",
+                         horizon_start="2026-10-15T00:00Z", horizon_end="2026-10-16T00:00Z",
+                         after_time="2026-10-15T00:00Z", counterpart_limit=2)
+        result = json.loads(self.sql((ROOT / "ops/sql/proxy-tunnel-completeness.sql").read_text(),
+                                    "proxy_audit", variables))
+        self.assertEqual(result["seed_rows"], 7)
+        self.assertEqual(result["missing_correlation_observations"], 4)
+        self.assertEqual(result["candidate_correlations"], 1)
+        self.assertEqual(result["counterpart_page_saturated"], 1)
+        self.assertEqual(result["single_ordered_pair_within_horizon"], 0)
+
+    def test_lifecycle_horizon_excludes_retained_history_before_aggregation(self):
+        self.sql("""INSERT INTO octopus_core.proxy_events(event_id,event_time,event_type,host,correlation_id)
+SELECT 'old-lifecycle-'||n, '2026-10-02'::timestamptz+n*interval '1 second',
+ 'tunnel_open','example.com','cross-start' FROM generate_series(1,1000) n;
+ANALYZE octopus_core.proxy_events;""")
+        query = (ROOT / "ops/sql/proxy-tunnel-completeness.sql").read_text()
+        result = json.loads(self.sql(query, "proxy_audit", self.variables()))
+        self.assertEqual(result["single_ordered_pair_within_horizon"], 2)
+        self.assertEqual(result["counterpart_rows_returned"], 4)
+        self.assertEqual(result["duplicate_or_conflicting"], 0)
+        plan = json.loads(self.sql(query.replace("WITH seeds AS", "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) WITH seeds AS"),
+                                   "proxy_audit", self.variables()))[0]
+
+        def nodes(node):
+            yield node
+            for child in node.get("Plans", []):
+                yield from nodes(child)
+
+        scans = [node for node in nodes(plan["Plan"]) if node.get("Relation Name") == "proxy_events"]
+        self.assertTrue(scans)
+        self.assertTrue(all(node["Actual Rows"] + node.get("Rows Removed by Filter", 0) <= 12
+                            for node in scans), scans)
+
+    def test_lifecycle_same_timestamp_seed_keyset(self):
+        variables = self.variables(1)
+        query = (ROOT / "ops/sql/proxy-tunnel-completeness.sql").read_text()
+        pages = []
+        for _ in range(3):
+            page = json.loads(self.sql(query, "proxy_audit", variables))
+            pages.append(page)
+            if page["cursor"]:
+                variables["after_time"], variables["after_id"] = page["cursor"]
+        self.assertEqual([page["seed_rows"] for page in pages], [1, 1, 0])
+        self.assertEqual([page["cursor"][1] for page in pages[:2]], ["f", "g"])
+
     def test_explain_bounded_volume(self):
         query = (ROOT / "ops/sql/proxy-rag-coverage.sql").read_text().replace(
             "WITH source_page AS", "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) WITH source_page AS")
