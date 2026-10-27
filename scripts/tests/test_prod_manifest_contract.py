@@ -694,5 +694,59 @@ mock_kcadm() {
         )
 
 
+class OperationsDeliveryContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.environments = {}
+        for environment in ("prod", "staging"):
+            rendered = []
+            for slice_name in ("app-stack", "data-plane"):
+                result = subprocess.run(
+                    ["kustomize", "build", "--load-restrictor", "LoadRestrictionsNone",
+                     str(ROOT / "cyber-stack/matrix" / environment / slice_name)],
+                    check=True, capture_output=True, text=True,
+                )
+                rendered.extend(documents(result.stdout))
+            cls.environments[environment] = rendered
+
+    def test_operational_upstreams_use_internal_services(self) -> None:
+        for environment, rendered in self.environments.items():
+            with self.subTest(environment=environment):
+                search = next(doc for doc in rendered if doc.get("kind") == "Deployment"
+                              and doc["metadata"]["name"] == "ssl-proxy-atheros-search")
+                container = next(item for item in search["spec"]["template"]["spec"]["containers"]
+                                 if item["name"] == "atheros-search")
+                env = {item["name"]: item.get("value") for item in container["env"]}
+                self.assertEqual("http://ssl-proxy-proxy-observability:9098/internal/telemetry",
+                                 env["ATHSEARCH_PROXY_TELEMETRY_URL"])
+                self.assertEqual("http://ssl-proxy-stats-reader:8080/public/stats",
+                                 env["ATHSEARCH_OPERATIONS_STATS_URL"])
+
+    def test_search_can_reach_only_proxy_observability_and_stats_http(self) -> None:
+        search_labels = {"app.kubernetes.io/name": "ssl-proxy",
+                         "app.kubernetes.io/component": "atheros-search"}
+        for environment, rendered in self.environments.items():
+            for target, expected_port in (("proxy", 9098), ("stats-reader", 8080)):
+                with self.subTest(environment=environment, target=target):
+                    ports = set()
+                    for doc in rendered:
+                        if doc.get("kind") != "NetworkPolicy":
+                            continue
+                        spec = doc["spec"]
+                        if spec["podSelector"].get("matchLabels", {}).get("app.kubernetes.io/component") != target:
+                            continue
+                        for rule in spec.get("ingress", []):
+                            for peer in rule.get("from", []):
+                                selector = peer.get("podSelector", {}).get("matchLabels", {})
+                                if "namespaceSelector" not in peer and "podSelector" in peer and all(
+                                    search_labels.get(key) == value for key, value in selector.items()
+                                ):
+                                    # An omitted ports clause permits the admin listener as well.
+                                    self.assertTrue(rule.get("ports"))
+                                    ports.update((port.get("protocol", "TCP"), port["port"])
+                                                 for port in rule["ports"])
+                    self.assertEqual({("TCP", expected_port)}, ports)
+
+
 if __name__ == "__main__":
     unittest.main()

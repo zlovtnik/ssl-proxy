@@ -2,8 +2,10 @@
 
 A standalone Astro + TypeScript frontend with SolidJS synthetic demonstrations
 for Atheros Search, Schema Migrator, and RCLabs VPN / Proxy, plus a static Octopus
-page with runtime operational readings when available. The existing Search
-and Migrator operator consoles are separate applications.
+page with runtime operational readings when available. Atheros Search is the
+unified ingestion and retrieval workbench; proxy and Octopus pages explain its
+internal components while retaining their technical URLs. Schema Migrator is
+companion tooling. This public site is separate from the authenticated consoles.
 Synthetic samples use no application API, authentication, database, or migration
 execution. Octopus separately reads the public metrics endpoint.
 
@@ -71,6 +73,7 @@ is a raster export of the original SVG in `public/`.
 - [`src/styles/site.css`](src/styles/site.css) owns shared typography, spacing
   and controls; route styles compose those definitions.
 - [Atheros Search documentation](../integration-console/atheros-search/README.md)
+- [Source-to-retrieval workflow](../../docs/atheros-search-workflow.md)
 - [Schema Migrator documentation](../schema-migrator/README.md)
 - [Content source map](docs/content-evidence.md)
 - [Messaging framework](docs/messaging.md)

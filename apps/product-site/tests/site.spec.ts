@@ -16,6 +16,7 @@ import {
   octopusMetrics,
   guides,
   guidePath,
+  searchComponents,
 } from '../src/data/products';
 
 const routes = [
@@ -384,6 +385,37 @@ test('Search reviews sample sites and indicators with a keyboard', async ({
   }
 });
 
+test('Atheros Search explains retrieval boundaries and links component details', async ({
+  page,
+}) => {
+  await page.goto('/atheros-search/');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+    'Trace ingestion. Retrieve the evidence.',
+  );
+  await expect(
+    page.getByText('Generated answers and new connectors remain future work.', {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      'Operational readings are global unless explicitly scoped; missing data stays unknown.',
+      { exact: false },
+    ),
+  ).toBeVisible();
+  for (const component of searchComponents) {
+    await expect(
+      page.getByRole('link', { name: component.label }),
+    ).toHaveAttribute('href', component.href);
+  }
+  for (const route of ['/vpn-proxy/', '/octopus/']) {
+    await page.goto(route);
+    await expect(
+      page.getByRole('link', { name: 'Explore Atheros Search', exact: true }),
+    ).toHaveAttribute('href', '/atheros-search/');
+  }
+});
+
 test('Migrator steps are user controlled and accessible in the dark theme', async ({
   page,
 }) => {
@@ -453,7 +485,10 @@ test('email requests have the recipient, product subjects, and honest scheduling
     ),
   ).toBe('rafael@rclabs.uk');
   await expect(
-    page.getByText("We'll agree on the next step by email", { exact: false }),
+    page.getByText(
+      'This is an email conversation; hosted product access is not provisioned here.',
+      { exact: false },
+    ),
   ).toBeVisible();
 });
 

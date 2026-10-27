@@ -4,6 +4,16 @@ Copy is limited to repository capabilities and explicitly sourced operational
 measurements. Synthetic examples illustrate behavior without implying
 performance results or customer adoption.
 
+The primary product story follows Atheros Search from configured proxy and
+wireless observations through ingestion, document preparation, indexing and
+evidence retrieval. [Runtime ownership and readiness limits](../../../docs/atheros-search-workflow.md)
+and the [architecture](../../../docs/architecture.md) ground that framing.
+Proxy and Octopus remain component detail pages; Schema Migrator remains
+companion tooling. The public Search sample still illustrates synthetic site,
+indicator and observation review, rather than an end-to-end ingestion run.
+Generated answers and new connectors are deferred. Operational measurements
+remain global unless explicitly scoped; unknown coverage is not readiness.
+
 The site is framed as Rafael Cardoso dos Santos's engineering portfolio.
 The owner confirmed that public name and `racasantos@icloud.com` privacy contact
 on 2026-10-14. The [about page](../src/pages/about/index.astro) links the

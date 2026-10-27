@@ -7,16 +7,16 @@ const { kind } = Astro.props;
 const diagrams = {
   search: {
     stages: [
-      ['Monitored site', 'sensor observations'],
-      ['Wireless indicator', 'for analyst review'],
-      ['Supporting', 'observations'],
+      ['Proxy / wireless', 'observations'],
+      ['Octopus / Search', 'prepare and index'],
+      ['Retrieve records', 'inspect evidence'],
     ],
-    labels: ['MONITORED SITE', 'INDICATOR', 'OBSERVATION'],
+    labels: ['SOURCES', 'INGESTION / INDEXING', 'RETRIEVAL'],
     title:
-      'Illustrative site, wireless indicator, and supporting observation path',
+      'Atheros Search source, ingestion, indexing, and evidence retrieval path',
     description:
-      'Illustrative sample only: a monitored site, a configured wireless indicator for analyst review, and supporting wireless observations. It does not represent an end-to-end site overview in the current production console. An observation does not confirm a current connection or physical device identity.',
-    caption: `Illustrative synthetic path from a monitored site to an indicator and its supporting observations. The current production console does not show this complete overview end to end. ${getProduct('search').caveat}`,
+      'Configured proxy and wireless sources publish observations. Octopus prepares documents and maintains projections; Search workers create embeddings. Search retrieves ranked records and supporting evidence. Vector coverage and source coverage can be incomplete; this flow does not generate answers.',
+    caption: `Configured source-to-retrieval responsibilities. The public sample uses synthetic wireless records and does not demonstrate the whole ingestion pipeline. ${getProduct('search').caveat}`,
   },
   vpn: {
     stages: [

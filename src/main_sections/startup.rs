@@ -450,6 +450,7 @@ fn build_observability_router(state: state::SharedState) -> Router {
         .route("/health", get(dashboard::health))
         .route("/ready", get(dashboard::ready))
         .route("/metrics", get(dashboard::metrics))
+        .route("/internal/telemetry", get(ssl_proxy::telemetry::snapshot))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

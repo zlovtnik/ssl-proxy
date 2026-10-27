@@ -96,6 +96,20 @@ struct SyncPublisherCounters {
     enqueue_timeouts_total: AtomicU64,
 }
 
+/// Bounded, in-memory publisher measurements safe for application telemetry.
+/// Paths, transport errors, credentials and filesystem spool scans are excluded.
+#[derive(Serialize)]
+pub struct SyncPublisherTelemetrySnapshot {
+    pub configured: bool,
+    pub status: &'static str,
+    pub queue_depth: usize,
+    pub queue_capacity: usize,
+    pub spooled_total: u64,
+    pub enqueue_timeouts_total: u64,
+    pub last_attempt_at: Option<String>,
+    pub last_publish_at: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct SyncPublisher {
     config: SyncPublisherConfig,

@@ -60,6 +60,10 @@ spec:
                   optional: true
             - name: ATHSEARCH_WIRELESS_PROJECTION
               value: "false"
+            - name: ATHSEARCH_PROXY_TELEMETRY_URL
+              value: "http://ssl-proxy-proxy-observability:9098/internal/telemetry"
+            - name: ATHSEARCH_OPERATIONS_STATS_URL
+              value: "http://ssl-proxy-stats-reader:8080/public/stats"
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:

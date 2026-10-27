@@ -61,15 +61,15 @@ export const about = {
         title: 'Atheros Search',
         kind: 'Independent',
         summary:
-          'Wireless observation ingestion to authenticated investigation.',
+          'Ingestion-backed evidence retrieval for RAG builders and operators.',
         links: [
           { label: 'View Atheros Search', href: '/atheros-search/' },
           { label: 'Atheros Search on GitHub', href: author.profile },
         ],
         problem:
-          'Wireless observations need a review path that keeps site context, indicators, and supporting records together without treating a received identifier as confirmed device identity.',
+          'Builders and operators need to trace available evidence from source observations through ingestion, indexing, and retrieval without confusing missing measurements with readiness.',
         architecture:
-          'Atheros Sensor and the proxy publish audit events; Octopus coordinates durable ingestion; Atheros Search owns queries and embedding workers. The public interface uses synthetic records and keeps collection limits explicit.',
+          'Atheros Sensor and the proxy publish audit events; Octopus coordinates durable ingestion, document preparation, and projections; Search serves authenticated retrieval and fenced embedding workers through one console. The public interface uses synthetic records and keeps collection limits explicit.',
         decisions: [
           'Keep sensor persistence indirect through versioned audit events and coordinator-owned ingestion.',
           'Separate analyst-review indicators from claims about active connections or physical identity.',
@@ -252,7 +252,7 @@ export const home = {
     "Explore Rafael Cardoso dos Santos's backend engineering portfolio: wireless observation search, durable ingestion, and PostgreSQL change review, with source and explicit limits.",
   headline: ['Backend systems.', 'Inspectable evidence.'],
   subheadline:
-    "I'm Rafael Cardoso dos Santos. This portfolio follows wireless observations through ingestion, processing, and search, with companion tooling for PostgreSQL change review.",
+    "I'm Rafael Cardoso dos Santos. Atheros Search follows proxy and wireless observations through ingestion, indexing, and evidence retrieval. Schema Migrator supports PostgreSQL change review alongside that workflow.",
   primaryCta: { label: 'Start with Atheros Search', href: '/atheros-search/' },
   secondaryCta: { label: 'About Rafael and the work', href: '/about/' },
   supporting:
@@ -266,8 +266,9 @@ export const home = {
       'Explore synthetic Search, Migrator, and VPN / Proxy samples. Every interaction stays in your browser. Octopus has a separate operational evidence page.',
   },
   relationship:
-    'Search can review proxy observations through the configured backend. Schema Migrator has its own change-review workflow. The public samples run independently in your browser.',
-  approach: 'Each component exposes a different part of the system for review.',
+    'Atheros Search brings retrieval, ingestion visibility, and source readiness into one authenticated console. Octopus coordinates durable ingestion; the proxy and sensor produce observations. Schema Migrator is companion tooling. Public samples run independently in your browser.',
+  approach:
+    'Follow the Atheros Search workflow through focused components, with source observations and measurement limits visible.',
   explore:
     'Try product samples with synthetic records in your browser, or review Octopus operational evidence. No account or production connection required.',
 } as const;
@@ -275,14 +276,26 @@ export const home = {
 export const catalogue = {
   title: 'Projects',
   description:
-    'Compare Atheros Search, Schema Migrator, RCLabs VPN / Proxy, and Octopus by audience, inputs, workflow, and output.',
+    'Explore Atheros Search, its proxy and Octopus ingestion components, and companion Schema Migrator tooling by input, responsibility, and output.',
   headline: ['Explore the system', 'and its tools.'],
   summary:
     'Start with Atheros Search, then follow the proxy and Octopus ingestion path. Schema Migrator is companion tooling for database change review. Each page includes implementation details and operating limits.',
-  comparisonTitle: 'A different job for each tool.',
+  comparisonTitle: 'One retrieval workflow. Focused responsibilities.',
   comparisonSummary:
     'Compare what goes in, what happens, and what you can review afterward.',
 } as const;
+
+export const searchComponents = [
+  { label: 'Proxy observation source: technical details', href: '/vpn-proxy/' },
+  {
+    label: 'Octopus ingestion: technical details and measured activity',
+    href: '/octopus/',
+  },
+  {
+    label: 'Schema Migrator: companion change-review tooling',
+    href: '/schema-migrator/',
+  },
+] as const;
 
 // Homepage technical sections. Reference entries, capability tables and the
 // benchmark protocol are rendered from this reviewed structure at build time.
@@ -714,21 +727,21 @@ export const products = [
     id: 'search',
     name: 'Atheros Search',
     path: '/atheros-search/',
-    label: 'SITE-AWARE WIRELESS SECURITY',
+    label: 'INGESTION / INDEXING / EVIDENCE RETRIEVAL',
     homeTitle: 'Atheros Search',
-    headline: ['Review wireless indicators.', 'See their site context.'],
+    headline: ['Trace ingestion.', 'Retrieve the evidence.'],
     summary:
-      'Atheros Sensor passively listens on configured Wi-Fi channels and publishes audit records to the backend. Atheros Search helps teams review wireless indicators with monitored-site context and supporting observations.',
+      'Atheros Search gives RAG builders and operators one workbench for evidence retrieval, indexing readiness, and ingestion visibility across configured proxy and wireless observations. Inspect source records and processing state before using retrieved evidence downstream.',
     problem:
-      'Security teams responsible for monitored sites who need to assess wireless indicators alongside the observations that triggered them.',
-    promise: 'An indicator points to evidence for review.',
+      'RAG builders and operators who need retrievable evidence, visible processing gaps, and source context for human review.',
+    promise: 'Follow observations from ingestion to retrieval.',
     primaryCta: { label: 'Explore a sample site review', href: '#demo' },
     secondaryCta: { label: 'Discuss your use case', href: '/demo/#search' },
     sections: {
       workflow: {
         ...workflowSection,
-        title: 'From a monitored site to observations for review.',
-        note: 'The synthetic sample illustrates a site-to-indicator-to-observation workflow. The current production console does not yet show this complete site overview end to end.',
+        title: 'From source observations to retrievable evidence.',
+        note: 'The authenticated workbench joins retrieval, ingestion, sources, evidence tools, and processing. This public synthetic sample illustrates a narrower site-to-indicator-to-observation workflow. The current production console does not yet show this complete site overview end to end. Generated answers and new connectors remain future work.',
       },
       value: {
         ...audienceSection,
@@ -745,54 +758,60 @@ export const products = [
     audiences: [
       {
         id: 'technical',
-        title: 'For technical users',
+        title: 'For RAG builders',
         proposition:
-          'Review a wireless indicator alongside its supporting observations.',
+          'Retrieve records with the context needed to evaluate their use.',
         points: [
-          'Search dense, sparse, or hybrid records through HTTP and gRPC interfaces, with site and sensor scope where supported.',
-          'Review configured rogue-access-point, deauthentication, signal, sequence, and PMF-related indicators as leads, not proof of compromise.',
+          'Search dense, sparse, or hybrid records through existing HTTP and gRPC interfaces, with supported filters and ranking explanations.',
+          'Distinguish available lexical evidence from semantic coverage. Missing vectors, failed embedding jobs, and unknown measurements do not establish indexing readiness.',
         ],
       },
       {
         id: 'buyers',
         title: 'For operators and reviewers',
-        proposition: 'Keep the operating picture inspectable.',
+        proposition: 'See where evidence stops moving.',
         points: [
-          'Keep search and vector storage in PostgreSQL, with embedding work handled by a configurable worker pool.',
-          'Inspect embedding jobs, worker heartbeats, and processing failures when evaluating the search service and its operations.',
+          'Inspect stages, backlog, failures, workers, and measurement freshness alongside retrieval, using the existing login and role permissions.',
+          'Separate indexed proxy evidence from operator-only live aggregate telemetry. Operational readings are global unless explicitly scoped; missing data stays unknown.',
         ],
       },
     ],
     workflow: [
       {
-        step: 'Scope a site',
-        input: 'A monitored location and available sensor observations',
-        processing: 'Use recorded location and sensor context',
-        output: 'Wireless records within the sample scope',
+        step: 'Observe and ingest',
+        input: 'Configured proxy and wireless observations',
+        processing:
+          'Publish events; Octopus records evidence and deduplicates repeated delivery',
+        output: 'Durable ingestion evidence within configured source coverage',
       },
       {
-        step: 'Review an indicator',
-        input: 'A configured wireless detection pattern',
-        processing: 'Inspect the heuristic reason and related records',
-        output: 'An indicator for analyst review',
+        step: 'Prepare and index',
+        input: 'Ingested observations and maintained projections',
+        processing:
+          'Octopus prepares documents and jobs; fenced Search workers create embeddings',
+        output: 'Searchable documents and available vector coverage',
       },
       {
-        step: 'Inspect observations',
-        input: 'Supporting wireless audit records',
-        processing: 'Review observed identifiers, time, channel, and evidence',
-        output: 'Context for a human assessment',
+        step: 'Retrieve and inspect',
+        input: 'A query and supported evidence filters',
+        processing:
+          'Rank term and vector matches; inspect supporting records and explanations',
+        output: 'Evidence for human review or a downstream RAG workflow',
       },
     ],
     caveat: searchCaveat,
     highlights: [
-      ['Scope the evidence', 'Review observations from a monitored site.'],
       [
-        'Review wireless indicators',
-        'See configured patterns beside supporting observations.',
+        'Follow ingestion',
+        'Trace configured sources, processing, and freshness.',
       ],
       [
-        'Keep judgment with the analyst',
-        'Treat an indicator as a lead to investigate, not a verdict.',
+        'Inspect indexing readiness',
+        'Separate lexical evidence from available semantic coverage.',
+      ],
+      [
+        'Retrieve supporting evidence',
+        'Review ranked records and explanations; answer generation is deferred.',
       ],
     ],
     features: [
@@ -814,7 +833,7 @@ export const products = [
       ],
       [
         'See processing progress',
-        'Inspect embedding jobs, worker heartbeats, and extract, transform, load (ETL) health to understand how records become searchable.',
+        'The ingestion and sources views expose allowlisted processing and coverage measurements. Inspect embedding jobs, worker heartbeats, failures, and timestamps without treating unavailable data as zero.',
       ],
     ],
     glossary: [
@@ -973,15 +992,15 @@ export const products = [
     name: 'RCLabs VPN / Proxy',
     path: '/vpn-proxy/',
     homeTitle: 'RCLabs VPN / Proxy',
-    label: 'WIREGUARD / TRANSPARENT PROXY',
+    label: 'ATHEROS SEARCH COMPONENT / OBSERVATION SOURCE',
     headline: ['Follow the traffic.', 'Inspect the decision.'],
     summary:
-      'Bring traffic through WireGuard ingress, handle connections with a transparent proxy, and inspect classification and policy decisions through audit records.',
+      'The proxy produces observations for Atheros Search: WireGuard ingress, transparent connection handling, classification, and audit publishing. This technical page explains that source component and its configured coverage.',
     problem:
       'Network and platform teams operating WireGuard ingress, transparent proxy policies, and traffic audit pipelines.',
     promise: 'An inspectable path through your network.',
     primaryCta: { label: 'Explore a sample traffic flow', href: '#demo' },
-    secondaryCta: { label: 'Discuss your use case', href: '/demo/#vpn' },
+    secondaryCta: { label: 'Explore Atheros Search', href: '/atheros-search/' },
     sections: {
       workflow: {
         ...workflowSection,
@@ -1096,10 +1115,10 @@ export const products = [
     name: 'Octopus',
     path: '/octopus/',
     homeTitle: 'Octopus',
-    label: 'OCTOPUS / DATA PIPELINE COORDINATOR',
+    label: 'ATHEROS SEARCH COMPONENT / INGESTION COORDINATOR',
     headline: ['Trace pipeline work.', 'Recover with context.'],
     summary:
-      'Investigate stalled work and resume after restarts with a durable record of events, jobs, and database loads. Octopus stores progress in PostgreSQL and uses deduplication to handle repeated delivery.',
+      'Octopus coordinates Atheros Search ingestion, document preparation, and maintained projections. Inspect its durable events, jobs, and database loads here, with measured activity and recorded history kept distinct.',
     problem:
       'For platform and data teams running event pipelines that need to recover from failures and account for repeated delivery.',
     promise: 'A clear record of the work moving through your pipeline.',
@@ -1108,8 +1127,8 @@ export const products = [
       href: '#operational-evidence',
     },
     secondaryCta: {
-      label: 'Discuss your pipeline setup',
-      href: '#contact-title',
+      label: 'Explore Atheros Search',
+      href: '/atheros-search/',
     },
     sections: {
       workflow: {
@@ -1256,7 +1275,7 @@ export const contactOptions = [
     id: 'search',
     label: 'Atheros Search',
     subject: 'Atheros Search',
-    text: 'Review site-scoped wireless indicators and supporting observations.',
+    text: 'Trace ingestion, indexing readiness, and evidence retrieval across configured proxy and wireless sources.',
   },
   {
     id: 'migrator',

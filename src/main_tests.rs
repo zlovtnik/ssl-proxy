@@ -352,3 +352,103 @@ async fn observability_listener_exposes_no_admin_routes() {
         );
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn observability_telemetry_is_bounded_and_does_not_consume_shared_counters() {
+    use http_body_util::BodyExt;
+    use std::sync::atomic::Ordering;
+
+    let state = build_state(&ssl_proxy::config::Config::default()).expect("build state");
+    state.bytes_up.store(1024, Ordering::Relaxed);
+    state.bytes_down.store(2048, Ordering::Relaxed);
+    state.active_tunnels.store(3, Ordering::Relaxed);
+    state.tunnels_opened.store(7, Ordering::Relaxed);
+    state.last_bytes_up.store(400, Ordering::Relaxed);
+    state.last_bytes_down.store(500, Ordering::Relaxed);
+    state.record_host_block("private.observed.example", 10, "analytics");
+    let router = build_observability_router(state.clone());
+    let mut readers = tokio::task::JoinSet::new();
+    for _ in 0..16 {
+        let router = router.clone();
+        readers.spawn(async move {
+            let response = router
+                .oneshot(
+                    Request::builder()
+                        .uri("/internal/telemetry")
+                        .body(Body::empty())
+                        .expect("build telemetry request"),
+                )
+                .await
+                .expect("dispatch telemetry request");
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let bytes = response
+                .into_body()
+                .collect()
+                .await
+                .expect("collect telemetry body")
+                .to_bytes();
+            assert!(bytes.len() < 4096);
+            let report: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON telemetry");
+            assert_eq!(report["schema_version"], 1);
+            assert_eq!(report["active_tunnels"], 3);
+            assert_eq!(report["counters"]["bytes_up"], 1024);
+            assert_eq!(report["counters"]["bytes_down"], 2048);
+            assert_eq!(report["counters"]["tunnels_opened"], 7);
+            assert_eq!(
+                report["classifications"]
+                    .as_object()
+                    .expect("classification object")
+                    .len(),
+                6
+            );
+            assert_eq!(report.as_object().expect("report object").len(), 7);
+            assert_eq!(
+                report["counters"]
+                    .as_object()
+                    .expect("counter object")
+                    .len(),
+                7
+            );
+            assert_eq!(
+                report["publisher"]
+                    .as_object()
+                    .expect("publisher object")
+                    .len(),
+                8
+            );
+            assert_eq!(report["publisher"]["status"], "disabled");
+            let body = std::str::from_utf8(&bytes).expect("UTF8 telemetry");
+            for excluded in [
+                "private.observed.example",
+                "last_error",
+                "spool_dir",
+                "outbox_dir",
+                "peer",
+                "admin",
+                "auth_enabled",
+            ] {
+                assert!(!body.contains(excluded), "must exclude {excluded}");
+            }
+            chrono::DateTime::parse_from_rfc3339(
+                report["measured_at"].as_str().expect("measurement string"),
+            )
+            .expect("measurement has an RFC3339 timestamp");
+            let instance = report["instance_id"].as_str().expect("instance string");
+            uuid::Uuid::parse_str(instance).expect("opaque UUID identity");
+            instance.to_string()
+        });
+    }
+    let mut identity = None;
+    while let Some(result) = readers.join_next().await {
+        let current = result.expect("telemetry reader task");
+        if let Some(previous) = &identity {
+            assert_eq!(previous, &current);
+        }
+        identity = Some(current);
+    }
+    assert_eq!(state.bytes_up.load(Ordering::Relaxed), 1024);
+    assert_eq!(state.bytes_down.load(Ordering::Relaxed), 2048);
+    assert_eq!(state.last_bytes_up.load(Ordering::Relaxed), 400);
+    assert_eq!(state.last_bytes_down.load(Ordering::Relaxed), 500);
+}

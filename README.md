@@ -1,11 +1,13 @@
-# ssl-proxy
+# Atheros Search / ssl-proxy workspace
 
-ssl-proxy is a WireGuard-first transparent proxy with wireless audit,
-Redpanda-backed processing, PostgreSQL persistence and vector search. The Rust proxy
-and Linux Atheros Sensor publish events; the Scala Octopus coordinator owns
-durable ingestion and maintained projections; the Go Atheros Search service
-owns query APIs and embedding workers; and the SolidJS Atheros Search UI is the
-Integration Console.
+Atheros Search is an ingestion-backed evidence retrieval workbench for RAG
+builders and operators. One authenticated SolidJS console and Search API join
+retrieval, ingestion visibility, source readiness, evidence exploration and the
+existing DQ workspace. The Rust proxy and Linux Atheros Sensor publish
+observations; Scala Octopus owns durable ingestion, document preparation and
+maintained projections; Go Search owns ranking, authenticated application APIs
+and fenced embedding execution. The repository retains the `ssl-proxy` name
+for the workspace and proxy component.
 
 This is Rafael Cardoso dos Santos's independently maintained backend and
 data-platform portfolio. Start with the [Atheros Search walkthrough](https://rclabs.uk/atheros-search/)
@@ -45,7 +47,7 @@ values.
 | `sync-plane` | Shared Redpanda producer configuration, payload references, bounded publishing and disk spooling | [`crates/sync-plane/`](crates/sync-plane/) |
 | Atheros Sensor | Monitor-mode wireless capture and indirect persistence through Redpanda | [Sensor README](services/atheros-sensor/README.md) |
 | Octopus | Durable ingestion, dedupe, evidence, leases, batching, outbox, PostgreSQL load/results and maintained projections | [Octopus README](services/octopus/README.md) |
-| Atheros Search | Wireless-audit search platform: Go query/vector control plane and SolidJS investigation UI | [Project README](apps/integration-console/README.md) |
+| Atheros Search | Ingestion-backed retrieval: Go ranking/evidence and operational read APIs, fenced embedding workers and the SolidJS workbench | [Project README](apps/integration-console/README.md) |
 | DQ | Database-free processor admission, isolated workers and a SolidJS workspace; Octopus owns durable runs | [DQ README](services/dq/README.md) |
 | Octopus Metrics | C++23 snapshot materializer with read-only PostgreSQL access; publishes Redis/MinIO snapshots | [Metrics README](services/octopus-metrics/README.md) |
 | Stats Reader | Go public snapshot reader with Redis/MinIO fallback and no database or broker access | [Stats Reader README](services/stats-reader/README.md) |
@@ -76,6 +78,12 @@ their recorded checksums and fail closed on mismatch. Oracle remains deprecated
 external target compatibility in Schema Migrator, not a stack runtime dependency.
 
 ## Get started
+
+Start with the [source-to-retrieval workflow](docs/atheros-search-workflow.md)
+for console navigation, readiness limits and operational access. Retrieval
+returns evidence and explanations; generated answers and new connectors are
+outside this release. Schema Migrator remains companion tooling with its own
+change-review workflow.
 
 Clone the complete workspace, including its nested repositories:
 
@@ -205,7 +213,7 @@ Run these from the workspace root; choose the checks for the affected component.
 | DQ | `(cd services/dq && go test ./...)` |
 | Octopus Metrics | `make octopus-metrics-test` |
 | Stats Reader / Platform Sync | `(cd services/stats-reader && go test ./...)`, `(cd services/platform-sync && go test ./...)` |
-| Product site | `(cd apps/product-site && npm test && npm run build)` |
+| Product site | `(cd apps/product-site && npm run build && npm test)` |
 | WireGuard key rotator | `(cd apps/wg-key-rotator && mix test)` |
 | Repository scripts | `python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v` |
 | Documentation / desired state | `make docs-check`, `make gitops-check` |

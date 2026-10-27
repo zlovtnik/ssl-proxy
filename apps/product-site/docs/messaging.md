@@ -3,8 +3,12 @@
 RCLabs is Rafael Cardoso dos Santos's independently maintained backend and
 data-platform engineering portfolio. Atheros Search is the first walkthrough:
 the proxy and sensor publish observations, Octopus coordinates ingestion, and
-Search provides queries and embedding workers. Schema Migrator is companion
-tooling for SQL change review. Each component has its own workflow and caveat.
+Search provides retrieval, evidence, fenced embedding workers and authenticated
+operational reads through one pipeline workbench. The main audience is RAG
+builders and operators tracing ingestion to available evidence. Schema Migrator
+is companion tooling for SQL change review. Proxy and Octopus retain technical
+detail pages and their existing URLs as component capabilities. Generated
+answers and new connectors remain future work. Each component keeps its caveat.
 The public site describes mechanisms, review workflows,
 and measured operational evidence; it does not make savings, latency, market,
 capacity, coverage, or outcome claims.
@@ -17,13 +21,13 @@ statements, workflow steps, caveats, or contact labels.
 
 | Product            | Public story                                                                            | Primary action                        |
 | ------------------ | --------------------------------------------------------------------------------------- | ------------------------------------- |
-| Atheros Search     | Review wireless indicators with monitored-site context and supporting observations.     | Explore the synthetic site review.    |
+| Atheros Search     | Trace configured source observations through ingestion, indexing and evidence retrieval. | Explore the synthetic site review.    |
 | Schema Migrator    | Inspect ordered SQL changes, validation, and run records before execution.              | Explore the synthetic change review.  |
 | RCLabs VPN / Proxy | Inspect WireGuard ingress, transparent-proxy classification, and audit publishing.      | Explore the synthetic traffic review. |
 | Octopus            | Follow incoming events through jobs and loads, with live readings and recorded history. | View live metrics.                    |
 
 The project catalogue retains the `/products/` URL and compares all four
-components. Do not present the page count as evidence of four commercial
+components and companion tools within the Atheros Search workflow. Do not present the page count as evidence of four commercial
 products, customer adoption, or a particular career level. The `/about/` page
 identifies the author, links source, and summarizes security boundaries and
 remaining evidence gaps. The homepage playground runs
