@@ -1,11 +1,12 @@
 [Unit]
 Description=WireGuard obfuscation shim
-After=network-online.target
+Requires=wg-client-containment.service
+After=network-online.target wg-client-containment.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=-/etc/wireguard/wg-obfs-shim.env
+EnvironmentFile=/etc/wireguard/wg-obfs-shim.env
 ExecStart=/usr/local/bin/wg-obfs-shim
 Restart=on-failure
 RestartSec=2s
@@ -16,6 +17,7 @@ ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/run /var/run
 CapabilityBoundingSet=
+AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target

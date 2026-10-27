@@ -60,6 +60,10 @@ spec:
                   optional: true
             - name: ATHSEARCH_WIRELESS_PROJECTION
               value: "false"
+            - name: ATHSEARCH_PROXY_TELEMETRY_URL
+              value: "http://ssl-proxy-proxy-observability:9098/internal/telemetry"
+            - name: ATHSEARCH_OPERATIONS_STATS_URL
+              value: "http://ssl-proxy-stats-reader:8080/public/stats"
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -79,7 +83,7 @@ spec:
             - name: ATHSEARCH_POSTGRES_TLS_SERVER_NAME
               value: "postgres-pgbouncer"
             - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
-              value: "cf93e7e611ddfa897f36e68f454160ef9dfd57686fbbb262bb030ca050ba912f"
+              value: "361ff5f29e471b14bceb2316f79be6d804fd44467b2f02440b27a3806f457925"
             - name: ATHSEARCH_EMBEDDING_MODEL
               value: "nomic-embed-text-v2-moe"
             - name: ATHSEARCH_EMBEDDING_DIMENSIONS

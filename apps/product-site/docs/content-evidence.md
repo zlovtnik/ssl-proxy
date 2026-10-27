@@ -4,6 +4,16 @@ Copy is limited to repository capabilities and explicitly sourced operational
 measurements. Synthetic examples illustrate behavior without implying
 performance results or customer adoption.
 
+The primary product story follows Atheros Search from configured proxy and
+wireless observations through ingestion, document preparation, indexing and
+evidence retrieval. [Runtime ownership and readiness limits](../../../docs/atheros-search-workflow.md)
+and the [architecture](../../../docs/architecture.md) ground that framing.
+Proxy and Octopus remain component detail pages; Schema Migrator remains
+companion tooling. The public Search sample still illustrates synthetic site,
+indicator and observation review, rather than an end-to-end ingestion run.
+Generated answers and new connectors are deferred. Operational measurements
+remain global unless explicitly scoped; unknown coverage is not readiness.
+
 The site is framed as Rafael Cardoso dos Santos's engineering portfolio.
 The owner confirmed that public name and `racasantos@icloud.com` privacy contact
 on 2026-10-14. The [about page](../src/pages/about/index.astro) links the
@@ -12,11 +22,32 @@ implementation evidence, synthetic demonstrations, deployment observations, and
 unpublished customer or benchmark outcomes. Identity markup uses a person as
 publisher and makes no registered-company claim.
 
-The About page also presents author-provided career context: 15+ years in
-production software engineering and approximately 20 million weekly fiscal
-transactions in enterprise integration work. These figures are contextual scale
-signals, not product benchmarks, customer outcomes, or a service-level claim;
-the associated production implementation detail is not published.
+The homepage, About page, and printable [resume](../src/pages/resume/index.astro)
+attribute career context to the resume supplied directly by the owner on
+2026-10-27:
+15+ years of experience, Synchro roles from February 2011 to September 2024,
+teams of 3 to 8 engineers, and approximately 20 million weekly fiscal transactions
+in a Synchro integration between Oracle ERP Cloud, invoicing, and tax systems.
+The current source also describes 1-2 GB XML documents, the Staff Platform and
+Distributed Systems Engineer positioning, U.S. work authorization without
+sponsorship, and remote/hybrid availability. It supersedes the older
+[August resume](https://docs.google.com/document/d/1eRrKPRxudXWgvVlowoMQ5De4Khgj-ynJy7FWw8UbEZ4/edit),
+which used 2 million. The phone, personal email, profile links, and location on
+the public resume are the details supplied by the owner in that current text.
+Employer code and operational monitoring are not public. These are historical
+employer-system claims, not Octopus throughput or an independent benchmark.
+The older Drive document remains private; no Drive sharing was changed.
+
+The shared [case studies](../src/components/ProjectStudies.astro) link to concrete
+implementation and regression files for each independent project. Octopus uses
+the [persistence suite](../../../services/octopus/src/test/scala/com/sslproxy/coordinator/ingest/OctopusPersistenceIntegrationSuite.scala),
+[partial-failure suite](../../../services/octopus/src/test/scala/com/sslproxy/coordinator/kafka/PostgresLoadStreamSuite.scala),
+and [processor-state suite](../../../services/octopus/src/test/scala/com/sslproxy/coordinator/processor/ProcessorSupervisorSuite.scala).
+Those sources cover duplicate replay, identity/payload invariants, concurrent
+claims, partial results, completion guards, and persisted processor status.
+Database integration tests can skip without Docker; current backend pass status,
+recovery times, and a complete process/broker/database crash campaign are not
+claimed. Source links use `main` and can change with later revisions.
 
 Column definitions and nullability are outside the Migrator comparison scope;
 this limitation now appears in the opening product and drift-guide copy.

@@ -6,18 +6,321 @@ export const author = {
   privacyEmail: 'racasantos@icloud.com',
 } as const;
 
+export const hiring = {
+  pageTitle: 'Contact Rafael.',
+  pageSummary:
+    'Start a conversation about a full-time engineering role or choose a project discussion below. Each link opens an email; nothing is submitted through this site.',
+  cta: 'Contact for full-time roles',
+  href: `mailto:${email}?subject=${encodeURIComponent('Full-time engineering role')}&body=${encodeURIComponent('Hello Rafael,\n\nI would like to discuss a full-time engineering role.\n\nCompany and role:\n\nEngineering scope:\n\nLocation / remote expectations:\n\nThank you.')}`,
+  resume: { label: 'Read my resume', href: '/resume/' },
+  title: 'Discuss a full-time engineering role.',
+  summary:
+    'For recruiters, engineering managers, and technical interviewers: email me about backend, distributed-systems, or data-platform roles. Include the role and engineering scope. Project discussions have their own links below.',
+} as const;
+
+const octopusTests = 'services/octopus/src/test/scala/com/sslproxy/coordinator';
+
+export const portfolio = {
+  audience:
+    'For recruiters, engineering managers, and technical interviewers evaluating my engineering work. Atheros product documentation is for RAG builders and operators.',
+  experience: {
+    title: 'Professional experience: Synchro',
+    employer: 'Synchro',
+    period: 'February 2011 - September 2024',
+    summary:
+      'I progressed from Software Analyst to Senior Staff Software Engineer, designing fiscal integrations and guiding teams of 3 to 8 engineers through architecture decisions and code reviews. I turned recurring production failures into reusable validation checks and integration design rules.',
+    scale:
+      'Approximately 20 million fiscal transactions per week in the Synchro integration I designed and supported between Oracle ERP Cloud, electronic invoicing, and tax systems, using Java / Spring Boot and Apache Camel.',
+    attribution:
+      'Historical employer-system workload, reported in my resume. This is not Octopus throughput, an independent-project benchmark, or a synthetic demo result. Employer code and operational measurements are not public.',
+  },
+  workTitle: 'Selected engineering work',
+  workSummary:
+    'Independent projects, separate from my Synchro employment. Start with the failure mode, then inspect the implementation and regression coverage. The links point to source and tests; they do not certify a current passing run.',
+  projects: [
+    {
+      id: 'octopus',
+      title: 'Octopus',
+      kind: 'Independent project / Scala, Cats Effect, PostgreSQL',
+      built:
+        'I built the durable ingestion coordinator: broker-coordinate evidence, persisted event/job/batch state, processor status, deduplication, leases, and fenced outbox dispatch.',
+      failure:
+        'A process can stop after a database write or broker acknowledgement but before progress is committed. Delivery repeats, while one failed record can sit beside healthy work in the same batch.',
+      response:
+        'Persist scan-request state and ingestion evidence in one PostgreSQL transaction, reject changed payloads for an existing identity, and commit Kafka offsets only after durable handling. Restarts resume from committed group offsets. Stable dispatch keys and receiving-side deduplication tolerate the outbox acknowledgement/crash window; expiring fenced leases reclaim work without authorizing stale completion.',
+      tested:
+        'Repository tests cover persisted processor state, duplicate replay, changed-payload rejection, concurrent outbox claims, healthy peers surviving a permanent result failure, and completion waiting for every batch. PostgreSQL integration tests require Docker and can skip when it is absent.',
+      unverified:
+        'These tests do not establish recovery time or a complete broker/database/process-crash campaign. At-least-once delivery can repeat; there is no exactly-once or zero-loss guarantee. Live ledger counts do not establish capacity.',
+      links: [
+        {
+          label: 'Persistence implementation',
+          href: repositorySource(
+            'services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/PostgresRepository.scala',
+          ),
+        },
+        {
+          label: 'Replay and recovery integration tests',
+          href: repositorySource(
+            `${octopusTests}/ingest/OctopusPersistenceIntegrationSuite.scala`,
+          ),
+        },
+        {
+          label: 'Partial-failure tests',
+          href: repositorySource(
+            `${octopusTests}/kafka/PostgresLoadStreamSuite.scala`,
+          ),
+        },
+        {
+          label: 'Processor persistence tests',
+          href: repositorySource(
+            `${octopusTests}/processor/ProcessorSupervisorSuite.scala`,
+          ),
+        },
+        { label: 'Octopus workflow and live readings', href: '/octopus/' },
+      ],
+    },
+    {
+      id: 'search',
+      title: 'Atheros Search',
+      kind: 'Independent project / Go, PostgreSQL, SolidJS',
+      built:
+        'I built the retrieval service, leased embedding workers, and console for inspecting semantic, keyword, and fused search scores across source observations.',
+      failure:
+        'An expired worker can finish after a replacement has claimed its job, publishing stale vectors. A failed embedding provider can also make the semantic search leg unavailable.',
+      response:
+        'Fence completion with lease tokens and content revisions, write vectors and job completion in one transaction, and expose a labelled sparse fallback when hybrid retrieval cannot use its semantic leg.',
+      tested:
+        'Repository tests cover weighted reciprocal-rank fusion and deduplication, explicit fallback codes, lost-lease rollback, vector-write failure rollback, and stale-fence rejection against PostgreSQL.',
+      unverified:
+        'No published relevance benchmark or latency result. Wireless observations and identity candidates do not confirm a current connection or physical device identity. The public sample is synthetic.',
+      links: [
+        {
+          label: 'Retrieval fusion implementation',
+          href: repositorySource(
+            'apps/integration-console/atheros-search/internal/search/fusion.go',
+          ),
+        },
+        {
+          label: 'Atomic worker completion tests',
+          href: repositorySource(
+            'apps/integration-console/atheros-search/internal/worker/worker_transaction_test.go',
+          ),
+        },
+        { label: 'Atheros product documentation', href: '/atheros-search/' },
+      ],
+    },
+    {
+      id: 'migrator',
+      title: 'Schema Migrator',
+      kind: 'Independent tooling / Scala, Cats Effect',
+      built:
+        'I built ordered SQL-file validation and planning, run records, and a review workflow that keeps offline checks separate from database execution.',
+      failure:
+        'Ambiguous dependencies can produce an unsafe apply order; a failed or cancelled run can leave ownership behind and block recovery.',
+      response:
+        'Reject duplicate, missing, or cyclic dependencies before apply. Scope lock release to the protected action and cancel managed work so a started run can be recovered durably.',
+      tested:
+        'Repository tests cover invalid dependency plans, rejection before apply, lock release after failure, and cancellation releasing a started run for durable recovery.',
+      unverified:
+        'Offline checks do not establish target permissions, lock behavior, or reversibility of arbitrary DDL. SQL-file snapshots preserve source files and checksums; they do not back up database data. The sample executes no SQL.',
+      links: [
+        {
+          label: 'Migration planning tests',
+          href: repositorySource(
+            'apps/schema-migrator/src/test/scala/com/sslproxy/schema/engine/MigrationPlanSuite.scala',
+          ),
+        },
+        {
+          label: 'Run recovery tests',
+          href: repositorySource(
+            'apps/schema-migrator/src/test/scala/com/sslproxy/schema/server/RunExecutorSupervisorSuite.scala',
+          ),
+        },
+        { label: 'Schema Migrator walkthrough', href: '/schema-migrator/' },
+      ],
+    },
+    {
+      id: 'vpn',
+      title: 'RCLabs VPN / Proxy',
+      kind: 'Independent project / Rust, WireGuard',
+      built:
+        'I built the transparent proxy path for WireGuard traffic, classification, and audit-event publishing into the ingestion pipeline.',
+      failure:
+        'Hostname suffix mistakes, fragmented headers, or reused HTTP connections can bypass request checks. Incomplete TLS metadata can also lead to an overconfident classification.',
+      response:
+        'Match domain boundaries explicitly, check each plaintext request before connecting upstream, and distinguish partial TLS ClientHello parsing from complete evidence.',
+      tested:
+        'Repository tests cover exact suffix matches, fragmented blocked HTTP headers, per-request keepalive checks, missing SNI, and fragmented or incomplete TLS handshakes.',
+      unverified:
+        'No Internet-wide classification accuracy, device-interoperability, or production-throughput claim. Traffic outside the configured path is not covered; the browser sample opens no VPN connection.',
+      links: [
+        {
+          label: 'Classification implementation and tests',
+          href: repositorySource('src/tunnel/classify.rs'),
+        },
+        {
+          label: 'Transparent proxy regression tests',
+          href: repositorySource('src/tunnel/transparent_tests.rs'),
+        },
+        { label: 'VPN / Proxy walkthrough', href: '/vpn-proxy/' },
+      ],
+    },
+  ],
+  evidence: {
+    title: 'Inspect the evidence and its limits.',
+    summary:
+      'Use the linked implementation and failure tests to assess the engineering. Keep these three sources of evidence separate.',
+    categories: [
+      {
+        title: 'Historical employer work',
+        text: 'Synchro roles and workload are career context from my resume. Employer implementation and monitoring are not available in this repository.',
+      },
+      {
+        title: 'Independent project evidence',
+        text: 'Source and regression tests expose implementation choices. Octopus runtime readings measure this independent deployment: ledger activity, backlog, and freshness, not unique business transactions or a capacity benchmark.',
+      },
+      {
+        title: 'Synthetic demonstrations',
+        text: 'Search, Migrator, and VPN / Proxy examples run in your browser. They demonstrate interfaces and review steps, not production load, customer adoption, or measured outcomes.',
+      },
+    ],
+    metrics: {
+      label: 'Inspect live Octopus readings and measurement definitions',
+      href: '/octopus/#operational-evidence',
+    },
+  },
+} as const;
+
+export const resume = {
+  title: 'Rafael Cardoso dos Santos - Resume',
+  role: 'Staff Platform and Distributed Systems Engineer',
+  location: 'Portland, ME | Open to Remote / Hybrid',
+  authorization: 'Authorized to work in the U.S. | No sponsorship required',
+  email: 'racasantos@icloud.com',
+  phone: { label: '(207) 804-6704', href: 'tel:+12078046704' },
+  website: {
+    label: 'rclabs-awb.pages.dev',
+    href: 'https://rclabs-awb.pages.dev',
+  },
+  linkedin: {
+    label: 'linkedin.com/in/racasantos',
+    href: 'https://linkedin.com/in/racasantos',
+  },
+  summary:
+    'Software Engineer with 15+ years of experience in backend platforms and enterprise integrations, progressing to Senior Staff Engineer at Synchro. Led architecture and code reviews for teams of 3 to 8 engineers. Designed and supported a pipeline processing approximately 20 million fiscal transactions per week, with hands-on experience in Kubernetes delivery, observability, and production recovery.',
+  skills: [
+    [
+      'Backend',
+      'Java, Spring Boot, Scala, Go, SQL, PostgreSQL, Oracle Database',
+    ],
+    [
+      'Distributed Systems',
+      'Kafka, Redpanda, idempotency, backpressure, retries, recovery',
+    ],
+    [
+      'Platform',
+      'Kubernetes, Docker, Kustomize, Argo CD, GitOps, CI/CD, OpenTelemetry, Prometheus, Grafana',
+    ],
+    [
+      'Technical Leadership',
+      'Architecture reviews, code reviews, release validation, production diagnosis',
+    ],
+    ['Additional', 'Rust, PL/SQL, Apache Camel'],
+  ],
+  positions: [
+    {
+      title: 'Senior Software Engineer',
+      company: 'Independent Engineering / RCLabs',
+      period: 'September 2024 - Present',
+      points: [
+        'Built Go and Scala backend services with PostgreSQL and Redpanda, using durable processing and recovery to handle interrupted work.',
+        'Established Kubernetes GitOps delivery with Kustomize, Argo CD, release and rollback gates, and OpenTelemetry observability.',
+        'Designed controlled MCP interfaces and retrieval workflows with authorization boundaries, input validation, and audit evidence.',
+      ],
+    },
+    {
+      title: 'Senior Staff Software Engineer',
+      company: 'Synchro',
+      period: 'May 2022 - September 2024',
+      points: [
+        'Led architecture and code reviews for teams of 3 to 8 engineers delivering fiscal and enterprise integrations.',
+        'Turned recurring production failures into reusable validation checks and integration design rules across client projects.',
+        'Standardized CI/CD scripts and expanded automated tests across several services to make release verification repeatable and simplify failure diagnosis.',
+      ],
+    },
+    {
+      title: 'Senior Software Engineer',
+      company: 'Synchro',
+      period: 'September 2018 - May 2022',
+      points: [
+        'Designed and supported a Java/Spring Boot and Apache Camel integration processing approximately 20 million fiscal transactions per week between Oracle ERP Cloud, electronic invoicing, and tax systems.',
+        'Processed 1-2 GB XML documents from Oracle ERP Cloud SOAP services using PL/SQL and XSLT, with fault recovery, replayable processing, and durable transaction handling.',
+        'Integrated Oracle Retail Fiscal Management with Synchro products and resolved fiscal data discrepancies across client deployments.',
+        'Produced validation evidence for engineering, client, and commercial teams to confirm data correctness and release readiness.',
+      ],
+    },
+    {
+      title: 'Software Analyst',
+      company: 'Synchro',
+      period: 'February 2011 - September 2018',
+      points: [
+        'Translated Brazilian tax rules, electronic filing requirements, and banking integration needs into software specifications for enterprise implementations.',
+        'Traced data discrepancies, validated product behavior, and produced reports covering correctness, performance, and regulatory requirements.',
+      ],
+    },
+  ],
+  independent: {
+    title: 'Independent engineering',
+    period: 'September 2024 onward',
+    summary:
+      'My independent platform work includes Octopus durable ingestion, Atheros Search retrieval and embedding workers, the Rust VPN / Proxy, and Schema Migrator. These projects are separate from Synchro employment; project activity is not employer workload or evidence of client adoption.',
+  },
+  projects: [
+    {
+      title: 'Octopus Event Ingestion Coordinator',
+      href: '/#case-octopus',
+      technologies: 'Scala 3, Cats Effect, FS2, Kafka/Redpanda, PostgreSQL',
+      points: [
+        'Built an event ingestion coordinator with PostgreSQL-backed deduplication and durable offset tracking for at-least-once Kafka/Redpanda processing.',
+        'Added backpressure, bounded retries, and dead-letter handling to recover failed work and control processing load.',
+        'Instrumented processing with OpenTelemetry and archived large payloads in MinIO with hash verification.',
+      ],
+    },
+    {
+      title: 'Atheros Search and Integration Console',
+      href: '/#case-search',
+      technologies: 'Go, PostgreSQL, pgvector',
+      points: [
+        'Built a Go service for hybrid semantic and keyword retrieval over operational records using PostgreSQL and pgvector.',
+        'Implemented recoverable embedding jobs with configurable backends, retries, caching, and circuit breaking.',
+        'Developed a console that explains search rankings and domain risk scores so users can inspect why results were returned.',
+      ],
+    },
+  ],
+  education: [
+    'M.S., Data Analysis - Universidade Nove de Julho, 2020',
+    'B.S., Computer Science - Faculdades Metropolitanas Unidas, 2011',
+  ],
+  print: 'Print or save as PDF',
+} as const;
+
 export const about = {
   title: 'About Rafael',
   description:
     'Backend and distributed-systems engineering by Rafael Cardoso dos Santos, with an emphasis on enterprise integration, data platforms, and production infrastructure.',
-  eyebrow: 'BACKEND ENGINEERING / DISTRIBUTED SYSTEMS',
+  eyebrow: 'STAFF PLATFORM AND DISTRIBUTED SYSTEMS ENGINEER',
   introduction:
-    '15 years designing and operating backend systems at transaction scale: enterprise integrations, distributed data platforms, and production infrastructure. Building toward broader technical ownership.',
-  primaryCta: { label: 'View Atheros Search', href: '/atheros-search/' },
+    '15+ years in backend platforms and enterprise integrations, progressing to Senior Staff Software Engineer at Synchro. I combine architecture and code reviews with hands-on platform delivery, observability, and production recovery.',
+  primaryCta: hiring.resume,
   secondaryCta: { label: 'GitHub profile', href: author.profile },
   metrics: [
     ['15+', 'Years', 'in production software engineering'],
-    ['~20M', 'Transactions', 'fiscal transactions processed weekly'],
+    [
+      '~20M',
+      'Synchro workload',
+      'weekly fiscal transactions; historical employer system',
+    ],
     ['4', 'Domains', 'distributed systems, integration, data, security'],
     ['6+', 'Languages', 'Java, Scala, Go, Rust, SQL, Python'],
   ],
@@ -28,7 +331,7 @@ export const about = {
       {
         title: 'Distributed systems',
         description:
-          'Durable message pipelines, offset-based deduplication, and failure recovery across Kafka-based architectures at transaction scale. Design priority: correctness over throughput when both cannot be satisfied simultaneously.',
+          'Durable message pipelines, offset-based deduplication, and failure recovery across Kafka-based architectures. Independent-project implementation and tests are linked below; employer workload is attributed separately.',
         tags: ['Kafka', 'Kubernetes', 'Go', 'Java'],
       },
       {
@@ -48,82 +351,6 @@ export const about = {
         description:
           'Threat modeling for distributed deployments, authentication and role separation at service boundaries, artifact provenance via image digest pinning, and system-level observability for production diagnosis.',
         tags: ['MCP', 'Kubernetes', 'Cloud infrastructure'],
-      },
-    ],
-  },
-  selectedWork: {
-    index: '_02',
-    title: 'Selected work',
-    summary:
-      'Expand a project for its problem context, architecture summary, key decisions, and scope boundaries. Production and independent work are distinguished explicitly.',
-    studies: [
-      {
-        title: 'Atheros Search',
-        kind: 'Independent',
-        summary:
-          'Wireless observation ingestion to authenticated investigation.',
-        links: [
-          { label: 'View Atheros Search', href: '/atheros-search/' },
-          { label: 'Atheros Search on GitHub', href: author.profile },
-        ],
-        problem:
-          'Wireless observations need a review path that keeps site context, indicators, and supporting records together without treating a received identifier as confirmed device identity.',
-        architecture:
-          'Atheros Sensor and the proxy publish audit events; Octopus coordinates durable ingestion; Atheros Search owns queries and embedding workers. The public interface uses synthetic records and keeps collection limits explicit.',
-        decisions: [
-          'Keep sensor persistence indirect through versioned audit events and coordinator-owned ingestion.',
-          'Separate analyst-review indicators from claims about active connections or physical identity.',
-        ],
-        scope:
-          'Independent project. The public interface uses synthetic records and does not represent a connected production console.',
-        boundaries: [
-          [
-            'Collection scope',
-            'Use RF capture only within an explicitly authorized assessment, with the applicable collection basis, scope, access, retention, and deletion arrangements established before capture. Passive reception can include nearby networks and raw frames; it does not make collection anonymous. The public samples collect no RF traffic.',
-          ],
-          [
-            'Evidence and access',
-            'Spoofed or replayed frames and randomized addresses can mislead an investigation. Treat indicators and identity candidates as hypotheses. Operator APIs enforce authentication and roles; database accounts and grants separate service responsibilities. Deployment configuration still needs review.',
-          ],
-          [
-            'Delivery and remaining risks',
-            'Repeated broker delivery is handled through saved offsets and durable deduplication. Operators with control of the broker, database, or archives can still alter evidence. Image digest pins identify deployment artifacts; they do not establish signing or build provenance. Signing and attestation enforcement remain incomplete.',
-          ],
-        ],
-      },
-      {
-        title: 'Fiscal transaction integration',
-        kind: 'Production',
-        summary: 'Enterprise integration layer at fiscal transaction scale.',
-        links: [],
-        problem:
-          'Enterprise fiscal systems require reliable, auditable integration across heterogeneous backends with strict correctness guarantees. Volume peaks and schema evolution under live production load are the dominant failure modes.',
-        architecture:
-          'Distributed integration layer processing approximately 20 million weekly transactions across enterprise system boundaries. Java and Scala service tier with Oracle and PostgreSQL backends, Kafka for durable cross-system messaging, and Kubernetes for deployment and scaling.',
-        decisions: [
-          'Durable messaging over synchronous RPC reduces coupling between enterprise system boundaries and tolerates partial failures without data loss.',
-          'Schema migration tooling developed as a companion project formalizes ordered change review before production deployment.',
-        ],
-        scope:
-          'Production deployment. Operational detail is not published. Scale figures are approximate weekly throughput from operational monitoring.',
-        boundaries: [],
-      },
-      {
-        title: 'Schema Migrator',
-        kind: 'Tooling',
-        summary: 'Ordered SQL change review for production databases.',
-        links: [{ label: 'Schema Migrator on GitHub', href: author.profile }],
-        problem:
-          'Database changes need a reviewable order and durable run record before they touch a production target.',
-        architecture:
-          'A Cats Effect runner validates ordered SQL files, plans changes, and records the result while retaining an offline workflow for reviewing source files and checksums.',
-        decisions: [
-          'Treat ordered changes as source-controlled inputs rather than mutable runtime state.',
-          'Keep file validation separate from target inspection so permissions, locks, and data-dependent failures are not hidden by an offline dry run.',
-        ],
-        scope:
-          'SQL-file snapshots preserve source files and checksums. They do not back up database data. The public demonstration executes no SQL.',
-        boundaries: [],
       },
     ],
   },
@@ -169,7 +396,7 @@ export const about = {
   },
   evidenceTitle: 'Evidence boundaries',
   evidence:
-    'Source code and tests establish implementation choices. Public project samples use synthetic records. Scale figures for enterprise work are approximate operational measurements. Neither establishes customer adoption, measured customer outcomes, or service-level commitments.',
+    'Source code and regression tests expose independent-project implementation choices. Public samples use synthetic records. Synchro workload is historical employer-system context reported in my resume. These sources do not establish customer adoption, measured customer outcomes, or service-level commitments.',
   threatModel: 'Read the repository threat model and its remaining risks',
   threatModelHref:
     'https://github.com/zlovtnik/ssl-proxy/blob/main/docs/threat-model.md',
@@ -249,16 +476,35 @@ export const home = {
   // ranking rule. The homepage shares one title and description with Layout.
   title: 'Rafael Cardoso dos Santos | Backend & Data Platforms',
   description:
-    "Explore Rafael Cardoso dos Santos's backend engineering portfolio: wireless observation search, durable ingestion, and PostgreSQL change review, with source and explicit limits.",
-  headline: ['Backend systems.', 'Inspectable evidence.'],
+    'Backend and distributed-systems engineer Rafael Cardoso dos Santos: Synchro experience, independent project contributions, source and failure tests, resume, and full-time engineering contact.',
+  headline: ['Backend engineering.', 'Distributed systems.'],
   subheadline:
-    "I'm Rafael Cardoso dos Santos. This portfolio follows wireless observations through ingestion, processing, and search, with companion tooling for PostgreSQL change review.",
-  primaryCta: { label: 'Start with Atheros Search', href: '/atheros-search/' },
-  secondaryCta: { label: 'About Rafael and the work', href: '/about/' },
-  supporting:
-    'Source-backed walkthroughs and synthetic browser samples. Deployment readings are labelled separately.',
+    "I'm Rafael Cardoso dos Santos, a backend and distributed-systems engineer with 15+ years in enterprise integration. At Synchro I designed fiscal data flows and guided engineering teams. My independent work makes persistence, replay, and partial-failure recovery inspectable in source and tests.",
+  primaryCta: {
+    label: 'Review selected engineering work',
+    href: '#selected-work',
+  },
+  secondaryCta: hiring.resume,
+  supporting: portfolio.audience,
   eyebrow: 'RCLABS / ENGINEERING PORTFOLIO',
-  productsEyebrow: 'THE SYSTEM AND ITS TOOLS',
+  reviewPath: [
+    {
+      title: 'Professional experience',
+      text: 'Synchro roles, contributions, and historical workload.',
+      href: '#experience',
+    },
+    {
+      title: 'Selected engineering work',
+      text: 'What I built, failure modes, regression coverage, and gaps.',
+      href: '#selected-work',
+    },
+    {
+      title: 'Verifiable evidence',
+      text: 'Source, tests, and separately attributed project readings.',
+      href: '#technical-evidence',
+    },
+  ],
+  productsEyebrow: 'PRODUCT DOCUMENTATION / RAG BUILDERS AND OPERATORS',
   playground: {
     eyebrow: 'THE PLAYGROUND',
     title: 'Take a closer look.',
@@ -266,8 +512,9 @@ export const home = {
       'Explore synthetic Search, Migrator, and VPN / Proxy samples. Every interaction stays in your browser. Octopus has a separate operational evidence page.',
   },
   relationship:
-    'Search can review proxy observations through the configured backend. Schema Migrator has its own change-review workflow. The public samples run independently in your browser.',
-  approach: 'Each component exposes a different part of the system for review.',
+    'Atheros Search brings retrieval, ingestion visibility, and source readiness into one authenticated console. Octopus coordinates durable ingestion; the proxy and sensor produce observations. Schema Migrator is companion tooling. Public samples run independently in your browser.',
+  approach:
+    'Follow the Atheros Search workflow through focused components, with source observations and measurement limits visible.',
   explore:
     'Try product samples with synthetic records in your browser, or review Octopus operational evidence. No account or production connection required.',
 } as const;
@@ -275,14 +522,26 @@ export const home = {
 export const catalogue = {
   title: 'Projects',
   description:
-    'Compare Atheros Search, Schema Migrator, RCLabs VPN / Proxy, and Octopus by audience, inputs, workflow, and output.',
+    'Explore Atheros Search, its proxy and Octopus ingestion components, and companion Schema Migrator tooling by input, responsibility, and output.',
   headline: ['Explore the system', 'and its tools.'],
   summary:
     'Start with Atheros Search, then follow the proxy and Octopus ingestion path. Schema Migrator is companion tooling for database change review. Each page includes implementation details and operating limits.',
-  comparisonTitle: 'A different job for each tool.',
+  comparisonTitle: 'One retrieval workflow. Focused responsibilities.',
   comparisonSummary:
     'Compare what goes in, what happens, and what you can review afterward.',
 } as const;
+
+export const searchComponents = [
+  { label: 'Proxy observation source: technical details', href: '/vpn-proxy/' },
+  {
+    label: 'Octopus ingestion: technical details and measured activity',
+    href: '/octopus/',
+  },
+  {
+    label: 'Schema Migrator: companion change-review tooling',
+    href: '/schema-migrator/',
+  },
+] as const;
 
 // Homepage technical sections. Reference entries, capability tables and the
 // benchmark protocol are rendered from this reviewed structure at build time.
@@ -714,21 +973,21 @@ export const products = [
     id: 'search',
     name: 'Atheros Search',
     path: '/atheros-search/',
-    label: 'SITE-AWARE WIRELESS SECURITY',
+    label: 'INGESTION / INDEXING / EVIDENCE RETRIEVAL',
     homeTitle: 'Atheros Search',
-    headline: ['Review wireless indicators.', 'See their site context.'],
+    headline: ['Trace ingestion.', 'Retrieve the evidence.'],
     summary:
-      'Atheros Sensor passively listens on configured Wi-Fi channels and publishes audit records to the backend. Atheros Search helps teams review wireless indicators with monitored-site context and supporting observations.',
+      'Atheros Search gives RAG builders and operators one workbench for evidence retrieval, indexing readiness, and ingestion visibility across configured proxy and wireless observations. Inspect source records and processing state before using retrieved evidence downstream.',
     problem:
-      'Security teams responsible for monitored sites who need to assess wireless indicators alongside the observations that triggered them.',
-    promise: 'An indicator points to evidence for review.',
+      'RAG builders and operators who need retrievable evidence, visible processing gaps, and source context for human review.',
+    promise: 'Follow observations from ingestion to retrieval.',
     primaryCta: { label: 'Explore a sample site review', href: '#demo' },
     secondaryCta: { label: 'Discuss your use case', href: '/demo/#search' },
     sections: {
       workflow: {
         ...workflowSection,
-        title: 'From a monitored site to observations for review.',
-        note: 'The synthetic sample illustrates a site-to-indicator-to-observation workflow. The current production console does not yet show this complete site overview end to end.',
+        title: 'From source observations to retrievable evidence.',
+        note: 'The authenticated workbench joins retrieval, ingestion, sources, evidence tools, and processing. This public synthetic sample illustrates a narrower site-to-indicator-to-observation workflow. The current production console does not yet show this complete site overview end to end. Generated answers and new connectors remain future work.',
       },
       value: {
         ...audienceSection,
@@ -745,54 +1004,60 @@ export const products = [
     audiences: [
       {
         id: 'technical',
-        title: 'For technical users',
+        title: 'For RAG builders',
         proposition:
-          'Review a wireless indicator alongside its supporting observations.',
+          'Retrieve records with the context needed to evaluate their use.',
         points: [
-          'Search dense, sparse, or hybrid records through HTTP and gRPC interfaces, with site and sensor scope where supported.',
-          'Review configured rogue-access-point, deauthentication, signal, sequence, and PMF-related indicators as leads, not proof of compromise.',
+          'Search dense, sparse, or hybrid records through existing HTTP and gRPC interfaces, with supported filters and ranking explanations.',
+          'Distinguish available lexical evidence from semantic coverage. Missing vectors, failed embedding jobs, and unknown measurements do not establish indexing readiness.',
         ],
       },
       {
         id: 'buyers',
         title: 'For operators and reviewers',
-        proposition: 'Keep the operating picture inspectable.',
+        proposition: 'See where evidence stops moving.',
         points: [
-          'Keep search and vector storage in PostgreSQL, with embedding work handled by a configurable worker pool.',
-          'Inspect embedding jobs, worker heartbeats, and processing failures when evaluating the search service and its operations.',
+          'Inspect stages, backlog, failures, workers, and measurement freshness alongside retrieval, using the existing login and role permissions.',
+          'Separate indexed proxy evidence from operator-only live aggregate telemetry. Operational readings are global unless explicitly scoped; missing data stays unknown.',
         ],
       },
     ],
     workflow: [
       {
-        step: 'Scope a site',
-        input: 'A monitored location and available sensor observations',
-        processing: 'Use recorded location and sensor context',
-        output: 'Wireless records within the sample scope',
+        step: 'Observe and ingest',
+        input: 'Configured proxy and wireless observations',
+        processing:
+          'Publish events; Octopus records evidence and deduplicates repeated delivery',
+        output: 'Durable ingestion evidence within configured source coverage',
       },
       {
-        step: 'Review an indicator',
-        input: 'A configured wireless detection pattern',
-        processing: 'Inspect the heuristic reason and related records',
-        output: 'An indicator for analyst review',
+        step: 'Prepare and index',
+        input: 'Ingested observations and maintained projections',
+        processing:
+          'Octopus prepares documents and jobs; fenced Search workers create embeddings',
+        output: 'Searchable documents and available vector coverage',
       },
       {
-        step: 'Inspect observations',
-        input: 'Supporting wireless audit records',
-        processing: 'Review observed identifiers, time, channel, and evidence',
-        output: 'Context for a human assessment',
+        step: 'Retrieve and inspect',
+        input: 'A query and supported evidence filters',
+        processing:
+          'Rank term and vector matches; inspect supporting records and explanations',
+        output: 'Evidence for human review or a downstream RAG workflow',
       },
     ],
     caveat: searchCaveat,
     highlights: [
-      ['Scope the evidence', 'Review observations from a monitored site.'],
       [
-        'Review wireless indicators',
-        'See configured patterns beside supporting observations.',
+        'Follow ingestion',
+        'Trace configured sources, processing, and freshness.',
       ],
       [
-        'Keep judgment with the analyst',
-        'Treat an indicator as a lead to investigate, not a verdict.',
+        'Inspect indexing readiness',
+        'Separate lexical evidence from available semantic coverage.',
+      ],
+      [
+        'Retrieve supporting evidence',
+        'Review ranked records and explanations; answer generation is deferred.',
       ],
     ],
     features: [
@@ -814,7 +1079,7 @@ export const products = [
       ],
       [
         'See processing progress',
-        'Inspect embedding jobs, worker heartbeats, and extract, transform, load (ETL) health to understand how records become searchable.',
+        'The ingestion and sources views expose allowlisted processing and coverage measurements. Inspect embedding jobs, worker heartbeats, failures, and timestamps without treating unavailable data as zero.',
       ],
     ],
     glossary: [
@@ -973,15 +1238,15 @@ export const products = [
     name: 'RCLabs VPN / Proxy',
     path: '/vpn-proxy/',
     homeTitle: 'RCLabs VPN / Proxy',
-    label: 'WIREGUARD / TRANSPARENT PROXY',
+    label: 'ATHEROS SEARCH COMPONENT / OBSERVATION SOURCE',
     headline: ['Follow the traffic.', 'Inspect the decision.'],
     summary:
-      'Bring traffic through WireGuard ingress, handle connections with a transparent proxy, and inspect classification and policy decisions through audit records.',
+      'The proxy produces observations for Atheros Search: WireGuard ingress, transparent connection handling, classification, and audit publishing. This technical page explains that source component and its configured coverage.',
     problem:
       'Network and platform teams operating WireGuard ingress, transparent proxy policies, and traffic audit pipelines.',
     promise: 'An inspectable path through your network.',
     primaryCta: { label: 'Explore a sample traffic flow', href: '#demo' },
-    secondaryCta: { label: 'Discuss your use case', href: '/demo/#vpn' },
+    secondaryCta: { label: 'Explore Atheros Search', href: '/atheros-search/' },
     sections: {
       workflow: {
         ...workflowSection,
@@ -1096,10 +1361,10 @@ export const products = [
     name: 'Octopus',
     path: '/octopus/',
     homeTitle: 'Octopus',
-    label: 'OCTOPUS / DATA PIPELINE COORDINATOR',
+    label: 'ATHEROS SEARCH COMPONENT / INGESTION COORDINATOR',
     headline: ['Trace pipeline work.', 'Recover with context.'],
     summary:
-      'Investigate stalled work and resume after restarts with a durable record of events, jobs, and database loads. Octopus stores progress in PostgreSQL and uses deduplication to handle repeated delivery.',
+      'Octopus coordinates Atheros Search ingestion, document preparation, and maintained projections. Inspect its durable events, jobs, and database loads here, with measured activity and recorded history kept distinct.',
     problem:
       'For platform and data teams running event pipelines that need to recover from failures and account for repeated delivery.',
     promise: 'A clear record of the work moving through your pipeline.',
@@ -1108,8 +1373,8 @@ export const products = [
       href: '#operational-evidence',
     },
     secondaryCta: {
-      label: 'Discuss your pipeline setup',
-      href: '#contact-title',
+      label: 'Explore Atheros Search',
+      href: '/atheros-search/',
     },
     sections: {
       workflow: {
@@ -1240,7 +1505,7 @@ export const contact = {
   eyebrow: 'HAVE A USE CASE IN MIND?',
   headline: ['Discuss your', 'use case.'],
   supporting:
-    'Email Rafael about a backend or data-platform role, a code walkthrough, or a use case. Include the environment and constraints you want to discuss. This is an email conversation; hosted product access is not provisioned here.',
+    'Email Rafael about a project walkthrough or use case. Include the environment and constraints you want to discuss. This is an email conversation; hosted product access is not provisioned here.',
   cta: 'Discuss your use case',
   // Short form for a mailto link that already sits under the headline, so the
   // same words never appear twice in one block.
@@ -1256,7 +1521,7 @@ export const contactOptions = [
     id: 'search',
     label: 'Atheros Search',
     subject: 'Atheros Search',
-    text: 'Review site-scoped wireless indicators and supporting observations.',
+    text: 'Trace ingestion, indexing readiness, and evidence retrieval across configured proxy and wireless sources.',
   },
   {
     id: 'migrator',
@@ -1347,8 +1612,9 @@ export const guideIndex = {
   readLabel: 'Read guide',
 } as const;
 
-const repositorySource = (path: string) => {
+function repositorySource(path: string) {
   const repositories = [
+    ['services/octopus/', 'octopus'],
     ['apps/schema-migrator/', 'schema-migrator'],
     ['apps/integration-console/', 'integration-console'],
   ] as const;
@@ -1358,7 +1624,7 @@ const repositorySource = (path: string) => {
     }
   }
   return `https://github.com/zlovtnik/ssl-proxy/blob/main/${path}`;
-};
+}
 
 export const guides: readonly Guide[] = [
   {

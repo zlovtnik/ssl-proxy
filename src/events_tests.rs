@@ -5,6 +5,218 @@ use tokio::sync::broadcast;
 
 use super::*;
 
+#[test]
+fn endpoint_rejects_userinfo_without_retaining_credentials() {
+    for authority in [
+        "user:secret@example.com:443",
+        "user@example.com",
+        "@example.com",
+        "secret@",
+    ] {
+        let evidence = endpoint(authority, "connect_authority", 8443);
+        assert!(evidence["authority_raw"].is_null());
+        assert!(evidence["host_raw"].is_null());
+        assert!(evidence["port"].is_null());
+        assert_eq!(evidence["parse_status"], "invalid");
+        assert_eq!(evidence["routing_port"], 8443);
+        assert_eq!(evidence["authority_source"], "connect_authority");
+    }
+}
+
+#[test]
+fn endpoint_preserves_observed_authority_separately_from_routing() {
+    for (authority, host, port) in [
+        ("example.com:443", "example.com", Some(443)),
+        ("example.com", "example.com", None),
+        ("[2001:db8::1]:8443", "2001:db8::1", Some(8443)),
+    ] {
+        let evidence = endpoint(authority, "quic_authority", 443);
+        assert_eq!(evidence["authority_raw"], authority);
+        assert_eq!(evidence["host_raw"], host);
+        assert_eq!(evidence["port"], serde_json::json!(port));
+        assert_eq!(evidence["routing_port"], 443);
+    }
+}
+
+#[test]
+fn frozen_proxy_envelopes_preserve_replay_ids_and_scan_contract() {
+    let corpus: serde_json::Value = serde_json::from_str(include_str!(
+        "../sql/postgres/contracts/fixtures/proxy-events-v1.json"
+    ))
+    .unwrap();
+    let mut ids = std::collections::HashSet::new();
+    let mut kinds = std::collections::HashSet::new();
+    for observation in corpus["observations"].as_array().unwrap() {
+        let raw = observation["raw_json"].as_str().unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let event = value["type"].as_str().unwrap().to_string();
+        let host = value["host"].as_str().unwrap().to_string();
+        let time = value["time"].as_str().unwrap().to_string();
+        let id = value["event_id"].as_str().unwrap().to_string();
+        assert!(crate::proxy_sync::should_publish_scan_request(&event));
+        assert_eq!(
+            ids.insert(id.clone()),
+            observation["source_count_delta"] == 1
+        );
+        kinds.insert(event.clone());
+        let map = value.as_object_mut().unwrap();
+        for key in ["event_id", "type", "host", "time"] {
+            map.remove(key);
+        }
+        let encoded = serde_json::to_string(&EventEnvelope {
+            event_id: id,
+            event: &event,
+            host: &host,
+            time: time.clone(),
+            extra: map.clone(),
+        })
+        .unwrap();
+        assert_eq!(encoded, raw);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(raw.as_bytes())),
+            observation["payload_sha256"]
+        );
+        assert_eq!(
+            format!(
+                "{:x}",
+                Sha256::digest(format!("{event}:{host}:{time}:{raw}").as_bytes())
+            ),
+            observation["scan_request"]["dedupe_key"]
+        );
+        assert!(sync_plane::parse_payload_ref(
+            observation["scan_request"]["payload_ref"].as_str().unwrap()
+        )
+        .is_some());
+    }
+    assert_eq!(kinds.len(), 7);
+    assert_eq!(ids.len(), 8);
+}
+
+#[tokio::test]
+async fn only_http_proxied_duration_is_response_header_latency() {
+    let state = create_test_state().await;
+    let mut rx = state.events_tx.subscribe();
+    for (event_type, expected_status) in [
+        ("http_error", "unavailable"),
+        ("http_blocked", "unavailable"),
+        ("tunnel_close", "unavailable"),
+        ("session.blocked", "unavailable"),
+        ("http_proxied", "header_latency"),
+    ] {
+        emit_serializable(
+            &state,
+            event_type,
+            "example.com",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            0,
+            None,
+            false,
+            None,
+            serde_json::json!({"duration_ms": 123}),
+        );
+        let event: serde_json::Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(event["duration_ms"], 123);
+        assert_eq!(event["measurement"]["duration_status"], expected_status);
+    }
+}
+
+#[tokio::test]
+async fn additive_endpoint_fields_obey_nested_hostname_privacy() {
+    let _lock = env_lock();
+    std::env::set_var("AUDIT_SANITIZE_HOSTNAMES", "true");
+    std::env::set_var("AUDIT_HMAC_KEY", "contract-only");
+    let state = create_test_state().await;
+    let mut rx = state.events_tx.subscribe();
+    emit_serializable(
+        &state,
+        "http_proxied",
+        "private.example",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        0,
+        0,
+        None,
+        false,
+        None,
+        serde_json::json!({"nested_arrays": [[{"authority_raw": "private.example:443"}]], "endpoint": {
+            "authority_raw": "private.example:8443", "host_normalized": "private.example", "registrable_domain": "private.example"
+        }}),
+    );
+    let raw = rx.recv().await.unwrap();
+    assert!(!raw.contains("private.example"));
+    let event: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(event["sanitization_status"], "sanitized");
+    assert_eq!(event["measurement"]["bytes_status"], "unavailable");
+    clear_audit_env();
+}
+
+#[tokio::test]
+async fn coalescing_separates_devices_and_reasons_and_reports_rollover() {
+    let state = create_test_state().await;
+    assert!(state
+        .coalesce_event(
+            "block",
+            "example.com",
+            None,
+            None,
+            Some("a"),
+            Some("policy")
+        )
+        .is_some());
+    assert!(state
+        .coalesce_event(
+            "block",
+            "example.com",
+            None,
+            None,
+            Some("a"),
+            Some("policy")
+        )
+        .is_none());
+    assert!(state
+        .coalesce_event(
+            "block",
+            "example.com",
+            None,
+            None,
+            Some("b"),
+            Some("policy")
+        )
+        .is_some());
+    assert!(state
+        .coalesce_event(
+            "block",
+            "example.com",
+            None,
+            None,
+            Some("a"),
+            Some("changed")
+        )
+        .is_some());
+    tokio::time::sleep(std::time::Duration::from_millis(510)).await;
+    let evidence = state
+        .coalesce_event(
+            "block",
+            "example.com",
+            None,
+            None,
+            Some("a"),
+            Some("policy"),
+        )
+        .unwrap();
+    assert_eq!(evidence["suppressed_previous_window"], 1);
+}
+
 struct FailingExtra;
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {

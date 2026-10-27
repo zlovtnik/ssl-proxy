@@ -1,52 +1,54 @@
--- psql -v window_start=2026-10-12T00:00:00Z \
---      -v window_end=2026-10-13T00:00:00Z \
---      -f ops/sql/proxy-tunnel-completeness.sql
+-- Required: window_start, window_end, horizon_start, horizon_end,
+-- after_time, after_id, page_size, counterpart_limit, statement_timeout_ms.
+-- Correlation IDs are pair candidates, not validated flow identities.
+\set ON_ERROR_STOP on
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
-WITH bounds AS (
-  SELECT :'window_start'::timestamptz AS window_start,
-         :'window_end'::timestamptz AS window_end
-),
-pipeline AS (
-  SELECT count(*) FILTER (WHERE status <> 'completed') AS unfinished_jobs
-  FROM octopus_core.sync_jobs
-  WHERE stream_name = 'proxy.events'
-),
-retained AS (
-  SELECT min(event_time) AS first_event, max(event_time) AS last_event
+SELECT set_config('statement_timeout', :'statement_timeout_ms', true) AS timeout_setting \gset
+SET LOCAL lock_timeout = '1s';
+WITH seeds AS MATERIALIZED (
+  SELECT event_id, event_time, event_type, correlation_id
   FROM octopus_core.proxy_events
-),
-sessions AS (
-  SELECT correlation_id,
-         count(*) FILTER (WHERE event_type = 'tunnel_open') AS opens,
-         count(*) FILTER (WHERE event_type = 'tunnel_close') AS closes,
-         min(event_time) FILTER (WHERE event_type = 'tunnel_open') AS opened_at,
-         min(event_time) FILTER (WHERE event_type = 'tunnel_close') AS closed_at
-  FROM octopus_core.proxy_events
-  WHERE correlation_id IS NOT NULL
+  WHERE event_time >= :'window_start'::timestamptz AND event_time < :'window_end'::timestamptz
+    AND (event_time, event_id) > (:'after_time'::timestamptz, :'after_id')
     AND event_type IN ('tunnel_open', 'tunnel_close')
+  ORDER BY event_time, event_id LIMIT :page_size
+), candidates AS MATERIALIZED (
+  SELECT DISTINCT correlation_id FROM seeds WHERE correlation_id ~ '[^[:space:]]'
+    AND :'horizon_start'::timestamptz <= :'window_start'::timestamptz
+    AND :'horizon_end'::timestamptz >= :'window_end'::timestamptz
+), evidence AS (
+  SELECT c.correlation_id, e.* FROM candidates c
+  CROSS JOIN LATERAL (
+    SELECT event_type, event_time FROM octopus_core.proxy_events p
+    WHERE p.event_time >= :'horizon_start'::timestamptz AND p.event_time < :'horizon_end'::timestamptz
+      AND p.correlation_id = c.correlation_id AND p.event_type IN ('tunnel_open','tunnel_close')
+    ORDER BY p.event_time, p.event_id LIMIT :counterpart_limit
+  ) e
+), sessions AS (
+  SELECT correlation_id, count(*) AS evidence_rows,
+    count(*) FILTER (WHERE event_type = 'tunnel_open') AS opens,
+    count(*) FILTER (WHERE event_type = 'tunnel_close') AS closes,
+    min(event_time) FILTER (WHERE event_type = 'tunnel_open') AS opened_at,
+    min(event_time) FILTER (WHERE event_type = 'tunnel_close') AS closed_at
+  FROM evidence
   GROUP BY correlation_id
-),
-session_counts AS (
-  SELECT count(*) FILTER (WHERE opens = 1 AND closes = 1) AS complete,
-         count(*) FILTER (WHERE opens = 1 AND closes = 0) AS open_only,
-         count(*) FILTER (WHERE opens = 0 AND closes = 1) AS close_only,
-         count(*) FILTER (WHERE opens > 1 OR closes > 1) AS duplicate_lifecycle
-  FROM sessions
-  CROSS JOIN bounds
-  WHERE coalesce(opened_at, closed_at) >= bounds.window_start
-    AND coalesce(opened_at, closed_at) < bounds.window_end
 )
-SELECT bounds.window_start,
-       bounds.window_end,
-       retained.first_event,
-       retained.last_event,
-       pipeline.unfinished_jobs,
-       session_counts.complete,
-       session_counts.open_only,
-       session_counts.close_only,
-       session_counts.duplicate_lifecycle
-FROM session_counts
-CROSS JOIN bounds
-CROSS JOIN pipeline
-CROSS JOIN retained;
+SELECT jsonb_build_object(
+  'audit_version', 'proxy-lifecycle-v2', 'seed_rows', (SELECT count(*) FROM seeds),
+  'candidate_correlations', count(*), 'counterpart_rows_returned', coalesce(sum(evidence_rows),0),
+  'single_ordered_pair_within_horizon', count(*) FILTER (WHERE opens=1 AND closes=1 AND closed_at>=opened_at AND evidence_rows<:counterpart_limit),
+  'cross_boundary_pairs', count(*) FILTER (WHERE opens=1 AND closes=1 AND closed_at>=opened_at AND evidence_rows<:counterpart_limit
+    AND (opened_at<:'window_start'::timestamptz OR closed_at>=:'window_end'::timestamptz)),
+  'duplicate_or_conflicting', count(*) FILTER (WHERE opens>1 OR closes>1 OR closed_at<opened_at),
+  'counterpart_page_saturated', count(*) FILTER (WHERE evidence_rows>=:counterpart_limit),
+  'missing_side_unknown_beyond_horizon', count(*) FILTER (WHERE opens=0 OR closes=0),
+  'missing_correlation_observations', (SELECT count(*) FROM seeds
+    WHERE correlation_id IS NULL OR correlation_id !~ '[^[:space:]]'),
+  'cursor', (SELECT jsonb_build_array(event_time,event_id) FROM seeds ORDER BY event_time DESC,event_id DESC LIMIT 1),
+  'horizon_start', :'horizon_start', 'horizon_end', :'horizon_end',
+  'horizon_covers_window', :'horizon_start'::timestamptz <= :'window_start'::timestamptz
+    AND :'horizon_end'::timestamptz >= :'window_end'::timestamptz,
+  'limitation', 'candidate correlations repeat across pages; do not sum as validated flows; missing evidence outside horizon or retention remains unknown'
+)
+FROM sessions;
 ROLLBACK;

@@ -1,0 +1,18 @@
+---
+import { ArrowRight } from '@lucide/astro';
+import { hiring, portfolio } from '../data/products';
+const { experience } = portfolio;
+---
+
+<section id="experience" class="section" aria-labelledby="experience-title">
+  <div class="section-heading">
+    <p class="eyebrow">EMPLOYMENT / {experience.period}</p>
+    <h2 id="experience-title">{experience.title}</h2>
+    <p>{experience.summary}</p>
+    <p>{experience.scale}</p>
+    <p class="fine-print">{experience.attribution}</p>
+    <a class="text-link" href={hiring.resume.href}>
+      Roles and dates in my resume <ArrowRight size={18} aria-hidden="true" />
+    </a>
+  </div>
+</section>

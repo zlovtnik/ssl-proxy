@@ -6,7 +6,7 @@ import MigratorDemo from './MigratorDemo';
 import VpnDemo from './VpnDemo';
 import Diagram from './Diagram.astro';
 import Contact from './Contact.astro';
-import { getProduct, guides, guidePath, guideIndex, type ProductId } from '../data/products';
+import { getProduct, guides, guidePath, guideIndex, searchComponents, type ProductId } from '../data/products';
 interface Props { id: ProductId }
 const product = getProduct(Astro.props.id);
 ---
@@ -45,6 +45,7 @@ const product = getProduct(Astro.props.id);
   </section>
   <section class="section" aria-labelledby="workflow-title">
     <div class="section-heading"><p class="eyebrow">{product.sections.workflow.label}</p><h2 id="workflow-title">{product.sections.workflow.title}</h2><p>{product.sections.workflow.note}</p></div>
+    {product.id === 'search' && <ul class="landing-list">{searchComponents.map((component) => <li><a class="text-link" href={component.href}>{component.label}</a></li>)}</ul>}
     <ol class="workflow-steps">
       {product.workflow.map((item, index) => (
         <li class="workflow-step">

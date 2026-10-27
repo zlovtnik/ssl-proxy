@@ -190,6 +190,8 @@ class PlatformSyncRbacTest(unittest.TestCase):
         self.assertIn("Requires=credential-generator.service", sync_unit)
         self.assertIn("LoadCredential=vault-token:/etc/platform-sync/vault-token", sync_unit)
         self.assertIn("LoadCredential=vault-ca:/etc/platform-sync/vault-ca.crt", sync_unit)
+        self.assertIn("Environment=VAULT_TOKEN_FILE=%d/vault-token", sync_unit)
+        self.assertIn("UnsetEnvironment=VAULT_TOKEN", sync_unit)
 
     def test_no_cluster_roles(self) -> None:
         """Verify RBAC is namespace-scoped only (no ClusterRoles)."""

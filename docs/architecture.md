@@ -6,13 +6,16 @@ READMEs describe only their local code and operations.
 
 ## Runtime at a glance
 
-ssl-proxy is a WireGuard-first transparent proxy with a Redpanda-backed audit
-and processing plane. The Rust proxy and Atheros Sensor publish events and work
+Atheros Search unifies ingestion-backed evidence retrieval through one
+authenticated console and browser-facing Search API. Its focused internal
+services retain their ownership boundaries. The Rust proxy and Atheros Sensor publish events and work
 discovery messages. Octopus durably ingests those messages into PostgreSQL, records
 per-topic/partition/offset evidence, manages leases and batches, publishes
 outbox work, and maintains projections. Atheros Search serves the search API
 and, when enabled, claims embedding jobs and writes vectors. The SolidJS
-Atheros Search UI is the Integration Console.
+Atheros Search UI is the Integration Console pipeline workbench. Its
+[source-to-retrieval workflow](atheros-search-workflow.md) describes the
+retrieval, ingestion, sources, evidence and processing views and their limits.
 
 ```mermaid
 flowchart LR
@@ -48,8 +51,8 @@ explicitly enabled.
 | Sync Plane | Rust in [`crates/sync-plane/`](../crates/sync-plane/) | Shared Redpanda producer configuration and message contracts | Ingestion state or projections |
 | Atheros Sensor | Rust in [`services/atheros-sensor/`](../services/atheros-sensor/) | Monitor-mode capture, wireless event construction, Redpanda publishing, local backlog | Direct PostgreSQL persistence |
 | Octopus | Scala 3 in [`services/octopus/`](../services/octopus/) | Durable ingestion, dedupe, evidence, cursoring, leases, batching, outbox, PostgreSQL load/results, maintained projections and alert derivation | Embedding execution or public search APIs |
-| Atheros Search | Go in [`apps/integration-console/atheros-search/`](../apps/integration-console/atheros-search/) | HTTP/gRPC search, ETL health APIs, embedding-job claims, embedding calls, vector writes | Projection maintenance or alert derivation |
-| Integration Console | SolidJS in [`apps/integration-console/atheros-search-ui/`](../apps/integration-console/atheros-search-ui/) | Browser UI for search, graph, inventory and ETL health | Rails runtime or direct database access |
+| Atheros Search | Go in [`apps/integration-console/atheros-search/`](../apps/integration-console/atheros-search/) | HTTP/gRPC retrieval, ranking and evidence, authenticated operational reads, embedding-job claims, embedding calls, vector writes | Projection maintenance or alert derivation |
+| Integration Console | SolidJS in [`apps/integration-console/atheros-search-ui/`](../apps/integration-console/atheros-search-ui/) | Unified retrieval, ingestion, sources, graph, inventory and DQ browser workflows | Direct database access or proxy administrator credentials |
 | Schema Migrator | Scala 3 in [`apps/schema-migrator/`](../apps/schema-migrator/) | Migration definitions, validation, execution history and target connection CRUD | Provisioning the four application schemas at runtime |
 | PostgreSQL schema executor | Shell/container in [`k8s/postgres-schema-executor/`](../k8s/postgres-schema-executor/) | Applying the checksummed canonical manifests | Application data processing |
 | WireGuard key rotator | Elixir in [`apps/wg-key-rotator/`](../apps/wg-key-rotator/) | Staged peer and server key rotation | Proxy traffic handling |
@@ -131,7 +134,7 @@ sequenceDiagram
     W->>E: Embed normalized text in batches
     E-->>W: 768-dimension vectors
     W->>D: Atomically write vector and complete matching fenced job
-    U->>A: Search, graph, inventory, ETL health
+    U->>A: Retrieval, evidence and authenticated operational reads
     A->>D: Dense, sparse or hybrid query
     D-->>A: Ranked results
     A-->>U: HTTP, NDJSON or WebSocket response
@@ -142,6 +145,14 @@ Worker count, batch size, lease duration and poll interval are configured with
 the `ATHSEARCH_WORKER_*`, `ATHSEARCH_EMBEDDING_BATCH_SIZE`,
 `ATHSEARCH_LEASE_SECONDS` and `ATHSEARCH_POLL_INTERVAL_MS` variables documented
 in the [Atheros Search README](../apps/integration-console/atheros-search/README.md).
+
+Ingestion evidence, projection state, lexical readiness and semantic coverage
+are separate measurements. A committed event does not establish that its
+projection or embedding is available. Missing measurements remain unknown;
+operational status is global unless explicitly scoped. Retrieval and existing
+fallback behavior remain independent of proxy telemetry availability. This
+workflow returns ranked evidence for human review or downstream RAG systems;
+answer generation and new connectors are deferred.
 
 ## Kubernetes delivery
 

@@ -39,3 +39,12 @@ spec:
       ports:
         - protocol: TCP
           port: 9098
+    # Search reads only the aggregate observability surface, never admin APIs.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ssl-proxy
+              app.kubernetes.io/component: atheros-search
+      ports:
+        - protocol: TCP
+          port: 9098

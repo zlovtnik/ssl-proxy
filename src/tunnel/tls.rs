@@ -15,13 +15,40 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 /// Future work: a fragmented-ClientHello parser can replace this bounded peek
 /// path once the cutover contract is stable. For now the proxy keeps the
 /// simpler low-overhead preview model.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct TlsInfo {
+    pub(crate) parse_status: &'static str,
     pub(crate) sni: Option<String>,
     pub(crate) alpn: Option<String>,
     pub(crate) tls_ver: Option<String>,
+    pub(crate) offered_version: Option<String>,
     pub(crate) cipher_suites_count: Option<u8>,
     pub(crate) ja3_lite: Option<String>,
+}
+
+impl Default for TlsInfo {
+    fn default() -> Self {
+        Self {
+            parse_status: "unavailable",
+            sni: None,
+            alpn: None,
+            tls_ver: None,
+            offered_version: None,
+            cipher_suites_count: None,
+            ja3_lite: None,
+        }
+    }
+}
+
+impl TlsInfo {
+    pub(crate) fn evidence(&self) -> serde_json::Value {
+        serde_json::json!({
+            "source": "client_hello", "parser_version": "proxy-clienthello-v2",
+            "parse_status": self.parse_status, "semantics": "offered_not_negotiated",
+            "offered_version": self.offered_version, "offered_alpn": self.alpn,
+            "ja3_lite": self.ja3_lite,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -62,20 +89,45 @@ pub(crate) async fn peek_tls_info(stream: &mut tokio::net::TcpStream) -> TlsInfo
     loop {
         let mut buf = vec![0u8; peek_bytes];
         let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-            return TlsInfo::default();
+            return TlsInfo {
+                parse_status: "timeout",
+                ..Default::default()
+            };
         };
-        let n = tokio::time::timeout(remaining, stream.peek(&mut buf))
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-            .unwrap_or(0);
+        let n = match tokio::time::timeout(remaining, stream.peek(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(_)) => {
+                return TlsInfo {
+                    parse_status: "read_error",
+                    ..Default::default()
+                }
+            }
+            Err(_) => {
+                return TlsInfo {
+                    parse_status: "timeout",
+                    ..Default::default()
+                }
+            }
+        };
         if n == 0 {
             return TlsInfo::default();
         }
 
         match parse_tls_info_status(&buf[..n]) {
-            ParseTlsInfoStatus::Complete(info) => return info,
-            ParseTlsInfoStatus::Invalid => return TlsInfo::default(),
+            ParseTlsInfoStatus::Complete(mut info) => {
+                info.parse_status = "parsed";
+                return info;
+            }
+            ParseTlsInfoStatus::Invalid => {
+                return TlsInfo {
+                    parse_status: if buf[0] == 22 {
+                        "parse_failure"
+                    } else {
+                        "non_tls"
+                    },
+                    ..Default::default()
+                }
+            }
             ParseTlsInfoStatus::Incomplete => {
                 if peek_bytes < MAX_PEEK_BYTES {
                     peek_bytes = (peek_bytes * 2).min(MAX_PEEK_BYTES);
@@ -86,7 +138,10 @@ pub(crate) async fn peek_tls_info(stream: &mut tokio::net::TcpStream) -> TlsInfo
                         continue;
                     }
                 }
-                return TlsInfo::default();
+                return TlsInfo {
+                    parse_status: "incomplete",
+                    ..Default::default()
+                };
             }
         }
     }
@@ -110,7 +165,15 @@ where
     let mut bytes = vec![0u8; MAX_PREFIX_BYTES];
     let n = match tokio::time::timeout(TIMEOUT, stream.read(&mut bytes)).await {
         Ok(result) => result?,
-        Err(_) => 0,
+        Err(_) => {
+            return Ok(ConsumedTlsPrefix {
+                tls: TlsInfo {
+                    parse_status: "timeout",
+                    ..Default::default()
+                },
+                bytes: Vec::new(),
+            })
+        }
     };
     bytes.truncate(n);
     let tls = parse_tls_info(&bytes);
@@ -120,8 +183,22 @@ where
 /// Parse ClientHello metadata from a TLS record without panicking.
 pub(crate) fn parse_tls_info(buf: &[u8]) -> TlsInfo {
     match parse_tls_info_status(buf) {
-        ParseTlsInfoStatus::Complete(info) => info,
-        ParseTlsInfoStatus::Incomplete | ParseTlsInfoStatus::Invalid => TlsInfo::default(),
+        ParseTlsInfoStatus::Complete(mut info) => {
+            info.parse_status = "parsed";
+            info
+        }
+        ParseTlsInfoStatus::Incomplete => TlsInfo {
+            parse_status: "incomplete",
+            ..Default::default()
+        },
+        ParseTlsInfoStatus::Invalid => TlsInfo {
+            parse_status: if buf.first() == Some(&22) {
+                "parse_failure"
+            } else {
+                "non_tls"
+            },
+            ..Default::default()
+        },
     }
 }
 
@@ -174,6 +251,10 @@ fn parse_client_hello(hs: &[u8], mut info: TlsInfo) -> ParseTlsInfoStatus {
     if hs.first() != Some(&1) || hs.len() < 6 {
         return ParseTlsInfoStatus::Invalid;
     }
+
+    // The record header can use a compatibility version. Keep tls_ver and
+    // ja3_lite stable; offer evidence comes from ClientHello itself.
+    info.offered_version = offered_tls_version((hs[4], hs[5]));
 
     let mut pos = 4 + 2 + 32;
     let sid_len = match hs.get(pos) {
@@ -231,6 +312,21 @@ fn parse_client_hello(hs: &[u8], mut info: TlsInfo) -> ParseTlsInfoStatus {
             }
             43 if ext_len >= 3 => {
                 let list_len = ext_data[0] as usize;
+                info.offered_version = if list_len > 0
+                    && list_len.is_multiple_of(2)
+                    && list_len + 1 == ext_data.len()
+                {
+                    ext_data[1..]
+                        .chunks_exact(2)
+                        .filter_map(|version| {
+                            offered_tls_version((version[0], version[1]))
+                                .map(|name| (u16::from_be_bytes([version[0], version[1]]), name))
+                        })
+                        .max_by_key(|(version, _)| *version)
+                        .map(|(_, name)| name)
+                } else {
+                    None
+                };
                 let mut i = 1;
                 while i + 2 <= (1 + list_len).min(ext_data.len()) {
                     if ext_data[i] == 0x03 && ext_data[i + 1] == 0x04 {
@@ -240,6 +336,7 @@ fn parse_client_hello(hs: &[u8], mut info: TlsInfo) -> ParseTlsInfoStatus {
                     i += 2;
                 }
             }
+            43 => info.offered_version = None,
             10 if ext_len >= 4 => {
                 let list_len = u16::from_be_bytes([ext_data[0], ext_data[1]]) as usize;
                 let mut i = 2;
@@ -296,6 +393,14 @@ fn record_tls_version(version: (u8, u8)) -> Option<String> {
         (3, 3) => Some("TLS1.2".into()),
         (3, 1) => Some("TLS1.0".into()),
         _ => None,
+    }
+}
+
+fn offered_tls_version(version: (u8, u8)) -> Option<String> {
+    if version == (3, 2) {
+        Some("TLS1.1".into())
+    } else {
+        record_tls_version(version)
     }
 }
 

@@ -1,12 +1,9 @@
 use std::net::SocketAddr;
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
+use std::sync::{atomic::Ordering, Arc};
 use std::time::Instant;
 
 use serde::Serialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -109,6 +106,10 @@ struct TransparentMetrics {
 
 #[derive(Serialize)]
 struct TransparentBlockExtra {
+    #[serde(flatten)]
+    endpoint: serde_json::Value,
+    attribution: serde_json::Value,
+    tls_evidence: serde_json::Value,
     category: &'static str,
     fingerprint: TransparentFingerprint,
     metrics: TransparentMetrics,
@@ -292,8 +293,11 @@ async fn evaluate_transparent_policy(
 ) -> TransparentPolicyDecision {
     let hostname = tls.sni.clone().or(plaintext_hostname);
     let authority = match &hostname {
-        Some(name) => format!("{name}:{}", orig_dst.port()),
-        None => format!("{}:{}", orig_dst.ip(), orig_dst.port()),
+        Some(name) => match name.parse::<std::net::Ipv6Addr>() {
+            Ok(ip) => format!("[{ip}]:{}", orig_dst.port()),
+            Err(_) => format!("{name}:{}", orig_dst.port()),
+        },
+        None => orig_dst.to_string(),
     };
     let audit_host = hostname.clone().unwrap_or_else(|| authority.clone());
     let category = classify(

@@ -2,6 +2,7 @@
 # WireGuard points at a local UDP shim on this client machine, not directly at the remote server.
 # Keep DNS = 10.13.13.1 unless you also run a local custom DNS server next to the shim.
 # Configure the real remote server endpoint in config/client/wg-obfs-shim.env.example.
+# Keep wg-client-containment.service active until after WG/shim shutdown.
 [Interface]
 Address = 10.13.13.2/32
 PrivateKey = <peer1-private-key>

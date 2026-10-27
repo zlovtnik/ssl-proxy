@@ -83,6 +83,28 @@ run_executor() {
 
 run_executor
 
+# Search reads the published evidence, while private source and preparation
+# state remain coordinator-owned. Test effective grants after real provisioning.
+proxy_grants="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align --command="
+  SELECT has_table_privilege('atheros_search_runtime', 'atheros_search.proxy_event_evidence', 'SELECT')
+     AND (SELECT bool_and(has_table_privilege('octopus_runtime', 'atheros_search.proxy_event_evidence', privilege))
+          FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) privilege)
+     AND NOT has_any_column_privilege('atheros_search_runtime', 'octopus_core.proxy_events', 'SELECT,INSERT,UPDATE')
+     AND NOT has_any_column_privilege('atheros_search_runtime', 'octopus_core.registered_devices', 'SELECT,INSERT,UPDATE')
+     AND NOT has_any_column_privilege('atheros_search_runtime', 'octopus_core.proxy_preparation_dirty', 'SELECT,INSERT,UPDATE')
+     AND NOT has_any_column_privilege('atheros_search_runtime', 'atheros_search.proxy_document_state', 'SELECT,INSERT,UPDATE')
+     AND NOT has_any_column_privilege('atheros_search_runtime', 'atheros_search.proxy_event_evidence', 'INSERT,UPDATE')
+     AND NOT has_table_privilege('atheros_search_runtime', 'atheros_search.proxy_event_evidence', 'DELETE,TRUNCATE')
+     AND NOT has_any_column_privilege('atheros_search_runtime', 'atheros_search.schema_readiness', 'INSERT,UPDATE')")"
+[ "${proxy_grants}" = t ] || { echo "proxy evidence grants did not match the fixture" >&2; exit 1; }
+
+readiness="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align --command="
+  SELECT count(*) = 2 AND bool_and(ready AND required_checksum = applied_checksum
+    AND required_version = applied_version)
+  FROM (SELECT * FROM octopus_core.schema_readiness WHERE domain='octopus_core'
+        UNION ALL SELECT * FROM atheros_search.schema_readiness WHERE domain='atheros_search') proof")"
+[ "${readiness}" = t ] || { echo "proxy schema readiness did not match the manifests" >&2; exit 1; }
+
 # Metrics can read only timestamps and schema proof through the executor's
 # canonical fixture; the role cannot read record identifiers or write rows.
 metrics_grants="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align --command="

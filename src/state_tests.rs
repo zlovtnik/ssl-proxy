@@ -38,6 +38,29 @@ async fn host_stats_transition_to_tarpit() {
 }
 
 #[tokio::test]
+async fn coalescing_capacity_reports_bypass_without_losing_an_observation() {
+    let state = create_test_state().await;
+    {
+        let mut entries = state.event_coalescing.lock().unwrap();
+        for index in 0..EVENT_DEDUP_MAX_KEYS {
+            entries.insert(
+                format!("synthetic-{index}"),
+                (Instant::now(), 0, chrono::Utc::now()),
+            );
+        }
+    }
+    let evidence = state
+        .coalesce_event("block", "overflow.example", None, None, None, None)
+        .unwrap();
+    assert_eq!(evidence["status"], "capacity_bypass");
+    assert!(evidence["suppressed_previous_window"].is_null());
+    assert_eq!(
+        state.event_coalescing.lock().unwrap().len(),
+        EVENT_DEDUP_MAX_KEYS
+    );
+}
+
+#[tokio::test]
 async fn low_jitter_state_accumulates_for_regular_blocking() {
     let state = create_test_state().await;
     let host = "regular.analytics.host";

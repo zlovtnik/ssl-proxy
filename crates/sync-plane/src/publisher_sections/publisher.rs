@@ -293,6 +293,43 @@ impl SyncPublisher {
         Ok(contents)
     }
 
+    pub fn telemetry_snapshot(&self) -> SyncPublisherTelemetrySnapshot {
+        let health = self
+            .health
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let configured = self.config.redpanda_bootstrap_servers.is_some();
+        let status = if !configured {
+            "disabled"
+        } else if health.last_error.is_some() {
+            "degraded"
+        } else if health.last_publish_at.is_none() {
+            "pending"
+        } else {
+            "ok"
+        };
+        let last_attempt_at = health.last_attempt_at.clone();
+        let last_publish_at = health.last_publish_at.clone();
+        drop(health);
+        let (queue_available, queue_capacity) = self
+            .publish_tx
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map(|sender| (sender.capacity(), sender.max_capacity()))
+            .unwrap_or((self.config.queue_capacity, self.config.queue_capacity));
+        SyncPublisherTelemetrySnapshot {
+            configured,
+            status,
+            queue_depth: queue_capacity.saturating_sub(queue_available),
+            queue_capacity,
+            spooled_total: self.counters.spooled_total.load(Ordering::Relaxed),
+            enqueue_timeouts_total: self.counters.enqueue_timeouts_total.load(Ordering::Relaxed),
+            last_attempt_at,
+            last_publish_at,
+        }
+    }
+
     pub fn health_snapshot(&self) -> SyncPublisherHealthSnapshot {
         let health = self
             .health
@@ -506,4 +543,54 @@ fn write_private_file(path: &std::path::Path, contents: &str) -> Result<(), Stri
 #[cfg(not(unix))]
 fn write_private_file(path: &std::path::Path, contents: &str) -> Result<(), String> {
     std::fs::write(path, contents).map_err(|error| format!("{error}"))
+}
+
+#[cfg(test)]
+mod telemetry_tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_has_no_phantom_queue_or_readiness_before_publishing() {
+        let publisher = SyncPublisher::new(&crate::SyncConfig {
+            redpanda_bootstrap_servers: Some("private-broker:9092".into()),
+            ..crate::SyncConfig::default()
+        });
+        let snapshot = publisher.telemetry_snapshot();
+        assert_eq!(snapshot.queue_depth, 0);
+        assert_eq!(snapshot.status, "pending");
+        publisher.health.lock().expect("health lock").last_publish_at =
+            Some("2026-10-26T12:00:00Z".into());
+        assert_eq!(publisher.telemetry_snapshot().status, "ok");
+    }
+
+    #[test]
+    fn telemetry_excludes_transport_details_and_preserves_publisher_state() {
+        let config = crate::SyncConfig {
+            redpanda_bootstrap_servers: Some("private-broker:9092".into()),
+            publish_spool_dir: "/private/spool".into(),
+            outbox_dir: "/private/outbox".into(),
+            ..crate::SyncConfig::default()
+        };
+        let publisher = SyncPublisher::new(&config);
+        publisher.health.lock().unwrap().last_error = Some("private error".repeat(1024));
+        publisher.counters.spooled_total.store(8, Ordering::Relaxed);
+        publisher
+            .counters
+            .enqueue_timeouts_total
+            .store(2, Ordering::Relaxed);
+
+        for _ in 0..2 {
+            let snapshot = publisher.telemetry_snapshot();
+            assert!(snapshot.configured);
+            assert_eq!(snapshot.status, "degraded");
+            assert_eq!(snapshot.spooled_total, 8);
+            assert_eq!(snapshot.enqueue_timeouts_total, 2);
+            let body = serde_json::to_string(&snapshot).unwrap();
+            assert!(body.len() < 512);
+            assert!(!body.contains("private"));
+            assert!(!body.contains("last_error"));
+        }
+        assert_eq!(publisher.counters.spooled_total.load(Ordering::Relaxed), 8);
+        assert!(publisher.health.lock().unwrap().last_error.is_some());
+    }
 }

@@ -13,6 +13,7 @@ const browser = await chromium.launch();
 const routes = [
   '/',
   '/about/',
+  '/resume/',
   '/products/',
   '/vpn-proxy/',
   '/atheros-search/',
@@ -114,8 +115,12 @@ async function reviewPage(profile, route) {
   // These screenshots are visual evidence, not additional performance runs.
   if (route === '/' || route === '/atheros-search/') {
     if (route === '/') {
-      const filter = page.getByLabel('Filter sample sites, indicators, and observations');
-      for (const [index, record] of (await page.locator('.preview-record').all()).entries()) {
+      const filter = page.getByLabel(
+        'Filter sample sites, indicators, and observations',
+      );
+      for (const [index, record] of (
+        await page.locator('.preview-record').all()
+      ).entries()) {
         await record.click();
         await captureState(`search-${index}`);
       }
@@ -124,15 +129,23 @@ async function reviewPage(profile, route) {
       await filter.fill('');
     } else {
       for (const sample of ['0', '1']) {
-        await page.getByLabel('1. Choose a monitored sample site').selectOption(sample);
+        await page
+          .getByLabel('1. Choose a monitored sample site')
+          .selectOption(sample);
         await captureState(`search-${sample}`);
       }
     }
   }
   if (route === '/' || route === '/schema-migrator/') {
     if (route === '/')
-      await page.getByRole('button', { name: 'Schema Migrator', exact: true }).click();
-    const steps = await page.locator(route === '/' ? '.preview-steps button' : '.step-controls button').all();
+      await page
+        .getByRole('button', { name: 'Schema Migrator', exact: true })
+        .click();
+    const steps = await page
+      .locator(
+        route === '/' ? '.preview-steps button' : '.step-controls button',
+      )
+      .all();
     for (const [index, step] of steps.entries()) {
       await step.click();
       await captureState(`migrator-${index}`);
@@ -140,7 +153,9 @@ async function reviewPage(profile, route) {
   }
   if (route === '/' || route === '/vpn-proxy/') {
     if (route === '/')
-      await page.getByRole('button', { name: 'RCLabs VPN / Proxy', exact: true }).click();
+      await page
+        .getByRole('button', { name: 'RCLabs VPN / Proxy', exact: true })
+        .click();
     const flow = page.getByLabel('Sample traffic flow', { exact: true });
     for (const option of await flow.locator('option').all()) {
       const value = await option.getAttribute('value');

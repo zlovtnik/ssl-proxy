@@ -48,6 +48,7 @@ pub(crate) async fn run_transparent(
             let start = Instant::now();
             let context = TunnelAuditContext::new("transparent", category, Some(reason), profile)
                 .with_resolution(vec![orig_dst.ip().to_string()], orig_dst.ip().to_string())
+                .with_endpoint(transparent_endpoint(orig_dst, &tls, None))
                 .with_tls(tls.clone());
             info!(
                 target: "audit",
@@ -78,9 +79,6 @@ pub(crate) async fn run_transparent(
             let capture_payloads =
                 state.config.proxy.capture_plaintext_payloads && !tls_detected(&tls);
 
-            let (mut client_read, mut client_write) = tokio::io::split(client);
-            let (mut upstream_read, mut upstream_write) = tokio::io::split(upstream);
-
             let mut up_buf = Vec::with_capacity(if capture_payloads {
                 PAYLOAD_PREVIEW_LIMIT
             } else {
@@ -91,97 +89,24 @@ pub(crate) async fn run_transparent(
             } else {
                 0
             });
-            let bytes_up_counter = Arc::new(AtomicU64::new(0));
-            let bytes_down_counter = Arc::new(AtomicU64::new(0));
-            let up_counter = Arc::clone(&bytes_up_counter);
-            let down_counter = Arc::clone(&bytes_down_counter);
+            let (bytes_up, bytes_down, result) = copy_transparent(
+                client,
+                upstream,
+                &mut up_buf,
+                &mut down_buf,
+                if capture_payloads {
+                    PAYLOAD_PREVIEW_LIMIT
+                } else {
+                    0
+                },
+                |direction, n| {
+                    observe_forensic_chunk(&state, &host, category, &identity, direction, n, &tls);
+                },
+            )
+            .await;
 
-            let up_task = async {
-                let mut buf = vec![0u8; super::socket_tuning::TUNNEL_COPY_BUFFER_SIZE];
-                let mut total = 0u64;
-                loop {
-                    let n = client_read.read(&mut buf).await?;
-                    if n == 0 {
-                        break;
-                    }
-                    if let Err(e) = upstream_write.write_all(&buf[..n]).await {
-                        // Log sizes only: the captured buffer is raw plaintext
-                        // and must never reach debug logs. Byte-level payload
-                        // evidence flows exclusively through the redacted
-                        // payload-audit JSON path.
-                        debug!(
-                            %host,
-                            %e,
-                            bytes_transferred = total,
-                            preview_len = up_buf.len(),
-                            "transparent upstream write failed"
-                        );
-                        return Err(e);
-                    }
-                    total += n as u64;
-                    up_counter.fetch_add(n as u64, Ordering::Relaxed);
-                    observe_forensic_chunk(
-                        &state,
-                        &host,
-                        category,
-                        &identity,
-                        PacketDirection::Upstream,
-                        n,
-                        &tls,
-                    );
-
-                    if capture_payloads && up_buf.len() < PAYLOAD_PREVIEW_LIMIT {
-                        let take = (PAYLOAD_PREVIEW_LIMIT - up_buf.len()).min(n);
-                        up_buf.extend_from_slice(&buf[..take]);
-                    }
-                }
-                Ok::<u64, std::io::Error>(total)
-            };
-
-            let down_task = async {
-                let mut buf = vec![0u8; super::socket_tuning::TUNNEL_COPY_BUFFER_SIZE];
-                let mut total = 0u64;
-                loop {
-                    let n = upstream_read.read(&mut buf).await?;
-                    if n == 0 {
-                        break;
-                    }
-                    if let Err(e) = client_write.write_all(&buf[..n]).await {
-                        // Log sizes only: the captured buffer is raw plaintext
-                        // and must never reach debug logs.
-                        debug!(
-                            %host,
-                            %e,
-                            bytes_transferred = total,
-                            preview_len = down_buf.len(),
-                            "transparent downstream write failed"
-                        );
-                        return Err(e);
-                    }
-                    total += n as u64;
-                    down_counter.fetch_add(n as u64, Ordering::Relaxed);
-                    observe_forensic_chunk(
-                        &state,
-                        &host,
-                        category,
-                        &identity,
-                        PacketDirection::Downstream,
-                        n,
-                        &tls,
-                    );
-
-                    if capture_payloads && down_buf.len() < PAYLOAD_PREVIEW_LIMIT {
-                        let take = (PAYLOAD_PREVIEW_LIMIT - down_buf.len()).min(n);
-                        down_buf.extend_from_slice(&buf[..take]);
-                    }
-                }
-                Ok::<u64, std::io::Error>(total)
-            };
-
-            match tokio::try_join!(up_task, down_task) {
-                Ok((_up, _down)) => {
-                    let bytes_up = bytes_up_counter.load(Ordering::Relaxed);
-                    let bytes_down = bytes_down_counter.load(Ordering::Relaxed);
+            match result {
+                Ok(()) => {
                     state.record_tunnel_close_for_peer(
                         identity.wg_pubkey.as_deref(),
                         bytes_up,
@@ -210,7 +135,7 @@ pub(crate) async fn run_transparent(
                         )
                     });
 
-                    context.emit_close(
+                    context.with_transfer_status(true).emit_close(
                         &state,
                         &host,
                         &identity,
@@ -221,14 +146,12 @@ pub(crate) async fn run_transparent(
                     );
                 }
                 Err(e) => {
-                    let bytes_up = bytes_up_counter.load(Ordering::Relaxed);
-                    let bytes_down = bytes_down_counter.load(Ordering::Relaxed);
                     state.record_tunnel_close_for_peer(
                         identity.wg_pubkey.as_deref(),
                         bytes_up,
                         bytes_down,
                     );
-                    context.emit_close(
+                    context.with_transfer_status(false).emit_close(
                         &state,
                         &host,
                         &identity,
@@ -243,5 +166,76 @@ pub(crate) async fn run_transparent(
         }
         Ok(Err(e)) => error!(%host, %e, "transparent tunnel connect failed"),
         Err(_) => error!(%host, "transparent tunnel connect timed out"),
+    }
+}
+
+/// Keep both directions in one cancellation scope so their accepted writes
+/// remain available to the terminal observation when either direction fails.
+async fn copy_transparent<C, U, F>(
+    client: C,
+    upstream: U,
+    up_preview: &mut Vec<u8>,
+    down_preview: &mut Vec<u8>,
+    preview_limit: usize,
+    observe: F,
+) -> (u64, u64, std::io::Result<()>)
+where
+    C: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    U: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    F: Fn(PacketDirection, usize),
+{
+    let (mut client_read, client_write) = tokio::io::split(client);
+    let (mut upstream_read, upstream_write) = tokio::io::split(upstream);
+    // These wrappers outlive the direction futures. A cancelled write_all can
+    // already have accepted bytes even though it never returns a byte total.
+    let mut client_write = super::socket_tuning::CountingIo::new(client_write);
+    let mut upstream_write = super::socket_tuning::CountingIo::new(upstream_write);
+    let result = tokio::try_join!(
+        copy_transparent_direction(
+            &mut client_read,
+            &mut upstream_write,
+            up_preview,
+            preview_limit,
+            |n| observe(PacketDirection::Upstream, n),
+        ),
+        copy_transparent_direction(
+            &mut upstream_read,
+            &mut client_write,
+            down_preview,
+            preview_limit,
+            |n| observe(PacketDirection::Downstream, n),
+        ),
+    );
+    (
+        upstream_write.written,
+        client_write.written,
+        result.map(|_| ()),
+    )
+}
+
+async fn copy_transparent_direction<R, W, F>(
+    reader: &mut R,
+    writer: &mut W,
+    preview: &mut Vec<u8>,
+    preview_limit: usize,
+    observe: F,
+) -> std::io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+    F: Fn(usize),
+{
+    let mut buf = vec![0u8; super::socket_tuning::TUNNEL_COPY_BUFFER_SIZE];
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            return Ok(());
+        }
+        tokio::io::AsyncWriteExt::write_all(writer, &buf[..n]).await?;
+        observe(n);
+        if preview.len() < preview_limit {
+            let take = (preview_limit - preview.len()).min(n);
+            preview.extend_from_slice(&buf[..take]);
+        }
     }
 }

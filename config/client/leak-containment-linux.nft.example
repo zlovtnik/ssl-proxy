@@ -1,0 +1,46 @@
+# Linux reference only: render ALL placeholders before checking/applying.
+# Lifecycle, routes, expiry and boot ordering: advisor-plans/005-vpn-leak-evidence.md
+# Install before WG starts. Keep installed after WG/shim crash or shutdown.
+# Remove ONLY during explicit operator disconnect; never from WG PostDown.
+# Provision separately from the unprivileged shim; no NET_ADMIN for the shim.
+# This owns one table only. Never flush ruleset or allow general UDP/TCP 443.
+# No general ct state established accept: pre-existing sockets are contained too.
+# No LAN or DHCP exemption. Static fixture addresses; review OS adapters separately.
+# ARP is link control outside this inet table. IPv6 permits only scoped ND below.
+# Use a stable dedicated numeric shim UID; no application may share that UID.
+# Replace the one-hour timeouts with <= remaining signed inventory validity.
+# Never reset absolute inventory expiry on reboot. Empty/expired sets fail closed.
+define physical = "__PHYSICAL_INTERFACE__"
+define wireguard = "__WG_INTERFACE__"
+define shim_uid = __SHIM_UID__
+
+table inet wg_containment {
+    set relay4 {
+        type ipv4_addr . inet_service
+        flags timeout
+        timeout 1h
+        elements = { __RELAY_IPV4__ . __RELAY_PORT__ timeout 1h }
+    }
+    set relay6 {
+        type ipv6_addr . inet_service
+        flags timeout
+        timeout 1h
+        elements = { __RELAY_IPV6__ . __RELAY_PORT__ timeout 1h }
+    }
+    chain output {
+        type filter hook output priority filter; policy drop;
+        oifname "lo" counter accept
+        oifname $wireguard counter accept
+        # Exact IP + port + protocol + physical interface + socket owner.
+        oifname $physical meta skuid $shim_uid ip daddr . udp dport @relay4 counter accept
+        oifname $physical meta skuid $shim_uid ip6 daddr . udp dport @relay6 counter accept
+        # Link-local neighbor discovery only. No physical IPv6 application bypass.
+        oifname $physical ip6 hoplimit 255 ip6 daddr { fe80::/10, ff02::1:ff00:0/104 } icmpv6 type nd-neighbor-solicit icmpv6 code 0 counter accept
+        oifname $physical ip6 hoplimit 255 ip6 daddr { fe80::/10, ff02::1 } icmpv6 type nd-neighbor-advert icmpv6 code 0 counter accept
+        counter drop
+    }
+    # Do not let a client acting as a router bypass the output policy.
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+    }
+}

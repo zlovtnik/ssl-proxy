@@ -133,6 +133,25 @@ pub async fn handle(
             verdict,
             "blocked snitch"
         );
+        let mut extra = events::endpoint(&host, "connect_authority", port);
+        if let Some(map) = extra.as_object_mut() {
+            map.extend(
+                serde_json::json!({
+                    "attribution": identity.evidence(),
+                    "blocked_session_id": blocked_session_id,
+                    "category": category,
+                    "verdict": verdict,
+                    "attempt_count": attempts,
+                    "blocked_bytes": blocked_bytes,
+                    "blocked_bytes_delta_approx": approx_bytes,
+                    "risk_score": risk,
+                    "consecutive_blocks": streak
+                })
+                .as_object()
+                .expect("blocked event extra is an object")
+                .clone(),
+            );
+        }
         events::emit_serializable(
             &state,
             "session.blocked",
@@ -148,16 +167,7 @@ pub async fn handle(
             None,
             true,
             None,
-            serde_json::json!({
-                "blocked_session_id": blocked_session_id,
-                "category": category,
-                "verdict": verdict,
-                "attempt_count": attempts,
-                "blocked_bytes": blocked_bytes,
-                "blocked_bytes_delta_approx": approx_bytes,
-                "risk_score": risk,
-                "consecutive_blocks": streak
-            }),
+            extra,
         );
 
         if verdict == "TARPIT" {
@@ -234,7 +244,8 @@ pub async fn handle(
                     let context =
                         TunnelAuditContext::bypass("bypass", category, "certificate_pinning")
                             .with_resolution(resolved_ips.clone(), selected_ip.clone())
-                            .with_tls(prefix.tls);
+                            .with_tls(prefix.tls)
+                            .with_endpoint(events::endpoint(&host, "connect_authority", port));
                     state.record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
                     info!(
                         target: "audit",
@@ -250,32 +261,29 @@ pub async fn handle(
                     );
                     context.emit_open(&state, &host, &identity);
 
-                    let prefix_up = prefix.bytes.len() as u64;
-                    if !prefix.bytes.is_empty() {
-                        if let Err(e) = upstream.write_all(&prefix.bytes).await {
-                            debug!(%host, %e, "bypass tunnel prefix write failed");
-                            state.record_tunnel_close_for_peer(
-                                identity.wg_pubkey.as_deref(),
-                                prefix_up,
-                                0,
-                            );
-                            context.emit_close(
-                                &state,
-                                &host,
-                                &identity,
-                                prefix_up,
-                                0,
-                                start.elapsed(),
-                                None,
-                            );
-                            return;
-                        }
+                    let (prefix_up, prefix_result) =
+                        super::socket_tuning::write_prefix(&mut upstream, &prefix.bytes).await;
+                    if let Err(e) = prefix_result {
+                        debug!(%host, %e, "bypass tunnel prefix write failed");
+                        state.record_tunnel_close_for_peer(
+                            identity.wg_pubkey.as_deref(),
+                            prefix_up,
+                            0,
+                        );
+                        context.with_transfer_status(false).emit_close(
+                            &state,
+                            &host,
+                            &identity,
+                            prefix_up,
+                            0,
+                            start.elapsed(),
+                            None,
+                        );
+                        return;
                     }
 
-                    let (bytes_up, bytes_down) =
-                        super::socket_tuning::copy_bidirectional(&mut client_io, &mut upstream)
-                            .await
-                            .unwrap_or((0, 0));
+                    let (bytes_up, bytes_down, complete) =
+                        super::socket_tuning::measured_copy(&mut client_io, &mut upstream).await;
                     let bytes_up = bytes_up + prefix_up;
                     state.record_tunnel_close_for_peer(
                         identity.wg_pubkey.as_deref(),
@@ -296,7 +304,7 @@ pub async fn handle(
                         reason = "certificate_pinning",
                         "bypass tunnel closed"
                     );
-                    context.emit_close(
+                    context.with_transfer_status(complete).emit_close(
                         &state,
                         &host,
                         &identity,
@@ -390,7 +398,12 @@ pub(crate) async fn run_tunnel(
             let prefix = consume_tls_prefix(&mut client).await.unwrap_or_default();
             let context = TunnelAuditContext::new("connect", category, None, profile)
                 .with_resolution(resolved_ips.clone(), selected_ip.clone())
-                .with_tls(prefix.tls);
+                .with_tls(prefix.tls)
+                .with_endpoint(events::endpoint(
+                    &host,
+                    "connect_authority",
+                    parse_host_port(&host).1,
+                ));
             info!(
                 target: "audit",
                 event = "tunnel_open",
@@ -418,54 +431,48 @@ pub(crate) async fn run_tunnel(
             context.emit_open(&state, &host, &identity);
             state.record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
 
-            let prefix_up = prefix.bytes.len() as u64;
-            if !prefix.bytes.is_empty() {
-                if let Err(e) = upstream.write_all(&prefix.bytes).await {
-                    state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), prefix_up, 0);
-                    context.emit_close(
-                        &state,
-                        &host,
-                        &identity,
-                        prefix_up,
-                        0,
-                        start.elapsed(),
-                        None,
-                    );
-                    debug!(%host, %e, "connect tunnel prefix write failed");
-                    return;
-                }
+            let (prefix_up, prefix_result) =
+                super::socket_tuning::write_prefix(&mut upstream, &prefix.bytes).await;
+            if let Err(e) = prefix_result {
+                state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), prefix_up, 0);
+                context.with_transfer_status(false).emit_close(
+                    &state,
+                    &host,
+                    &identity,
+                    prefix_up,
+                    0,
+                    start.elapsed(),
+                    None,
+                );
+                debug!(%host, %e, "connect tunnel prefix write failed");
+                return;
             }
 
-            match super::socket_tuning::copy_bidirectional(&mut client, &mut upstream).await {
-                Ok((up, down)) => {
-                    let up = up + prefix_up;
-                    state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), up, down);
-                    info!(
-                        target: "audit",
-                        event = "tunnel_close",
-                        kind = "connect",
-                        host = %host,
-                        bytes_up = up,
-                        bytes_down = down,
-                        duration_ms = start.elapsed().as_millis(),
-                        category,
-                        "tunnel closed"
-                    );
-                    context.emit_close(&state, &host, &identity, up, down, start.elapsed(), None);
-                }
-                Err(e) => {
-                    state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), prefix_up, 0);
-                    context.emit_close(
-                        &state,
-                        &host,
-                        &identity,
-                        prefix_up,
-                        0,
-                        start.elapsed(),
-                        None,
-                    );
-                    debug!(%host, %e, "tunnel closed by peer");
-                }
+            let (up, down, complete) =
+                super::socket_tuning::measured_copy(&mut client, &mut upstream).await;
+            {
+                let up = up + prefix_up;
+                state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), up, down);
+                info!(
+                    target: "audit",
+                    event = "tunnel_close",
+                    kind = "connect",
+                    host = %host,
+                    bytes_up = up,
+                    bytes_down = down,
+                    duration_ms = start.elapsed().as_millis(),
+                    category,
+                    "tunnel closed"
+                );
+                context.with_transfer_status(complete).emit_close(
+                    &state,
+                    &host,
+                    &identity,
+                    up,
+                    down,
+                    start.elapsed(),
+                    None,
+                );
             }
         }
         Err(e) => {

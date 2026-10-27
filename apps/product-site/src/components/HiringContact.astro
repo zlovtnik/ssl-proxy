@@ -1,0 +1,27 @@
+---
+import { ArrowUpRight } from '@lucide/astro';
+import { email, hiring } from '../data/products';
+---
+
+<!--email_off-->
+<section id="employment" class="section" aria-labelledby="employment-title">
+  <div class="section-heading">
+    <p class="eyebrow">EMPLOYMENT / FULL-TIME ENGINEERING</p>
+    <h2 id="employment-title">{hiring.title}</h2>
+    <p>{hiring.summary}</p>
+  </div>
+  <div class="actions">
+    <a class="button primary" href={hiring.href}>
+      {hiring.cta}
+      <ArrowUpRight size={18} aria-hidden="true" />
+    </a>
+    <a class="text-link" href={hiring.resume.href}>
+      {hiring.resume.label}
+      <ArrowUpRight size={18} aria-hidden="true" />
+    </a>
+  </div>
+  <p class="fine-print">
+    Opens your email app, or email <a href={`mailto:${email}`}>{email}</a>.
+  </p>
+</section>
+<!--/email_off-->

@@ -29,6 +29,10 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: telemetry-blackbox-exporter
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ssl-proxy
+              app.kubernetes.io/component: atheros-search
       ports:
         - protocol: TCP
           port: 8080

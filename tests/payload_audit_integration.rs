@@ -36,6 +36,7 @@ mod tests {
             identity_source: Some("registered".to_string()),
             peer_hostname: Some("phone.local".to_string()),
             client_ua: None,
+            ..ResolvedIdentity::default()
         };
 
         assert!(audit_http_preview(

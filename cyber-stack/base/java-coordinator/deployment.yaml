@@ -373,7 +373,7 @@ spec:
             - name: POSTGRES_ENABLED
               value: "true"
             - name: POSTGRES_SCHEMA_MANIFEST_SHA256
-              value: "38f44137d93d46615bc99090dea2149637b8be5ce7c4d8dfdd0b60d9b8f170fc"
+              value: "34fb4670bb9785e4b65461070aa8989461eed1fd5dcb4c6bfe70566340472ce9"
             - name: POSTGRES_HOST
               value: "postgres-pgbouncer"
             - name: POSTGRES_PORT

@@ -52,7 +52,7 @@ class AtherosReportingTest(unittest.TestCase):
         # that this work does not consume the database execution budget.
         print("Building Go database contracts (timeout: 900s)", flush=True)
         self.run_go_tests(packages, pattern="^$", timeout=900, test_timeout="1m")
-        with (DockerContainer("pgvector/pgvector:0.8.6-pg16-bookworm")
+        with (DockerContainer("pgvector/pgvector:0.8.6-pg16-bookworm@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b")
               .with_env("POSTGRES_PASSWORD", "contract-test")
               .with_env("POSTGRES_DB", "sync")
               .with_exposed_ports(5432)
@@ -87,7 +87,8 @@ class AtherosReportingTest(unittest.TestCase):
 
             sql("CREATE ROLE octopus_contract LOGIN PASSWORD 'contract-test'; "
                 "CREATE ROLE athsearch_contract LOGIN PASSWORD 'contract-test'; "
-                "ALTER ROLE athsearch_contract SET search_path=atheros_search,public; "
+                "ALTER ROLE octopus_contract IN DATABASE sync SET search_path=octopus_core,atheros_search; "
+                "ALTER ROLE athsearch_contract IN DATABASE sync SET search_path=atheros_search; "
                 "ALTER ROLE athsearch_contract SET timezone='UTC'; "
                 "REVOKE CREATE ON SCHEMA public FROM PUBLIC")
             for domain in manifests:

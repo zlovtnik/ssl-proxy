@@ -6,7 +6,7 @@ import '@fontsource-variable/jetbrains-mono';
 import interLatin from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
 import monoLatin from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 import '../styles/site.css';
-import { contact } from '../data/products';
+import { hiring } from '../data/products';
 import PrivacyConsent from '../components/PrivacyConsent.astro';
 import { ArrowUpRight, Menu } from '@lucide/astro';
 interface Props {
@@ -38,9 +38,10 @@ const analyticsMeasurementId =
     ? candidateMeasurementId
     : '';
 const navigation = [
+  ['/about/', 'Experience'],
   ['/products/', 'Projects'],
   ['/guides/', 'Guides'],
-  ['/#approach', 'How they work'],
+  ['/resume/', 'Resume'],
   ['/#faq', 'FAQ'],
 ];
 const breadcrumbData =
@@ -180,11 +181,11 @@ const breadcrumbData =
             </a>
           ))}
           <a
-            href="/demo/"
+            href="/demo/#employment"
             class="button small"
             aria-current={Astro.url.pathname === '/demo/' ? 'page' : undefined}
           >
-            {contact.cta} <ArrowUpRight size={18} aria-hidden="true" />
+            {hiring.cta} <ArrowUpRight size={18} aria-hidden="true" />
           </a>
         </nav>
         <details class="mobile-menu">
@@ -195,8 +196,8 @@ const breadcrumbData =
             {navigation.map(([path, label]) => (
               <a href={path}>{label}</a>
             ))}
-            <a href="/demo/">
-              {contact.cta} <ArrowUpRight size={18} aria-hidden="true" />
+            <a href="/demo/#employment">
+              {hiring.cta} <ArrowUpRight size={18} aria-hidden="true" />
             </a>
           </nav>
         </details>
@@ -212,6 +213,7 @@ const breadcrumbData =
       <p>Backend and data-platform engineering by Rafael Cardoso dos Santos.</p>
       <nav aria-label="Footer">
         <a href="/about/">About Rafael</a>
+        <a href={hiring.resume.href}>Resume</a>
         <a href="/accessibility/">Accessibility</a>
         <a href="/privacy/">Privacy &amp; cookies</a>
         {analyticsMeasurementId && (

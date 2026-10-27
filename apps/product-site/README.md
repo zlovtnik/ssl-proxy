@@ -2,14 +2,23 @@
 
 A standalone Astro + TypeScript frontend with SolidJS synthetic demonstrations
 for Atheros Search, Schema Migrator, and RCLabs VPN / Proxy, plus a static Octopus
-page with runtime operational readings when available. The existing Search
-and Migrator operator consoles are separate applications.
+page with runtime operational readings when available. Atheros Search is the
+unified ingestion and retrieval workbench; proxy and Octopus pages explain its
+internal components while retaining their technical URLs. Schema Migrator is
+companion tooling. This public site is separate from the authenticated consoles.
 Synthetic samples use no application API, authentication, database, or migration
 execution. Octopus separately reads the public metrics endpoint.
 
+Recruiters, engineering managers, and technical interviewers are the primary
+portfolio audience. The homepage separates Synchro experience from independent
+project contributions and evidence, then presents product walkthroughs for RAG
+builders and operators. The printable `/resume/` page and `/demo/#employment`
+provide hiring paths alongside the existing project discussion emails.
+
 ## Local development
 
-Use Node.js 22.12 or newer and npm:
+Use Node.js 22.19 or newer and npm 9.6.5 or newer, satisfying the committed
+Astro and transitive dependency engine requirements:
 
 ```sh
 cd apps/product-site
@@ -17,9 +26,9 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:4321`. Routes are `/`, `/products/`,
+Open `http://127.0.0.1:4321`. Routes are `/`, `/products/`,
 `/atheros-search/`, `/schema-migrator/`, `/vpn-proxy/`, `/octopus/`, `/demo/`,
-`/about/`, `/accessibility/`, `/privacy/`, `/guides/`, and the six technical guide
+`/about/`, `/resume/`, `/accessibility/`, `/privacy/`, `/guides/`, and the six technical guide
 routes generated from [the content model](src/data/products.ts).
 
 ```sh
@@ -28,6 +37,12 @@ npx playwright install chromium
 npm test
 npm run preview
 ```
+
+`npm run build` includes Astro/TypeScript diagnostics. Browser tests use the
+built `dist/` output and start their own preview server on `127.0.0.1:4323`;
+rebuild after changing pages before running them. Astro development and
+preview servers do not execute the Cloudflare Pages Function. Local browser
+tests provide isolated metrics responses.
 
 To run the same checks in Chromium, Firefox, and WebKit:
 
@@ -40,7 +55,8 @@ Generated dependency, build, and test outputs are ignored. The npm lockfile is
 committed. Fonts are bundled locally from Fontsource packages; no font CDN is
 used. The two Latin variable faces are preloaded from build-time asset URLs so
 the first paint already uses them. Previously saved display preferences may
-still be applied from browser local storage. Google Analytics 4 is loaded only
+still be applied from browser local storage; the site always uses the dark
+theme. Google Analytics 4 is loaded only
 on the production host, after analytics consent, and only when
 PUBLIC_GA4_MEASUREMENT_ID contains the GA4 web stream ID. Local and Pages
 preview builds do not include the analytics ID.
@@ -58,7 +74,12 @@ is a raster export of the original SVG in `public/`.
 
 ## Content and evidence
 
+- [`src/data/products.ts`](src/data/products.ts) owns product copy, routes and
+  the Search identity and Migrator snapshot caveats.
+- [`src/styles/site.css`](src/styles/site.css) owns shared typography, spacing
+  and controls; route styles compose those definitions.
 - [Atheros Search documentation](../integration-console/atheros-search/README.md)
+- [Source-to-retrieval workflow](../../docs/atheros-search-workflow.md)
 - [Schema Migrator documentation](../schema-migrator/README.md)
 - [Content source map](docs/content-evidence.md)
 - [Messaging framework](docs/messaging.md)
@@ -88,7 +109,9 @@ Leave it unset in local and preview builds.
 Octopus fetches `/api/octopus-stats` every 30 seconds. The
 [Pages Function](functions/api/octopus-stats.ts) requests the public store-only
 stats reader at runtime, with no build-time measurements or URL setup.
-Only the production hostnames can use this proxy; local and Pages preview
+The Function uses the `METRICS_HISTORY` KV binding declared in
+[`wrangler.jsonc`](wrangler.jsonc) for recorded-snapshot fallback. Only the
+production hostnames can use this proxy; local and Pages preview
 hosts return unavailable and never fetch production. Browser tests intercept
 this route with isolated responses. No-JavaScript visitors see unavailable
 readings and an explanation. Valid historical snapshots remain available with
@@ -134,11 +157,9 @@ To reproduce the production build locally:
 PUBLIC_SITE_URL=https://rclabs.uk npm run build
 ```
 
-Do not use a direct Wrangler upload for routine publication. The October 5,
-2026 direct uploads were approved exceptions before Git deployment was
-connected. Their production deployments
-`28901202-7e1e-4e99-b370-541aa9f26987` and
-`a016abbb-cdf6-4be6-89f2-1e6fc5307ad8` remain in Pages history for rollback.
+Use the reviewed Git deployment path for routine publication. Inspect Pages
+deployment history for rollback artifacts; local builds do not establish the
+current hosting or deployment state.
 
 Every page that shows or links the address wraps it in `<!--email_off-->`
 markers so Cloudflare Email Obfuscation cannot replace the visible address or

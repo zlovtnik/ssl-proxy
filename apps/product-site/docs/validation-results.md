@@ -4,6 +4,31 @@ This record covers the four-project site and technical guides: the shared
 RCLabs dark/green visual system, product catalogue, natural-height demos and
 disclosures, and search routing. No accessibility conformance claim is made.
 
+## 2026-10-27: hiring portfolio and current resume
+
+- `npm run build`: passed; Astro/TypeScript reported zero errors, warnings, or
+  hints and built 19 pages, including the new static resume.
+- Final full Chromium run: 88 passed and two analytics tests skipped because no
+  measurement ID was configured. Coverage includes the corrected repository
+  destinations for evidence links and a privacy check that distinguishes public
+  tool names in the resume from internal dashboard URLs.
+- Portfolio regressions cover no-JavaScript hierarchy and disclosures, Synchro
+  attribution, separate employment/project emails, current resume facts and
+  contact links, responsive reflow, and automated accessibility.
+- The print regression passed with a visible production-style consent banner:
+  print hides consent, navigation, and print controls while retaining content
+  on a white background. Final desktop and print-media screenshots were inspected.
+- `npm run review`: captured 11 routes at desktop/mobile sizes with no page
+  errors. These local lab samples do not establish field performance or
+  accessibility conformance. The final resume text also passed responsive tests.
+- Targeted Prettier checks, `git diff --check`, and
+  `python3 scripts/check-docs.py` passed.
+- Backend services and database integration suites were not executed for this
+  frontend change. Case-study links describe existing regression coverage and
+  explicitly leave current backend pass status and complete crash testing open.
+- Local checks regenerated ignored build, test, screenshot, and visual-verdict
+  state artifacts. No hosting, deployment, or runtime infrastructure was changed.
+
 ## 2026-10-09: runtime metrics and Octopus copy
 
 - `npm run build`: passed with no type errors, warnings, or hints; 17 pages built.

@@ -22,6 +22,7 @@ pub mod proxy_sync;
 pub mod quic;
 pub mod security;
 pub mod state;
+pub mod telemetry;
 pub mod time;
 pub mod tunnel;
 pub mod udp_tuning;

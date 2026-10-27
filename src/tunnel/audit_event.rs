@@ -24,6 +24,8 @@ pub(crate) struct TunnelAuditContext {
     pub(crate) selected_ip: Option<String>,
     pub(crate) tls: TlsInfo,
     pub(crate) bypass_reason: Option<&'static str>,
+    pub(crate) transfer_status: &'static str,
+    pub(crate) endpoint: serde_json::Value,
 }
 
 impl TunnelAuditContext {
@@ -47,6 +49,8 @@ impl TunnelAuditContext {
             selected_ip: None,
             tls: TlsInfo::default(),
             bypass_reason: None,
+            transfer_status: "unavailable",
+            endpoint: json!({}),
         }
     }
 
@@ -69,6 +73,19 @@ impl TunnelAuditContext {
 
     pub(crate) fn with_tls(mut self, tls: TlsInfo) -> Self {
         self.tls = tls;
+        self
+    }
+
+    pub(crate) fn with_endpoint(mut self, evidence: serde_json::Value) -> Self {
+        self.endpoint = evidence;
+        self
+    }
+    pub(crate) fn with_transfer_status(mut self, complete: bool) -> Self {
+        self.transfer_status = if complete {
+            "measured_terminal"
+        } else {
+            "partial"
+        };
         self
     }
 
@@ -96,9 +113,20 @@ impl TunnelAuditContext {
             "alpn": self.tls.alpn.clone(),
             "cipher_suites_count": self.tls.cipher_suites_count,
             "ja3_lite": self.tls.ja3_lite.clone(),
+            "tls_evidence": self.tls.evidence(),
+            "measurement": {
+                "version": "proxy-measurement-v1", "bytes_status": if event_sequence == 1 { "unavailable" } else { self.transfer_status },
+                "duration_status": if duration.is_some() { "connection_elapsed" } else { "unavailable" },
+                "byte_unit": "bytes", "up_direction": "client_to_destination", "down_direction": "destination_to_client",
+                "source": if event_sequence == 1 || self.transfer_status == "unavailable" { "unavailable" } else { "successful_socket_writes" },
+                "termination": self.transfer_status,
+            },
         });
 
         if let serde_json::Value::Object(ref mut map) = extra {
+            if let Some(endpoint) = self.endpoint.as_object() {
+                map.extend(endpoint.clone());
+            }
             if let Some(reason) = self.bypass_reason {
                 map.insert("bypass_reason".to_string(), json!(reason));
             }
@@ -127,7 +155,7 @@ impl TunnelAuditContext {
                 status_code: None,
                 blocked: false,
                 obfuscation_profile: self.obfuscation_profile.clone(),
-                extra: self.event_extra(1, 0, 0, None, None),
+                extra: self.identity_extra(identity, self.event_extra(1, 0, 0, None, None)),
             },
         );
     }
@@ -159,9 +187,21 @@ impl TunnelAuditContext {
                 status_code: None,
                 blocked: false,
                 obfuscation_profile: self.obfuscation_profile.clone(),
-                extra: self.event_extra(2, bytes_up, bytes_down, Some(duration), payload_preview),
+                extra: self.identity_extra(
+                    identity,
+                    self.event_extra(2, bytes_up, bytes_down, Some(duration), payload_preview),
+                ),
             },
         );
+    }
+
+    fn identity_extra(
+        &self,
+        identity: &ResolvedIdentity,
+        mut extra: serde_json::Value,
+    ) -> serde_json::Value {
+        extra["attribution"] = identity.evidence();
+        extra
     }
 }
 
@@ -183,6 +223,7 @@ mod tests {
             identity_source: Some("registered".to_string()),
             peer_hostname: Some("phone.local".to_string()),
             client_ua: Some("UA".to_string()),
+            ..Default::default()
         }
     }
 
@@ -212,9 +253,11 @@ mod tests {
         )
         .with_resolution(vec!["192.0.2.10".to_string()], "192.0.2.10".to_string())
         .with_tls(TlsInfo {
+            parse_status: "parsed",
             sni: Some("example.com".to_string()),
             alpn: Some("h2".to_string()),
             tls_ver: Some("TLS1.3".to_string()),
+            offered_version: Some("TLS1.3".to_string()),
             cipher_suites_count: Some(4),
             ja3_lite: Some("ja3-lite".to_string()),
         });
@@ -245,5 +288,58 @@ mod tests {
         assert_eq!(close["ja3_lite"], "ja3-lite");
         assert_eq!(close["selected_ip"], "192.0.2.10");
         assert_eq!(close["resolved_ips"][0], "192.0.2.10");
+    }
+
+    #[test]
+    fn offered_version_uses_client_hello_instead_of_record_compatibility_version() {
+        // TLS1.2 ClientHello carried in a TLS1.0 compatibility record.
+        let mut hello = vec![22, 3, 1, 0, 47, 1, 0, 0, 43, 3, 3];
+        hello.extend_from_slice(&[0; 32]);
+        hello.extend_from_slice(&[0, 0, 2, 0, 47, 1, 0, 0, 0]);
+        let tls = crate::tunnel::tls::parse_tls_info(&hello);
+        assert_eq!(tls.parse_status, "parsed");
+        let context =
+            TunnelAuditContext::new("transparent", "unknown", None, obfuscation::Profile::None)
+                .with_tls(tls);
+        let event = context.event_extra(1, 0, 0, None, None);
+        assert_eq!(event["tls_ver"], "TLS1.0");
+        assert_eq!(event["ja3_lite"], "769,47,,,");
+        assert_eq!(event["tls_evidence"]["offered_version"], "TLS1.2");
+    }
+
+    #[test]
+    fn terminal_measurement_requires_both_directions_to_complete() {
+        for (up_ok, down_ok) in [(true, true), (false, true), (true, false), (false, false)] {
+            let context =
+                TunnelAuditContext::new("quic-h3", "unknown", None, obfuscation::Profile::None)
+                    .with_transfer_status(up_ok && down_ok);
+            let close = context.event_extra(2, 12, 34, Some(Duration::from_millis(56)), None);
+            let expected = if up_ok && down_ok {
+                "measured_terminal"
+            } else {
+                "partial"
+            };
+            assert_eq!(close["measurement"]["bytes_status"], expected);
+            assert_eq!(close["measurement"]["termination"], expected);
+            assert_eq!(close["measurement"]["source"], "successful_socket_writes");
+            assert_eq!(close["bytes_up"], 12);
+            assert_eq!(close["bytes_down"], 34);
+            let open = context.event_extra(1, 0, 0, None, None);
+            assert_eq!(open["measurement"]["source"], "unavailable");
+        }
+    }
+
+    #[test]
+    fn unmeasured_tunnel_bytes_do_not_claim_successful_socket_writes() {
+        let context = TunnelAuditContext::new(
+            "transparent",
+            "unknown",
+            Some("allowed_plaintext"),
+            obfuscation::Profile::None,
+        );
+        let close = context.event_extra(2, 12, 34, Some(Duration::from_millis(56)), None);
+        assert_eq!(close["measurement"]["bytes_status"], "unavailable");
+        assert_eq!(close["measurement"]["source"], "unavailable");
+        assert_eq!(close["bytes_up"], 12);
     }
 }
