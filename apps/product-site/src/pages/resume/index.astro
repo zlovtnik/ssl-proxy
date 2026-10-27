@@ -1,0 +1,172 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { author, hiring, portfolio, resume } from '../../data/products';
+---
+
+<Layout title={resume.title} description={resume.summary}>
+  <article class="resume">
+    <header class="hero">
+      <p class="eyebrow">RESUME / FULL-TIME ENGINEERING</p>
+      <h1>{author.name}</h1>
+      <p class="lead">{resume.role}</p>
+      <p>{resume.location}</p>
+      <p>{resume.authorization}</p>
+      <p>{resume.summary}</p>
+      <!--email_off-->
+      <div class="actions">
+        <a class="text-link" href={`mailto:${resume.email}`}>
+          {resume.email}
+        </a>
+        <a class="text-link" href={resume.phone.href}>
+          {resume.phone.label}
+        </a>
+        <a class="text-link" href={author.profile}>
+          GitHub profile
+        </a>
+        <a class="text-link" href={resume.linkedin.href}>
+          {resume.linkedin.label}
+        </a>
+        <a class="text-link" href={resume.website.href}>
+          {resume.website.label}
+        </a>
+        <a class="text-link" href={hiring.href}>
+          {hiring.cta}
+        </a>
+        <button type="button" id="print-resume" hidden>
+          {resume.print}
+        </button>
+      </div>
+      <!--/email_off-->
+    </header>
+    <section class="section" aria-labelledby="resume-skills">
+      <h2 id="resume-skills">Technical scope</h2>
+      <dl class="about-case-fields">
+        {resume.skills.map(([label, text]) => (
+          <div>
+            <dt>{label}</dt>
+            <dd>{text}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+    <section class="section" aria-labelledby="resume-experience">
+      <h2 id="resume-experience">Professional experience</h2>
+      {resume.positions.map((position) => (
+        <section
+          class="resume-position"
+          aria-label={`${position.title} at ${position.company}`}
+        >
+          <h3>
+            {position.title} / {position.company}
+          </h3>
+          <p class="eyebrow">{position.period}</p>
+          <ul>
+            {position.points.map((point) => (
+              <li>{point}</li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      <p class="fine-print">{portfolio.experience.attribution}</p>
+    </section>
+    <section class="section" aria-labelledby="resume-projects">
+      <h2 id="resume-projects">Independent projects</h2>
+      <p class="eyebrow">
+        {resume.independent.title} / {resume.independent.period}
+      </p>
+      <p>{resume.independent.summary}</p>
+      {resume.projects.map((project) => (
+        <section class="resume-position" aria-label={project.title}>
+          <h3>
+            <a href={project.href}>{project.title}</a>
+          </h3>
+          <p>{project.technologies}</p>
+          <ul>
+            {project.points.map((point) => (
+              <li>{point}</li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </section>
+    <section class="section" aria-labelledby="resume-education">
+      <h2 id="resume-education">Education</h2>
+      <ul>
+        {resume.education.map((item) => (
+          <li>{item}</li>
+        ))}
+      </ul>
+    </section>
+  </article>
+</Layout>
+
+<script>
+  const print = document.querySelector<HTMLButtonElement>('#print-resume');
+  if (print) {
+    print.hidden = false;
+    print.addEventListener('click', () => window.print());
+  }
+</script>
+
+<style>
+  .resume {
+    max-width: var(--reading-width);
+    margin-inline: auto;
+  }
+  .resume .hero {
+    padding-bottom: 2rem;
+  }
+  .resume .section {
+    padding-block: 2rem;
+  }
+  .resume-position {
+    margin-block: 2rem;
+  }
+  .resume li {
+    margin-block: 0.6rem;
+  }
+  @media print {
+    :global(html) {
+      color-scheme: light;
+    }
+    :global(body) {
+      background: white;
+      color: black;
+      font-size: 10pt;
+    }
+    :global(.site-top),
+    :global(.site-footer),
+    :global(.skip-link),
+    :global(.privacy-consent),
+    #print-resume {
+      display: none;
+    }
+    :global(main.shell) {
+      max-width: none;
+      width: auto;
+      padding: 0;
+    }
+    .resume {
+      max-width: none;
+    }
+    .resume :is(p, li, h1, h2, h3, a, dt, dd) {
+      color: black;
+    }
+    .resume h1 {
+      font-size: 24pt;
+    }
+    .resume h2 {
+      font-size: 16pt;
+    }
+    .resume h3 {
+      font-size: 12pt;
+    }
+    .resume :is(.hero, .section) {
+      padding-block: 0.5rem;
+    }
+    .resume-position {
+      break-inside: avoid;
+      margin-block: 1rem;
+    }
+  }
+</style>

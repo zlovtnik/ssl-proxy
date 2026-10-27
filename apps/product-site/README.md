@@ -9,6 +9,12 @@ companion tooling. This public site is separate from the authenticated consoles.
 Synthetic samples use no application API, authentication, database, or migration
 execution. Octopus separately reads the public metrics endpoint.
 
+Recruiters, engineering managers, and technical interviewers are the primary
+portfolio audience. The homepage separates Synchro experience from independent
+project contributions and evidence, then presents product walkthroughs for RAG
+builders and operators. The printable `/resume/` page and `/demo/#employment`
+provide hiring paths alongside the existing project discussion emails.
+
 ## Local development
 
 Use Node.js 22.19 or newer and npm 9.6.5 or newer, satisfying the committed
@@ -22,7 +28,7 @@ npm run dev
 
 Open `http://127.0.0.1:4321`. Routes are `/`, `/products/`,
 `/atheros-search/`, `/schema-migrator/`, `/vpn-proxy/`, `/octopus/`, `/demo/`,
-`/about/`, `/accessibility/`, `/privacy/`, `/guides/`, and the six technical guide
+`/about/`, `/resume/`, `/accessibility/`, `/privacy/`, `/guides/`, and the six technical guide
 routes generated from [the content model](src/data/products.ts).
 
 ```sh

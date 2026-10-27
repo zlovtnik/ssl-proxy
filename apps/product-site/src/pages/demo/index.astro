@@ -1,11 +1,12 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { contact, contactOptions, demoLink, email } from '../../data/products';
+import { contactOptions, demoLink, email, hiring } from '../../data/products';
+import HiringContact from '../../components/HiringContact.astro';
 ---
 
 <Layout
-  title="Discuss your use case"
-  description="Email RCLabs about Atheros Search, Schema Migrator, RCLabs VPN / Proxy, or Octopus. Tell us your environment and constraints; we agree on the next step by email."
+  title="Contact Rafael - Engineering roles and project discussions"
+  description="Contact Rafael about a full-time engineering role, or start a separate project discussion about Atheros Search, Schema Migrator, VPN / Proxy, or Octopus."
 >
   <section class="hero">
     <div class="hero-copy">
@@ -14,22 +15,21 @@ import { contact, contactOptions, demoLink, email } from '../../data/products';
         <span aria-hidden="true">/</span>
         <span aria-current="page">Contact</span>
       </nav>
-      <p class="eyebrow">CONTACT / USE-CASE DISCUSSION</p>
-      <h1>
-        {contact.headline[0]}
-        <span class="muted">{contact.headline[1]}</span>
-      </h1>
-      <p class="lead">{contact.supporting}</p>
+      <p class="eyebrow">CONTACT / ENGINEERING ROLES AND PROJECTS</p>
+      <h1>{hiring.pageTitle}</h1>
+      <p class="lead">{hiring.pageSummary}</p>
     </div>
   </section>
+  <HiringContact />
   <section class="section" aria-labelledby="options-title">
     <!--email_off-->
     <div class="section-heading">
       <p class="eyebrow">CHOOSE A STARTING POINT</p>
-      <h2 id="options-title">Where should the walkthrough start?</h2>
+      <h2 id="options-title">Project discussions and walkthroughs</h2>
       <p>
         Each option opens an email request. Nothing is submitted through this
-        site.
+        site. This is an email conversation; hosted product access is not
+        provisioned here.
       </p>
     </div>
     <div class="feature-grid">

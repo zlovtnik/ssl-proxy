@@ -22,6 +22,7 @@ import {
 const routes = [
   '/',
   '/about/',
+  '/resume/',
   '/products/',
   '/vpn-proxy/',
   '/atheros-search/',
@@ -100,7 +101,10 @@ test('Octopus never publishes saved metrics without JavaScript', async ({
 test('public routes and committed evidence expose no internal dashboard addresses', async ({
   page,
 }) => {
-  const privateText = /grafana|192\.168\.1|30000|gateway\.rclabs\.uk|wiretrap/i;
+  // Grafana is a public resume skill; prohibit dashboard URLs rather than the
+  // tool's name in career text.
+  const privateText =
+    /(?:https?:\/\/|\/\/)[^\s"'<>]*grafana|192\.168\.1|30000|gateway\.rclabs\.uk|wiretrap/i;
   for (const route of routes) {
     await page.goto(route);
     expect(await page.locator('body').innerText(), route).not.toMatch(
@@ -155,7 +159,7 @@ test('header stays visible and product samples preserve the landing layout', asy
     await expect(preview.locator('.preview-panel:visible')).toHaveCount(1);
     const panel = (await preview.boundingBox())!;
     const next = (await page.locator('#products').boundingBox())!;
-    expect(next.y).toBeGreaterThanOrEqual(panel.y + panel.height);
+    expect(panel.y).toBeGreaterThanOrEqual(next.y + next.height);
   }
   await page
     .getByRole('navigation', { name: 'Main navigation', exact: true })

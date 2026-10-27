@@ -1,11 +1,14 @@
 # Messaging framework
 
 RCLabs is Rafael Cardoso dos Santos's independently maintained backend and
-data-platform engineering portfolio. Atheros Search is the first walkthrough:
+data-platform engineering portfolio. Recruiters, engineering managers, and
+technical interviewers are the primary portfolio audience. The homepage leads
+with professional positioning, Synchro experience, independent engineering
+contributions, and source/test evidence before product walkthroughs. Atheros
+Search documentation retains RAG builders and operators as its audience:
 the proxy and sensor publish observations, Octopus coordinates ingestion, and
 Search provides retrieval, evidence, fenced embedding workers and authenticated
-operational reads through one pipeline workbench. The main audience is RAG
-builders and operators tracing ingestion to available evidence. Schema Migrator
+operational reads through one pipeline workbench. Schema Migrator
 is companion tooling for SQL change review. Proxy and Octopus retain technical
 detail pages and their existing URLs as component capabilities. Generated
 answers and new connectors remain future work. Each component keeps its caveat.
@@ -19,12 +22,12 @@ statements, workflow steps, caveats, or contact labels.
 
 ## Product stories
 
-| Product            | Public story                                                                            | Primary action                        |
-| ------------------ | --------------------------------------------------------------------------------------- | ------------------------------------- |
+| Product            | Public story                                                                             | Primary action                        |
+| ------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------- |
 | Atheros Search     | Trace configured source observations through ingestion, indexing and evidence retrieval. | Explore the synthetic site review.    |
-| Schema Migrator    | Inspect ordered SQL changes, validation, and run records before execution.              | Explore the synthetic change review.  |
-| RCLabs VPN / Proxy | Inspect WireGuard ingress, transparent-proxy classification, and audit publishing.      | Explore the synthetic traffic review. |
-| Octopus            | Follow incoming events through jobs and loads, with live readings and recorded history. | View live metrics.                    |
+| Schema Migrator    | Inspect ordered SQL changes, validation, and run records before execution.               | Explore the synthetic change review.  |
+| RCLabs VPN / Proxy | Inspect WireGuard ingress, transparent-proxy classification, and audit publishing.       | Explore the synthetic traffic review. |
+| Octopus            | Follow incoming events through jobs and loads, with live readings and recorded history.  | View live metrics.                    |
 
 The project catalogue retains the `/products/` URL and compares all four
 components and companion tools within the Atheros Search workflow. Do not present the page count as evidence of four commercial
@@ -42,6 +45,19 @@ instead of a grid of unavailable values. Partial snapshots explain warmup and
 missing history without inventing counts. No-JavaScript rendering shows the
 workflow link and an instruction to enable JavaScript. Pipeline and audience controls progressively enhance
 static product copy.
+
+Homepage and About case studies share the same contribution model: what Rafael
+built, the hardest failure mode, the response, repository regression coverage,
+and remaining verification gaps. Octopus leads with persisted state, committed
+offset replay, durable deduplication, fenced leases, and partial-failure recovery.
+Source links establish that implementation and tests exist, not that a current
+backend suite passed or a production crash campaign was performed.
+
+Keep Synchro employment (2011-2024), independent projects, and synthetic examples
+explicitly attributed. The owner's current supplied resume reports approximately
+20 million weekly fiscal transactions for a Synchro invoicing integration.
+It supersedes the older August resume's 2 million figure. It is historical employer-system
+workload, not Octopus activity, unique ledger events, or measured capacity.
 
 The six technical guides under `/guides/` explain separate investigation and
 migration questions with repository-backed mechanisms and labelled examples.
@@ -86,6 +102,14 @@ Keep these statements in the model, product page, and relevant sample:
   the production activity section in a disclosure.
 
 ## Contact
+
+Hiring actions link to the static, printable `/resume/` page and the employment
+section at `/demo/#employment`. Direct hiring email uses the distinct subject
+`Full-time engineering role`. Product discussion emails retain
+`Use-case discussion: [product]`; employers do not need a product use case.
+The public resume includes the phone, email, location, work authorization,
+LinkedIn profile, and website supplied in the owner's current resume. General
+site and hiring inquiry links keep the existing `rafael@rclabs.uk` address.
 
 General calls to action use `mailto:` links for `rafael@rclabs.uk`. The privacy
 notice identifies Rafael Cardoso dos Santos as the individual controller and

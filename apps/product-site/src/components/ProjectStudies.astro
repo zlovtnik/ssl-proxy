@@ -1,0 +1,56 @@
+---
+import { ArrowUpRight } from '@lucide/astro';
+import { portfolio } from '../data/products';
+---
+
+<section id="selected-work" class="section" aria-labelledby="work-title">
+  <div class="section-heading">
+    <p class="eyebrow">INDEPENDENT PROJECTS / ENGINEERING CONTRIBUTIONS</p>
+    <h2 id="work-title">{portfolio.workTitle}</h2>
+    <p>{portfolio.workSummary}</p>
+  </div>
+  <div class="about-case-studies">
+    {portfolio.projects.map((project, index) => (
+      <details
+        id={`case-${project.id}`}
+        class="about-case-study"
+        open={index === 0}
+      >
+        <summary>
+          <span class="about-case-index">0{index + 1}</span>
+          <div class="about-case-intro">
+            <h3 class="about-case-title">{project.title}</h3>
+            <span class="about-case-kind">{project.kind}</span>
+          </div>
+          <span class="about-case-toggle" aria-hidden="true">
+            +
+          </span>
+        </summary>
+        <div class="about-case-detail">
+          <dl class="about-case-fields">
+            {[
+              ['What I built', project.built],
+              ['Hardest failure mode', project.failure],
+              ['How I addressed it', project.response],
+              ['Regression coverage', project.tested],
+              ['Still unverified', project.unverified],
+            ].map(([label, text]) => (
+              <div>
+                <dt>{label}</dt>
+                <dd>{text}</dd>
+              </div>
+            ))}
+          </dl>
+          <div class="about-case-links">
+            {project.links.map((link) => (
+              <a class="text-link" href={link.href}>
+                {link.label}
+                <ArrowUpRight size={18} aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        </div>
+      </details>
+    ))}
+  </div>
+</section>
