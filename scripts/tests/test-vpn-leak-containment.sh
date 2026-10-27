@@ -21,8 +21,10 @@ fi
 for tool in python3 ip wg nft tcpdump setpriv openssl cargo sysctl readlink; do
     command -v "$tool" >/dev/null || { echo "BLOCKED: missing prerequisite $tool" >&2; exit 1; }
 done
+output_parent=$(cd -- "$(dirname -- "$4")" && pwd -P)
+output="$output_parent/$(basename -- "$4")"
 # Build in the same environment as the fixture. Host/mismatched binaries do not
 # establish a tested real packet path. No packages are installed by this script.
 cd "$root"
 cargo build -p ssl-proxy --bin wg-obfs-shim --bin ssl-proxy --target-dir "$root/target"
-exec python3 "$validator" --run-linux "$4"
+exec python3 "$validator" --run-linux "$output"

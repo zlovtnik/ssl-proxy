@@ -323,6 +323,24 @@ VALUES ('00000000-0000-0000-0000-000000000010','proxy_blocked_host_window','wind
     def test_empty_identity_install_needs_no_maintenance_window(self):
         self.assertEqual(self.migration_upgrade(empty=True), "t")
 
+    def test_completed_identity_upgrade_does_not_lock_live_proxy_events(self):
+        holder = subprocess.Popen(
+            ["docker", "exec", "-i", self.container, "psql", "-X", "-qAt", "-U", "postgres",
+             "-d", "sync", "-v", "ON_ERROR_STOP=1"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            holder.stdin.write("BEGIN; LOCK TABLE octopus_core.proxy_events IN ROW EXCLUSIVE MODE; "
+                               "SELECT 'locked';\n")
+            holder.stdin.flush()
+            self.assertEqual(holder.stdout.readline().strip(), "locked")
+            migration = (ROOT / "sql/postgres/octopus_core/01_tables/021_proxy_evidence.sql").read_text()
+            self.sql("SET statement_timeout = '2s'; " + migration)
+        finally:
+            holder.stdin.write("ROLLBACK;\n")
+            holder.stdin.flush()
+            _, errors = holder.communicate(timeout=10)
+            self.assertEqual(holder.returncode, 0, errors)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -219,8 +219,8 @@ unmeasured for every memory finding.
   [correlation.rs](../services/atheros-sensor/src/parse/correlation.rs):54-61.
   One source/peer session can span retained history. Preserve its contract;
   reduce unused fields, duplicate lists and adjacent-token tuples first.
-- Full sequence token/text output still grows with sequence length. Exact
-  behavior distinct sets and exact timing distributions also need capacity;
+- Full sequence token/text output still grows with sequence length. Preserving
+  exact behavior, distinct sets, and exact timing distributions requires capacity;
   do not promise constant memory for every existing output.
 - Do not add an outer source-row LIMIT or truncate sessions. Those changes
   corrupt complete-group counts and late-arrival/replay detection.

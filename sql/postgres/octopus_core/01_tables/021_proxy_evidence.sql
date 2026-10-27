@@ -12,14 +12,23 @@ DECLARE
   retained_rows bigint;
   statement_budget interval := current_setting('statement_timeout')::interval;
 BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+      WHERE attrelid = 'octopus_core.proxy_events'::regclass
+        AND attname = 'observation_revision' AND NOT attisdropped)
+      AND to_regclass('octopus_core.proxy_events_observation_revision_uq') IS NOT NULL THEN
+    RETURN;
+  END IF;
   -- Fail promptly if live traffic has not drained for the approved window.
   PERFORM set_config('lock_timeout', '1s', true);
   LOCK TABLE octopus_core.proxy_events IN ACCESS EXCLUSIVE MODE;
-  IF (NOT EXISTS (SELECT 1 FROM pg_attribute
-        WHERE attrelid = 'octopus_core.proxy_events'::regclass
-          AND attname = 'observation_revision' AND NOT attisdropped)
-      OR to_regclass('octopus_core.proxy_events_observation_revision_uq') IS NULL)
-      AND EXISTS (SELECT 1 FROM octopus_core.proxy_events) THEN
+  -- Another executor may have completed the upgrade while this one waited.
+  IF EXISTS (SELECT 1 FROM pg_attribute
+      WHERE attrelid = 'octopus_core.proxy_events'::regclass
+        AND attname = 'observation_revision' AND NOT attisdropped)
+      AND to_regclass('octopus_core.proxy_events_observation_revision_uq') IS NOT NULL THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM octopus_core.proxy_events) THEN
     IF row_budget_text IS NULL OR row_budget_text !~ '^[0-9]{1,18}$'
         OR NULLIF(window_end_text, '') IS NULL THEN
       RAISE EXCEPTION 'proxy evidence upgrade requires reviewed proxy_evidence_max_rows and proxy_evidence_window_end';

@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -14,6 +15,39 @@ SPEC = importlib.util.spec_from_file_location(
 )
 VPN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VPN)
+
+
+class FixtureExecutablesTest(unittest.TestCase):
+    def test_staged_paths_do_not_depend_on_private_checkout_or_tmpdir(self):
+        with tempfile.TemporaryDirectory() as private:
+            checkout = Path(private)
+            binary = checkout / "target/debug/wg-obfs-shim"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"fixture shim")
+            script = checkout / "probe.py"
+            script.write_text("fixture probe")
+            with patch.object(VPN.sys, "platform", "linux"), \
+                    patch.object(VPN.os, "geteuid", return_value=0), \
+                    patch.object(VPN.LinuxFixture, "command", return_value=SimpleNamespace(stdout="fixture")), \
+                    patch.dict(os.environ, {"TMPDIR": str(checkout)}):
+                fixture = VPN.LinuxFixture(checkout / "results")
+            self.addCleanup(VPN.shutil.rmtree, fixture.temporary)
+            fixture.root, fixture.script = checkout, script
+            fixture.stage_executables()
+            self.assertFalse(fixture.temporary.is_relative_to(checkout))
+            for parent in (fixture.temporary, *fixture.temporary.parents):
+                self.assertTrue(parent.stat().st_mode & 0o001, str(parent))
+            self.assertEqual(fixture.shim_binary.read_bytes(), binary.read_bytes())
+            self.assertEqual(fixture.shim_binary.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(fixture.script.read_text(), script.read_text())
+            self.assertEqual(fixture.script.stat().st_mode & 0o777, 0o644)
+            fixture.background = Mock()
+            fixture.run = Mock(return_value=SimpleNamespace(stdout="{}"))
+            with patch.object(VPN.time, "sleep"):
+                fixture.start_shim()
+            self.assertEqual(fixture.background.call_args.args[1], [fixture.shim_binary])
+            fixture.probes("nonce")
+            self.assertIn(fixture.script, fixture.run.call_args.args)
 
 
 class PhysicalRecoveryTest(unittest.TestCase):

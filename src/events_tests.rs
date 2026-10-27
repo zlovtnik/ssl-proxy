@@ -93,11 +93,14 @@ fn frozen_proxy_envelopes_preserve_replay_ids_and_scan_contract() {
 }
 
 #[tokio::test]
-async fn http_failure_duration_is_not_response_header_latency() {
+async fn only_http_proxied_duration_is_response_header_latency() {
     let state = create_test_state().await;
     let mut rx = state.events_tx.subscribe();
     for (event_type, expected_status) in [
         ("http_error", "unavailable"),
+        ("http_blocked", "unavailable"),
+        ("tunnel_close", "unavailable"),
+        ("session.blocked", "unavailable"),
         ("http_proxied", "header_latency"),
     ] {
         emit_serializable(

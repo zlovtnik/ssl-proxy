@@ -109,7 +109,7 @@ reject selecting it in a build without that feature. Require verified server
 TLS and authenticated client admission before UDP socket/session allocation.
 
 Negotiate Extended CONNECT and H3 datagrams explicitly. A request's stream
-association/Quarter Stream ID and Context ID zero must be correct. Carry one
+association/QUIC stream ID and Context ID zero must be correct. Carry one
 unmodified WG packet per HTTP Datagram; never tunnel UDP in ordinary H3 DATA
 as a substitute. Implement required capsule/control processing with bounded
 length/skip logic, no unbounded buffering of unknown requests/contexts, and

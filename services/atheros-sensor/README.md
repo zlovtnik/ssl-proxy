@@ -123,6 +123,7 @@ cross-service contracts.
 cargo test -p atheros-sensor
 cargo clippy -p atheros-sensor -- -D warnings
 cargo build -p atheros-sensor
+cargo build --release -p atheros-sensor
 make dependency-boundaries
 ```
 

@@ -569,7 +569,11 @@ class LinuxFixture:
         self.output.mkdir(mode=0o700, parents=True, exist_ok=False)
         self.root = Path(__file__).resolve().parents[2]
         self.script = Path(__file__).resolve()
-        self.temporary = Path(tempfile.mkdtemp(prefix="vpn005-private-"))
+        # TMPDIR and the checkout may have parents inaccessible to fixture UIDs.
+        staging_parent = Path("/tmp").resolve()
+        require(all(path.stat().st_mode & 0o001 for path in (staging_parent, *staging_parent.parents)),
+                "fixture staging parents must permit unprivileged traversal")
+        self.temporary = Path(tempfile.mkdtemp(prefix="vpn005-private-", dir=staging_parent))
         os.chmod(self.temporary, 0o755)
         self.prefix = "v005-" + secrets.token_hex(4)
         self.namespaces = {}
@@ -614,7 +618,17 @@ class LinuxFixture:
             self.ip(namespace, "-6", "addr", "add", addr6, "dev", interface, "nodad")
             self.ip(namespace, "link", "set", interface, "up")
 
+    def stage_executables(self):
+        self.shim_binary = self.temporary / "wg-obfs-shim"
+        shutil.copyfile(self.root / "target/debug/wg-obfs-shim", self.shim_binary)
+        os.chmod(self.shim_binary, 0o755)
+        staged_script = self.temporary / "probe.py"
+        shutil.copyfile(self.script, staged_script)
+        os.chmod(staged_script, 0o644)
+        self.script = staged_script
+
     def setup(self):
+        self.stage_executables()
         for role in ("client", "router", "relay"):
             name = self.prefix + "-" + role
             self.command("ip", "netns", "add", name)
@@ -688,7 +702,7 @@ class LinuxFixture:
         env = {"PATH": os.environ["PATH"], "HOME": str(self.temporary), "RUST_LOG": "error",
                "WG_OBFUSCATION_KEY_FILE": str(self.temporary / "obfs.key"), "WG_OBFS_SERVER_ADDR": RELAY4 + ":443",
                "WG_OBFS_SHIM_LISTEN_ADDR": "127.0.0.1:51821"}
-        self.shim = self.background("client", [self.root / "target/debug/wg-obfs-shim"],
+        self.shim = self.background("client", [self.shim_binary],
                                     "shim-" + secrets.token_hex(3) + ".log", uid=65534, env=env)
         time.sleep(0.2)
 
