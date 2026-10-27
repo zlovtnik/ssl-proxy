@@ -21,24 +21,6 @@ identity. Traffic classification is heuristic and depends on the configured
 path. Collection scope and remaining risks are described in the
 [threat model](docs/threat-model.md).
 
-## Licensing status
-
-This repository currently has no repository-level license file. The previous
-MIT badge did not establish a license grant and has been removed. Licensing
-needs an explicit maintainer decision; component and dependency licenses must
-also be reviewed before distribution.
-
-The canonical runtime model and data ownership are documented in
-[System Architecture](docs/architecture.md). Kubernetes desired state lives
-only in [`cyber-stack/`](cyber-stack/). Production is reconciled by Argo CD.
-
-The public site, Search, Migrator and shared login use the
-[RCLabs dark theme](docs/rclabs-theme.md), with accessibility targets and
-manual evaluation tracked alongside the automated checks. The machine-readable
-palette source is [`theme/rclabs.tokens.json`](theme/rclabs.tokens.json); run
-`make theme-check` after token edits and `make theme-sync` to regenerate surface
-values.
-
 ## Component ownership
 
 | Component | Responsibility | Documentation |
