@@ -29,31 +29,18 @@ import ProjectStudies from '../../components/ProjectStudies.astro';
         </a>
       </div>
     </div>
-    <dl class="about-metrics" aria-label="Career and technical scope">
-      {about.metrics.map(([value, label, detail]) => (
-        <div>
-          <dt>{value}</dt>
-          <dd>
-            <strong>{label}</strong>
-            <span>{detail}</span>
-          </dd>
-        </div>
-      ))}
-    </dl>
   </section>
 
   <ProfessionalExperience />
 
-  <section class="section about-indexed-section" aria-labelledby="scope-title">
+  <section class="section" aria-labelledby="scope-title">
     <div class="about-section-header">
-      <p class="about-index">{about.scope.index}</p>
       <h2 id="scope-title">{about.scope.title}</h2>
     </div>
     <ol class="about-scope-grid">
-      {about.scope.domains.map((domain, index) => (
+      {about.scope.domains.map((domain) => (
         <li>
           <article>
-            <p class="about-item-index">0{index + 1}</p>
             <h3>{domain.title}</h3>
             <p>{domain.description}</p>
             <ul class="about-tags" aria-label={`${domain.title} technologies`}>
@@ -69,34 +56,8 @@ import ProjectStudies from '../../components/ProjectStudies.astro';
 
   <ProjectStudies />
 
-  <section
-    class="section about-indexed-section about-prose-section"
-    aria-labelledby="perspective-title"
-  >
+  <section class="section about-prose-section" aria-labelledby="contact-title">
     <div class="about-section-header">
-      <p class="about-index">{about.perspective.index}</p>
-      <h2 id="perspective-title">{about.perspective.title}</h2>
-    </div>
-    <div class="about-prose">
-      <p class="about-statement">{about.perspective.summary}</p>
-      <ol class="about-principles">
-        {about.perspective.principles.map(([title, description], index) => (
-          <li>
-            <span class="about-item-index">0{index + 1}</span>
-            <h3>{title}</h3>
-            <p>{description}</p>
-          </li>
-        ))}
-      </ol>
-    </div>
-  </section>
-
-  <section
-    class="section about-indexed-section about-prose-section"
-    aria-labelledby="contact-title"
-  >
-    <div class="about-section-header">
-      <p class="about-index">{about.contact.index}</p>
       <h2 id="contact-title">{about.contact.title}</h2>
     </div>
     <div class="about-prose">

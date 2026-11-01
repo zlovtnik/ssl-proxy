@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { guides, guidePath } from '../src/data/products';
 
 test('employers can review positioning, attributed experience and engineering evidence without JavaScript', async ({
   browser,
@@ -11,13 +12,7 @@ test('employers can review positioning, attributed experience and engineering ev
     const sectionOrder = await page
       .locator('main > section')
       .evaluateAll((sections) =>
-        sections
-          .slice(0, 6)
-          .map((section) =>
-            section.classList.contains('playground-section')
-              ? 'playground'
-              : section.id,
-          ),
+        sections.slice(0, 6).map((section) => section.id),
       );
     expect(sectionOrder).toEqual([
       'top',
@@ -25,7 +20,7 @@ test('employers can review positioning, attributed experience and engineering ev
       'selected-work',
       'technical-evidence',
       'products',
-      'playground',
+      'faq',
     ]);
 
     const experience = page.locator('#experience');
@@ -89,6 +84,19 @@ test('employers can review positioning, attributed experience and engineering ev
     );
     await expect(page.locator('#top a[href="/resume/"]')).toBeVisible();
     await expect(page.locator('#top a[href^="mailto:"]')).toBeVisible();
+    // The shortened homepage retains the complete guide navigation without JS.
+    for (const guide of guides) {
+      const link = page.locator('#guides').getByRole('link', {
+        name: guide.title,
+        exact: true,
+      });
+      await expect(link).toHaveAttribute('href', guidePath(guide.slug));
+      await link.click();
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+        guide.title,
+      );
+      await page.goBack();
+    }
   } finally {
     await context.close();
   }
@@ -139,7 +147,7 @@ test('the public resume is readable without an account or JavaScript', async ({
     const response = await page.goto('http://127.0.0.1:4323/resume/');
     expect(response?.status()).toBe(200);
     await expect(page.getByRole('heading', { level: 1 })).toContainText(
-      'Rafael Cardoso dos Santos',
+      'Rafael Cardoso',
     );
     const main = page.locator('main');
     await expect(main).toContainText(/professional experience/i);

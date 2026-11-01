@@ -1,4 +1,5 @@
 .astro/
+.playwright-mcp/
 test-results/
 playwright-report/
 review-artifacts/

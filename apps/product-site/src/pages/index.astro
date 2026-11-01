@@ -2,20 +2,15 @@
 import { ArrowRight, ArrowUpRight, Plus } from '@lucide/astro';
 import Layout from '../layouts/Layout.astro';
 import Contact from '../components/Contact.astro';
-import LandingPlayground from '../components/LandingPlayground';
-import ReviewPath from '../components/ReviewPath.astro';
 import ProductCards from '../components/ProductCards.astro';
 import ProjectStudies from '../components/ProjectStudies.astro';
 import ProfessionalExperience from '../components/ProfessionalExperience.astro';
 import HiringContact from '../components/HiringContact.astro';
 import {
   allProducts,
-  contact,
   email,
   author,
   home,
-  homeSections,
-  products,
   guides,
   guidePath,
   guideIndex,
@@ -24,7 +19,6 @@ import {
 } from '../data/products';
 import '../styles/landing.css';
 
-const { guide, reference, comparison, benchmark } = homeSections;
 const origin = new URL('/', Astro.site ?? Astro.url);
 // The portfolio publisher is a named person. This does not assert a company.
 const structuredData = {
@@ -82,9 +76,8 @@ const structuredData = {
       <p class="hero-note">{home.supporting}</p>
     </div>
     <div class="hero-outline" aria-label="Engineering review path">
-      {home.reviewPath.map((item, index) => (
+      {home.reviewPath.map((item) => (
         <a href={item.href}>
-          <span class="eyebrow">0{index + 1}</span>
           <div>
             <strong class="outline-title">{item.title}</strong>
             <p>{item.text}</p>
@@ -102,7 +95,6 @@ const structuredData = {
     aria-labelledby="technical-evidence-title"
   >
     <div class="section-heading">
-      <p class="eyebrow">SOURCE / TESTS / ATTRIBUTION</p>
       <h2 id="technical-evidence-title">{portfolio.evidence.title}</h2>
       <p>{portfolio.evidence.summary}</p>
     </div>
@@ -133,19 +125,11 @@ const structuredData = {
     <div class="section-heading split">
       <div>
         <p class="eyebrow">{home.productsEyebrow}</p>
-        <h2 id="products-title">
-          Follow the system
-          <br />
-          through its components.
-        </h2>
+        <h2 id="products-title">{home.productsTitle}</h2>
       </div>
-      <p>
-        Ingestion, search, and change review.
-        <br />
-        The same attention to evidence.
-      </p>
+      <p>{home.productsSummary}</p>
     </div>
-    <ProductCards preview />
+    <ProductCards />
     <div class="actions">
       <a class="text-link" href="/products/">
         Explore all projects <ArrowRight size={18} aria-hidden="true" />
@@ -153,455 +137,39 @@ const structuredData = {
     </div>
   </section>
 
-  <section class="playground-section" aria-labelledby="playground-title">
-    <div class="section-heading split">
-      <div>
-        <p class="eyebrow">{home.playground.eyebrow}</p>
-        <h2 id="playground-title">{home.playground.title}</h2>
-      </div>
-      <p>{home.playground.summary}</p>
-    </div>
-    <LandingPlayground client:load />
-  </section>
-
-  <section
-    id={guide.id}
-    class="section landing-guide"
-    aria-labelledby="guide-title"
-  >
-    <div class="section-heading">
-      <p class="eyebrow">{guide.eyebrow}</p>
-      <h2 id="guide-title">{guide.title}</h2>
-      <p>{guide.summary}</p>
-    </div>
-
-    <div class="landing-block">
-      <h3>{guide.checks.title}</h3>
-      <p>{guide.checks.summary}</p>
-      <ul class="landing-points">
-        {guide.checks.points.map(([title, text]) => (
-          <li>
-            <strong>{title}</strong>
-            <span>{text}</span>
-          </li>
-        ))}
-      </ul>
-      <p class="fine-print">{guide.checks.note}</p>
-    </div>
-
-    <div class="landing-block">
-      <h3>{guide.ordering.title}</h3>
-      <p>{guide.ordering.summary}</p>
-      <details class="landing-details">
-        <summary>
-          {guide.ordering.detailLabel}
-          <Plus size={18} aria-hidden="true" />
-        </summary>
-        <p class="landing-command">Directory and apply order</p>
-        <pre><code>{guide.ordering.tree}</code></pre>
-        {guide.ordering.files.map((file) => (
-          <>
-            <p class="landing-command">{file.path}</p>
-            <pre><code>{file.sql}</code></pre>
-          </>
-        ))}
-        <ul class="landing-list">
-          {guide.ordering.notes.map((note) => (
-            <li>{note}</li>
-          ))}
-        </ul>
-      </details>
-    </div>
-
-    <div class="landing-block">
-      <h3>{guide.preview.title}</h3>
-      <p>{guide.preview.summary}</p>
-      <details class="landing-details">
-        <summary>
-          {guide.preview.detailLabel}
-          <Plus size={18} aria-hidden="true" />
-        </summary>
-        {guide.preview.runs.map((run) => (
-          <>
-            <p class="landing-command">{run.command}</p>
-            <pre><code>{run.output}</code></pre>
-            <p class="fine-print">{run.note}</p>
-          </>
-        ))}
-      </details>
-    </div>
-
-    <div class="landing-block landing-block-wide">
-      <h3>{guide.separation.title}</h3>
-      <p>{guide.separation.summary}</p>
-      <div
-        class="landing-table-wrap"
-        role="region"
-        aria-labelledby="separation-caption"
-        tabindex="0"
-      >
-        <table class="landing-table">
-          <caption id="separation-caption">{guide.separation.caption}</caption>
-          <thead>
-            <tr>
-              {guide.separation.tableHead.map((head) => (
-                <th scope="col">{head}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {guide.separation.tableRows.map((row) => (
-              <tr>
-                <th scope="row">{row[0]}</th>
-                <td>{row[1]}</td>
-                <td>{row[2]}</td>
-                <td>{row[3]}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <ReviewPath />
-      <p class="fine-print">{guide.separation.risk}</p>
-    </div>
-
-    <div class="landing-block">
-      <h3>{guide.sample.title}</h3>
-      <p>{guide.sample.summary}</p>
-      <div class="actions">
-        <a class="button primary" href={guide.sample.primary.href}>
-          {guide.sample.primary.label}{' '}
-          <ArrowUpRight size={18} aria-hidden="true" />
-        </a>
-        <a class="text-link" href={guide.sample.secondary.href}>
-          {guide.sample.secondary.label}{' '}
-          <ArrowUpRight size={18} aria-hidden="true" />
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <section
-    id={reference.id}
-    class="section landing-reference"
-    aria-labelledby="reference-title"
-  >
-    <div class="section-heading">
-      <p class="eyebrow">{reference.eyebrow}</p>
-      <h2 id="reference-title">{reference.title}</h2>
-      <p>{reference.summary}</p>
-    </div>
-    <div class="landing-reference-list">
-      {reference.entries.map((entry) => (
-        <details class="landing-details">
-          <summary>
-            <h3>
-              {entry.term}
-              <Plus size={18} aria-hidden="true" />
-            </h3>
-          </summary>
-          <dl class="landing-definition">
-            <dt>In operation</dt>
-            <dd>{entry.meaning}</dd>
-            <dt>Example</dt>
-            <dd>{entry.example}</dd>
-            <dt>Does not prove</dt>
-            <dd>{entry.limit}</dd>
-          </dl>
-          <a class="text-link" href={entry.link.href}>
-            {entry.link.label} <ArrowRight size={18} aria-hidden="true" />
-          </a>
-        </details>
-      ))}
-    </div>
-  </section>
-
-  <section
-    id={comparison.id}
-    class="section landing-comparison"
-    aria-labelledby="comparison-title"
-  >
-    <div class="section-heading">
-      <p class="eyebrow">{comparison.eyebrow}</p>
-      <h2 id="comparison-title">{comparison.title}</h2>
-      <p>{comparison.summary}</p>
-    </div>
-    <div class="landing-block landing-block-wide">
-      <div
-        class="landing-table-wrap"
-        role="region"
-        aria-labelledby="migration-comparison-caption"
-        tabindex="0"
-      >
-        <table class="landing-table">
-          <caption id="migration-comparison-caption">
-            {comparison.caption}
-          </caption>
-          <thead>
-            <tr>
-              {comparison.tableHead.map((head) => (
-                <th scope="col">{head}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {comparison.tableRows.map((row) => (
-              <tr>
-                <th scope="row">{row[0]}</th>
-                <td>{row[1]}</td>
-                <td>{row[2]}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div class="landing-block">
-      <h3>{comparison.adequacy.title}</h3>
-      <p>{comparison.adequacy.summary}</p>
-      <ul class="landing-list">
-        {comparison.adequacy.points.map((point) => (
-          <li>{point}</li>
-        ))}
-      </ul>
-    </div>
-    <div class="landing-block landing-block-wide">
-      <h3>{comparison.atheros.title}</h3>
-      <p>{comparison.atheros.summary}</p>
-      <div
-        class="landing-table-wrap"
-        role="region"
-        aria-labelledby="atheros-comparison-caption"
-        tabindex="0"
-      >
-        <table class="landing-table">
-          <caption id="atheros-comparison-caption">
-            {comparison.atheros.caption}
-          </caption>
-          <thead>
-            <tr>
-              {comparison.atheros.tableHead.map((head) => (
-                <th scope="col">{head}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {comparison.atheros.tableRows.map((row) => (
-              <tr>
-                <th scope="row">{row[0]}</th>
-                <td>{row[1]}</td>
-                <td>{row[2]}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div class="landing-block">
-      <h3>{comparison.notes.title}</h3>
-      <details class="landing-details">
-        <summary>
-          {comparison.notes.detailLabel}
-          <Plus size={18} aria-hidden="true" />
-        </summary>
-        <p>{comparison.notes.summary}</p>
-        {comparison.notes.items.map((item) => (
-          <p>
-            <a class="text-link" href={item.href}>
-              {item.label} <ArrowUpRight size={18} aria-hidden="true" />
-            </a>
-          </p>
-        ))}
-        <p class="fine-print">{comparison.notes.close}</p>
-      </details>
-      <div class="actions">
-        <a class="button primary" href={comparison.cta.href}>
-          {comparison.cta.label} <ArrowUpRight size={18} aria-hidden="true" />
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <section
-    id={benchmark.id}
-    class="section landing-benchmark"
-    aria-labelledby="benchmark-title"
-  >
-    <div class="section-heading">
-      <p class="eyebrow">{benchmark.eyebrow}</p>
-      <h2 id="benchmark-title">{benchmark.title}</h2>
-      <p>{benchmark.summary}</p>
-    </div>
-    <div class="landing-block landing-block-wide">
-      <h3>{benchmark.modes.title}</h3>
-      <p>{benchmark.modes.summary}</p>
-      <div
-        class="landing-table-wrap"
-        role="region"
-        aria-labelledby="search-modes-caption"
-        tabindex="0"
-      >
-        <table class="landing-table">
-          <caption id="search-modes-caption">{benchmark.modes.caption}</caption>
-          <thead>
-            <tr>
-              {benchmark.modes.tableHead.map((head) => (
-                <th scope="col">{head}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {benchmark.modes.tableRows.map((row) => (
-              <tr>
-                <th scope="row">{row[0]}</th>
-                <td>{row[1]}</td>
-                <td>{row[2]}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div class="landing-block">
-      <h3>{benchmark.protocol.title}</h3>
-      <p>{benchmark.protocol.summary}</p>
-      <details class="landing-details">
-        <summary>
-          {benchmark.protocol.detailLabel}
-          <Plus size={18} aria-hidden="true" />
-        </summary>
-        <ul class="landing-list">
-          {benchmark.protocol.points.map((point) => (
-            <li>{point}</li>
-          ))}
-        </ul>
-      </details>
-    </div>
-    <div class="landing-block">
-      <h3>{benchmark.status.title}</h3>
-      <ul class="landing-list">
-        {benchmark.status.points.map((point) => (
-          <li>{point}</li>
-        ))}
-      </ul>
-      <div class="actions">
-        <a class="text-link" href={benchmark.status.sample.href}>
-          {benchmark.status.sample.label}{' '}
-          <ArrowUpRight size={18} aria-hidden="true" />
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <section
-    id="approach"
-    class="section landing-approach"
-    aria-labelledby="approach-title"
-  >
-    <div class="section-heading split">
-      <div>
-        <p class="eyebrow">HOW THEY WORK</p>
-        <h2 id="approach-title">The details stay visible.</h2>
-      </div>
-      <p>{home.approach}</p>
-    </div>
-    <div class="landing-principles">
-      <article>
-        <span class="principle-index">[ 01 / INVESTIGATE ]</span>
-        <h3>Evidence, with context.</h3>
-        <p>
-          An observed relationship is a lead to investigate. It does not confirm
-          an active connection or a device identity.
-        </p>
-      </article>
-      <article>
-        <span class="principle-index">[ 02 / REVIEW ]</span>
-        <h3>A plan you can inspect.</h3>
-        <p>
-          Offline checks and dry-run plans help you review a migration. SQL-file
-          snapshots preserve the files, not the database.
-        </p>
-      </article>
-      <article>
-        <span class="principle-index">[ 03 / EXPLORE ]</span>
-        <h3>Start with an interactive sample.</h3>
-        <p>{home.explore}</p>
-      </article>
-    </div>
-  </section>
   <section
     id="faq"
     class="section landing-faq"
     aria-labelledby="questions-title"
   >
     <div class="section-heading">
-      <p class="eyebrow">A FEW PRACTICAL QUESTIONS</p>
-      <h2 id="questions-title">Before you start.</h2>
-      <p>Know what you're exploring.</p>
+      <h2 id="questions-title">{home.faqTitle}</h2>
     </div>
     <div class="landing-faq-list">
-      <details>
-        <summary>
-          Who are these tools for?
-          <Plus size={18} aria-hidden="true" />
-        </summary>
-        <p>
-          {products.map((product) => (
-            <>
-              <strong>{product.name}</strong> {product.problem}{' '}
-            </>
-          ))}
-        </p>
-      </details>
-      <details>
-        <summary>
-          Do the products work together?
-          <Plus size={18} aria-hidden="true" />
-        </summary>
-        <p>{home.relationship}</p>
-      </details>
-      <details>
-        <summary>
-          Does Schema Migrator fix schema drift?
-          <Plus size={18} aria-hidden="true" />
-        </summary>
-        <p>
-          No. The drift check reports differences between the structure your SQL
-          files expect and the structure the live PostgreSQL catalog reports,
-          for a reviewed correction. Reading the catalog needs a target
-          connection; the file checks do not.
-        </p>
-      </details>
-      <details>
-        <summary>
-          Does the sample change anything?
-          <Plus size={18} aria-hidden="true" />
-        </summary>
-        <p>
-          No. The playground uses local, synthetic data. It does not connect to
-          your systems or execute SQL against a database.
-        </p>
-      </details>
-      <details>
-        <summary>
-          Can I try them with my own data?
-          <Plus size={18} aria-hidden="true" />
-        </summary>
-        <p>
-          This public site uses synthetic data only.{' '}
-          <a href="/demo/">{contact.cta}</a> to agree on the next step by email.
-        </p>
-      </details>
+      {home.faq.map((item) => (
+        <details>
+          <summary>
+            {item.question}
+            <Plus size={18} aria-hidden="true" />
+          </summary>
+          <p>{item.answer}</p>
+        </details>
+      ))}
     </div>
   </section>
   <section class="section" id="guides" aria-labelledby="guides-title">
+    <span id="approach" aria-hidden="true" />
+    <span id="postgres-migration-review" aria-hidden="true" />
+    <span id="technical-reference" aria-hidden="true" />
+    <span id="workflow-comparison" aria-hidden="true" />
+    <span id="search-benchmark" aria-hidden="true" />
     <div class="section-heading">
       <h2 id="guides-title">
         <a href="/guides/">{guideIndex.title}</a>
       </h2>
       <p>{guideIndex.summary}</p>
     </div>
-    <div class="feature-grid">
+    <div class="feature-grid guide-cards">
       {guides.map((item) => (
         <article>
           <h3>
@@ -636,7 +204,7 @@ const structuredData = {
   );
   document
     .querySelectorAll(
-      '#top, #experience, #selected-work, #technical-evidence, #products, #approach, #faq, #contact, #postgres-migration-review, #technical-reference, #workflow-comparison, #search-benchmark',
+      '#top, #experience, #selected-work, #technical-evidence, #products, #guides, #faq, #contact',
     )
     .forEach((section) => activeSections.observe(section));
 </script>

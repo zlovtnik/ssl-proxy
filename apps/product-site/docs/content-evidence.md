@@ -14,9 +14,10 @@ indicator and observation review, rather than an end-to-end ingestion run.
 Generated answers and new connectors are deferred. Operational measurements
 remain global unless explicitly scoped; unknown coverage is not readiness.
 
-The site is framed as Rafael Cardoso dos Santos's engineering portfolio.
-The owner confirmed that public name and `racasantos@icloud.com` privacy contact
-on 2026-10-14. The [about page](../src/pages/about/index.astro) links the
+The site is framed as Rafael Cardoso's engineering portfolio.
+The owner requested the shortened public name on 2026-10-31. The
+`racasantos@icloud.com` privacy contact was confirmed on 2026-10-14.
+The [about page](../src/pages/about/index.astro) links the
 [repository threat model](../../../docs/threat-model.md) and distinguishes
 implementation evidence, synthetic demonstrations, deployment observations, and
 unpublished customer or benchmark outcomes. Identity markup uses a person as
@@ -68,8 +69,7 @@ guide requires reviewing the original files alongside that incomplete preview.
 | Offline discovery, validation, and dry-run preview                  | [CLI commands](../../schema-migrator/src/main/scala/com/sslproxy/schema/cli/Commands.scala), [folder order](../../schema-migrator/src/main/scala/com/sslproxy/schema/discovery/FolderOrder.scala), [preview printer](../../schema-migrator/src/main/scala/com/sslproxy/schema/output/ReportPrinter.scala)                                                                | The preview prints ordered, single-line SQL cut after 120 characters; it is not an executable deployment script                        |
 | PostgreSQL catalog drift findings                                   | [Drift diff engine](../../schema-migrator/src/main/scala/com/sslproxy/schema/server/PostgresDriftDiffEngine.scala), [catalog reader](../../schema-migrator/src/main/scala/com/sslproxy/schema/server/PostgresCatalogReader.scala)                                                                                                                                        | Reports differences for review; it corrects nothing and reading the catalog needs a target connection                                  |
 | WireGuard ingress, transparent proxy handling, and traffic classes  | [Proxy service](../../../src/main.rs), [WireGuard configuration](../../../src/config.rs), [traffic classifier](../../../src/tunnel/classify.rs)                                                                                                                                                                                                                          | Classification is an operator review aid; it does not prove intent, prevent a connection, or cover traffic outside the configured path |
-| Six-term technical reference on the homepage                        | The evidence rows above and [Search documentation](../../integration-console/atheros-search/README.md)                                                                                                                                                                                                                                                                   | Each entry publishes what it does not prove beside the meaning                                                                         |
-| Search retrieval protocol for term, vector, and hybrid modes        | [Search documentation](../../integration-console/atheros-search/README.md), [fusion implementation](../../integration-console/atheros-search/internal/search/fusion.go)                                                                                                                                                                                                  | Protocol and status only: no measurement has been run, so no relevance, latency, or storage figure is published                        |
+| Search retrieval protocol for term, vector, and hybrid modes        | [Search documentation](../../integration-console/atheros-search/README.md), [fusion implementation](../../integration-console/atheros-search/internal/search/fusion.go)                                                                                                                                                                                                  | Synthetic ranks explain the method; no measured relevance, latency, or storage result is published                                     |
 
 ## Octopus operational evidence
 
@@ -107,12 +107,13 @@ no metadata-only, raw-capture-exclusion, fixed-retention, compliance, or
 coverage-completeness claim. Verify the deployed storage path and retention
 before making a more specific statement.
 
-Homepage technical sections render from `homeSections` in
-[`src/data/products.ts`](../src/data/products.ts): the migration review guide,
-the six-term reference, the workflow comparison, and the Search benchmark. The
-guide's command output was captured from a local sample directory with no
-production target, and the comparison cites the alternative-tool documentation it
-measures itself against instead of claiming compatibility or advantage.
+The homepage links to the six dedicated guides instead of repeating their
+technical chapters. Legacy topic fragments still reach the guide index.
+`migrationExamples` in [the content model](../src/data/products.ts) holds the
+SQL inputs and captured CLI output used by the dry-run guide. Those examples,
+guide bodies, caveats and source links were preserved during the editorial
+cleanup. Product cards use one factual summary; implementation detail lives on
+the product and guide routes.
 
 Copy follows [the messaging framework](messaging.md). That document records the
 component stories, the audience propositions, the portfolio scope, and the rule

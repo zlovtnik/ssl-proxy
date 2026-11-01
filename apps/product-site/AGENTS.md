@@ -16,6 +16,10 @@
   `docs/design-system.md` when adding copy or patterns; publish mechanisms, not
   savings, latency, or market claims. The two caveats, the contact labels, and
   the audience statements belong to that model, not to a route or a component.
+- Never use semicolons in public prose. Split sentences or rewrite them with
+  commas or conjunctions. Preserve punctuation required by code and SQL examples.
+- Use Rafael Cardoso as the public name across copy, metadata, structured data,
+  the resume, and the privacy notice.
 - `npm test` measures rendered text, control boundaries, and focus rings on every
   route in the shared dark theme. Keep new colours and controls inside those targets.
 - Dark is the only theme; ignore saved theme values and system colour preferences.

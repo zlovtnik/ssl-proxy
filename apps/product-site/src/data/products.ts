@@ -1,21 +1,33 @@
 export const email = 'rafael@rclabs.uk';
 
 export const author = {
-  name: 'Rafael Cardoso dos Santos',
+  name: 'Rafael Cardoso',
   profile: 'https://github.com/zlovtnik',
   privacyEmail: 'racasantos@icloud.com',
+} as const;
+
+export const accessibility = {
+  title: 'Accessibility',
+  summary:
+    'The site is being evaluated against WCAG 2.2 A, AA, and AAA criteria. I do not currently claim conformance.',
 } as const;
 
 export const hiring = {
   pageTitle: 'Contact Rafael.',
   pageSummary:
-    'Start a conversation about a full-time engineering role or choose a project discussion below. Each link opens an email; nothing is submitted through this site.',
+    'Email me about an engineering role or one of the projects below.',
+  eyebrow: 'CONTACT',
+  projectsTitle: 'Project questions',
+  projectsSummary:
+    'Choose a project to start an email. Hosted product access is not provisioned here.',
+  addressTitle: 'Email address',
+  addressSummary: 'You can also write to me directly.',
   cta: 'Contact for full-time roles',
   href: `mailto:${email}?subject=${encodeURIComponent('Full-time engineering role')}&body=${encodeURIComponent('Hello Rafael,\n\nI would like to discuss a full-time engineering role.\n\nCompany and role:\n\nEngineering scope:\n\nLocation / remote expectations:\n\nThank you.')}`,
   resume: { label: 'Read my resume', href: '/resume/' },
-  title: 'Discuss a full-time engineering role.',
+  title: 'Engineering roles',
   summary:
-    'For recruiters, engineering managers, and technical interviewers: email me about backend, distributed-systems, or data-platform roles. Include the role and engineering scope. Project discussions have their own links below.',
+    'I am interested in backend, distributed-systems, and data-platform roles. Send me the role, engineering scope, and location or remote expectations.',
 } as const;
 
 const octopusTests = 'services/octopus/src/test/scala/com/sslproxy/coordinator';
@@ -36,7 +48,7 @@ export const portfolio = {
   },
   workTitle: 'Selected engineering work',
   workSummary:
-    'Independent projects, separate from my Synchro employment. Start with the failure mode, then inspect the implementation and regression coverage. The links point to source and tests; they do not certify a current passing run.',
+    'Projects I built independently of my Synchro employment. Each includes a failure case, the implementation, and links to regression tests. Source links do not certify a current passing run.',
   projects: [
     {
       id: 'octopus',
@@ -47,11 +59,11 @@ export const portfolio = {
       failure:
         'A process can stop after a database write or broker acknowledgement but before progress is committed. Delivery repeats, while one failed record can sit beside healthy work in the same batch.',
       response:
-        'Persist scan-request state and ingestion evidence in one PostgreSQL transaction, reject changed payloads for an existing identity, and commit Kafka offsets only after durable handling. Restarts resume from committed group offsets. Stable dispatch keys and receiving-side deduplication tolerate the outbox acknowledgement/crash window; expiring fenced leases reclaim work without authorizing stale completion.',
+        'Persist scan-request state and ingestion evidence in one PostgreSQL transaction, reject changed payloads for an existing identity, and commit Kafka offsets only after durable handling. Restarts resume from committed group offsets. Stable dispatch keys and receiving-side deduplication tolerate the outbox acknowledgement/crash window. Expiring fenced leases reclaim work without authorizing stale completion.',
       tested:
         'Repository tests cover persisted processor state, duplicate replay, changed-payload rejection, concurrent outbox claims, healthy peers surviving a permanent result failure, and completion waiting for every batch. PostgreSQL integration tests require Docker and can skip when it is absent.',
       unverified:
-        'These tests do not establish recovery time or a complete broker/database/process-crash campaign. At-least-once delivery can repeat; there is no exactly-once or zero-loss guarantee. Live ledger counts do not establish capacity.',
+        'These tests do not establish recovery time or a complete broker/database/process-crash campaign. At-least-once delivery can repeat. There is no exactly-once or zero-loss guarantee. Live ledger counts do not establish capacity.',
       links: [
         {
           label: 'Persistence implementation',
@@ -117,13 +129,13 @@ export const portfolio = {
       built:
         'I built ordered SQL-file validation and planning, run records, and a review workflow that keeps offline checks separate from database execution.',
       failure:
-        'Ambiguous dependencies can produce an unsafe apply order; a failed or cancelled run can leave ownership behind and block recovery.',
+        'Ambiguous dependencies can produce an unsafe apply order. A failed or cancelled run can leave ownership behind and block recovery.',
       response:
         'Reject duplicate, missing, or cyclic dependencies before apply. Scope lock release to the protected action and cancel managed work so a started run can be recovered durably.',
       tested:
         'Repository tests cover invalid dependency plans, rejection before apply, lock release after failure, and cancellation releasing a started run for durable recovery.',
       unverified:
-        'Offline checks do not establish target permissions, lock behavior, or reversibility of arbitrary DDL. SQL-file snapshots preserve source files and checksums; they do not back up database data. The sample executes no SQL.',
+        'Offline checks do not establish target permissions, lock behavior, or reversibility of arbitrary DDL. SQL-file snapshots preserve source files and checksums. They do not back up database data. The sample executes no SQL.',
       links: [
         {
           label: 'Migration planning tests',
@@ -153,7 +165,7 @@ export const portfolio = {
       tested:
         'Repository tests cover exact suffix matches, fragmented blocked HTTP headers, per-request keepalive checks, missing SNI, and fragmented or incomplete TLS handshakes.',
       unverified:
-        'No Internet-wide classification accuracy, device-interoperability, or production-throughput claim. Traffic outside the configured path is not covered; the browser sample opens no VPN connection.',
+        'No Internet-wide classification accuracy, device-interoperability, or production-throughput claim. Traffic outside the configured path is not covered. The browser sample opens no VPN connection.',
       links: [
         {
           label: 'Classification implementation and tests',
@@ -168,9 +180,9 @@ export const portfolio = {
     },
   ],
   evidence: {
-    title: 'Inspect the evidence and its limits.',
+    title: 'Source, tests, and live readings',
     summary:
-      'Use the linked implementation and failure tests to assess the engineering. Keep these three sources of evidence separate.',
+      'The project code is public. Employer workload, project measurements, and browser examples describe different things.',
     categories: [
       {
         title: 'Historical employer work',
@@ -186,14 +198,14 @@ export const portfolio = {
       },
     ],
     metrics: {
-      label: 'Inspect live Octopus readings and measurement definitions',
+      label: 'Octopus metrics and measurement definitions',
       href: '/octopus/#operational-evidence',
     },
   },
 } as const;
 
 export const resume = {
-  title: 'Rafael Cardoso dos Santos - Resume',
+  title: 'Rafael Cardoso - Resume',
   role: 'Staff Platform and Distributed Systems Engineer',
   location: 'Portland, ME | Open to Remote / Hybrid',
   authorization: 'Authorized to work in the U.S. | No sponsorship required',
@@ -274,7 +286,7 @@ export const resume = {
     title: 'Independent engineering',
     period: 'September 2024 onward',
     summary:
-      'My independent platform work includes Octopus durable ingestion, Atheros Search retrieval and embedding workers, the Rust VPN / Proxy, and Schema Migrator. These projects are separate from Synchro employment; project activity is not employer workload or evidence of client adoption.',
+      'My independent platform work includes Octopus durable ingestion, Atheros Search retrieval and embedding workers, the Rust VPN / Proxy, and Schema Migrator. These projects are separate from Synchro employment. Project activity is not employer workload or evidence of client adoption.',
   },
   projects: [
     {
@@ -308,77 +320,45 @@ export const resume = {
 export const about = {
   title: 'About Rafael',
   description:
-    'Backend and distributed-systems engineering by Rafael Cardoso dos Santos, with an emphasis on enterprise integration, data platforms, and production infrastructure.',
+    'Rafael Cardoso: backend engineering, enterprise integrations, and independent data-platform projects.',
   eyebrow: 'STAFF PLATFORM AND DISTRIBUTED SYSTEMS ENGINEER',
   introduction:
-    '15+ years in backend platforms and enterprise integrations, progressing to Senior Staff Software Engineer at Synchro. I combine architecture and code reviews with hands-on platform delivery, observability, and production recovery.',
+    'I have spent 15+ years building backend platforms and enterprise integrations. At Synchro I progressed from Software Analyst to Senior Staff Software Engineer. This site documents my independent projects alongside that professional experience.',
   primaryCta: hiring.resume,
   secondaryCta: { label: 'GitHub profile', href: author.profile },
-  metrics: [
-    ['15+', 'Years', 'in production software engineering'],
-    [
-      '~20M',
-      'Synchro workload',
-      'weekly fiscal transactions; historical employer system',
-    ],
-    ['4', 'Domains', 'distributed systems, integration, data, security'],
-    ['6+', 'Languages', 'Java, Scala, Go, Rust, SQL, Python'],
-  ],
   scope: {
-    index: '_01',
-    title: 'Engineering scope',
+    title: 'What I work on',
     domains: [
       {
         title: 'Distributed systems',
         description:
-          'Durable message pipelines, offset-based deduplication, and failure recovery across Kafka-based architectures. Independent-project implementation and tests are linked below; employer workload is attributed separately.',
+          'Message pipelines, offset-based deduplication, and recovery after interrupted processing. Octopus is my current independent implementation.',
         tags: ['Kafka', 'Kubernetes', 'Go', 'Java'],
       },
       {
         title: 'Enterprise integration',
         description:
-          'End-to-end fiscal transaction processing across enterprise system boundaries. Correctness constraints, schema evolution under production load, and operational observability within regulatory requirements.',
+          'Fiscal integrations between Oracle ERP Cloud, electronic invoicing, and tax systems, including data validation and recovery from failed transactions.',
         tags: ['Java', 'Scala', 'Oracle', 'PostgreSQL'],
       },
       {
         title: 'Data platforms',
         description:
-          'Ingestion coordination, embedding pipelines, and search infrastructure. Measurement-first design: establish latency, relevance, and storage baselines before any optimization pass.',
+          'Ingestion, embedding workers, and keyword and vector search. Atheros Search exposes processing state and the records behind each result.',
         tags: ['PostgreSQL', 'Rust', 'Go'],
       },
       {
         title: 'Security and observability',
         description:
-          'Threat modeling for distributed deployments, authentication and role separation at service boundaries, artifact provenance via image digest pinning, and system-level observability for production diagnosis.',
+          'Service authentication, role separation, deployment threat models, image digest pinning, and telemetry for diagnosing production failures.',
         tags: ['MCP', 'Kubernetes', 'Cloud infrastructure'],
       },
     ],
   },
-  perspective: {
-    index: '_03',
-    title: 'Engineering perspective',
-    summary:
-      'Engineering quality comes from making the consequential assumptions visible before production discovers them for you.',
-    principles: [
-      [
-        'Make failure modes explicit',
-        'Write down ordering, delivery, and recovery assumptions before they become incidents.',
-      ],
-      [
-        'Protect system boundaries',
-        'Favor durable contracts, deduplication, and clear authentication separation over hidden application choreography.',
-      ],
-      [
-        'Apply engineering judgment broadly',
-        'Treat architecture, prioritization, and team design as connected systems problems.',
-      ],
-    ],
-  },
   contact: {
-    index: '_04',
     title: 'What I am looking for',
     summary:
-      'Roles where durable backend ownership intersects with technical strategy, team responsibility, and cross-functional scope.',
+      'A role where I can own backend systems, contribute to architecture, and work closely with an engineering team.',
     signals: [
       [
         'Role scope',
@@ -386,18 +366,18 @@ export const about = {
       ],
       [
         'Best environment',
-        'Organizations where the engineering foundation still matters and decisions can be inspected.',
+        'Teams that give engineers responsibility for design, delivery, and production support.',
       ],
       [
         'Useful conversations',
-        'Backend or data-platform architecture, engineering team structure, technical decision-making, AI systems, and distributed-systems security.',
+        'Backend and data-platform architecture, team structure, retrieval systems, and distributed-systems security.',
       ],
     ],
   },
-  evidenceTitle: 'Evidence boundaries',
+  evidenceTitle: 'About the examples',
   evidence:
-    'Source code and regression tests expose independent-project implementation choices. Public samples use synthetic records. Synchro workload is historical employer-system context reported in my resume. These sources do not establish customer adoption, measured customer outcomes, or service-level commitments.',
-  threatModel: 'Read the repository threat model and its remaining risks',
+    'The source and tests are from my independent projects. Browser samples use synthetic records. Synchro workload comes from my resume and describes the historical employer system. None establishes customer adoption or service-level commitments.',
+  threatModel: 'Repository threat model',
   threatModelHref:
     'https://github.com/zlovtnik/ssl-proxy/blob/main/docs/threat-model.md',
 } as const;
@@ -441,7 +421,7 @@ export const octopusMetrics = {
     title: 'Waiting for a production reading',
     loadingTitle: 'Loading production metrics',
     description:
-      'A fresh reading is needed to show processing and backlog. The public feed cannot currently confirm pipeline activity; this does not establish whether processing has stopped.',
+      'A fresh reading is needed to show processing and backlog. The public feed cannot currently confirm pipeline activity. This does not establish whether processing has stopped.',
     loadingDescription:
       'Fetching the latest production reading. Metrics appear once the response is validated.',
     retry: 'This page retries automatically while it is open.',
@@ -458,35 +438,35 @@ export const octopusMetrics = {
   method: [
     'Pipeline readings refresh every 30 seconds. When live collection is delayed, the latest recorded totals and hourly history remain visible with their original measurement times. The page retries automatically and keeps a validated public snapshot in this browser for later visits. No example values or build-time snapshots are used.',
     'The processing rate covers successfully committed broker deliveries at the responding coordinator, averaged over five minutes, including replays and parked records. Pending ledger rows and broker backlog are separate measurements. Live gauges appear once the rate window and collection are ready.',
-    'Historical peaks count rows in the production ingestion ledger across all paths and outcomes. They are not unique business events or a capacity benchmark. Days use UTC; weeks run Monday to Sunday. Current periods are counted so far. History is refreshed separately, with its own measurement time.',
-    'Lifetime totals and hourly throughput windows count rows in the same ingestion ledger. The last-24-hours window holds 24 measured hourly totals and the last-7-days window holds 168. A measured hour may honestly be zero; a window that was never computed stays unavailable instead of showing zeros.',
+    'Historical peaks count rows in the production ingestion ledger across all paths and outcomes. They are not unique business events or a capacity benchmark. Days use UTC. Weeks run Monday to Sunday. Current periods are counted so far. History is refreshed separately, with its own measurement time.',
+    'Lifetime totals and hourly throughput windows count rows in the same ingestion ledger. The last-24-hours window holds 24 measured hourly totals and the last-7-days window holds 168. A measured hour may honestly be zero. A window that was never computed stays unavailable instead of showing zeros.',
   ],
 } as const;
 
 export const octopusContact = {
-  eyebrow: 'EVENT PROCESSING / STATE RECOVERY',
-  headline: ['Discuss your', 'pipeline setup.'],
+  eyebrow: 'CONTACT',
+  headline: ['Questions about', 'your pipeline?'],
   supporting:
-    'Walk through your stream topology, state bottlenecks, and recovery challenges with an engineer. Tell us your failure modes and operational goals so we can discuss the next step.',
-  link: 'Talk with an engineer',
+    'Email me about your streams, processing bottlenecks, or recovery problems. Include the failure you are trying to understand.',
+  link: 'Email Rafael',
 } as const;
 
 export const home = {
   // Google rewrites and truncates titles; this is an editorial target, not a
   // ranking rule. The homepage shares one title and description with Layout.
-  title: 'Rafael Cardoso dos Santos | Backend & Data Platforms',
+  title: 'Rafael Cardoso | Backend & Data Platforms',
   description:
-    'Backend and distributed-systems engineer Rafael Cardoso dos Santos: Synchro experience, independent project contributions, source and failure tests, resume, and full-time engineering contact.',
+    'Backend and distributed-systems engineer Rafael Cardoso: Synchro experience, independent project contributions, source and failure tests, resume, and full-time engineering contact.',
   headline: ['Backend engineering.', 'Distributed systems.'],
   subheadline:
-    "I'm Rafael Cardoso dos Santos, a backend and distributed-systems engineer with 15+ years in enterprise integration. At Synchro I designed fiscal data flows and guided engineering teams. My independent work makes persistence, replay, and partial-failure recovery inspectable in source and tests.",
+    'I build backend services and data pipelines. At Synchro (2011-2024), I designed fiscal integrations and guided engineering teams. Below are my independent projects.',
   primaryCta: {
-    label: 'Review selected engineering work',
+    label: 'Selected work',
     href: '#selected-work',
   },
   secondaryCta: hiring.resume,
   supporting: portfolio.audience,
-  eyebrow: 'RCLABS / ENGINEERING PORTFOLIO',
+  eyebrow: 'RAFAEL CARDOSO / RCLABS',
   reviewPath: [
     {
       title: 'Professional experience',
@@ -499,36 +479,51 @@ export const home = {
       href: '#selected-work',
     },
     {
-      title: 'Verifiable evidence',
-      text: 'Source, tests, and separately attributed project readings.',
+      title: 'Source and tests',
+      text: 'Implementation, regression tests, and Octopus metrics.',
       href: '#technical-evidence',
     },
   ],
-  productsEyebrow: 'PRODUCT DOCUMENTATION / RAG BUILDERS AND OPERATORS',
-  playground: {
-    eyebrow: 'THE PLAYGROUND',
-    title: 'Take a closer look.',
-    summary:
-      'Explore synthetic Search, Migrator, and VPN / Proxy samples. Every interaction stays in your browser. Octopus has a separate operational evidence page.',
-  },
+  productsEyebrow: 'PROJECT DOCUMENTATION',
+  productsTitle: 'The projects',
+  productsSummary:
+    'Search, ingestion, network observations, and SQL change review. The documentation is for RAG builders and operators.',
   relationship:
-    'Atheros Search brings retrieval, ingestion visibility, and source readiness into one authenticated console. Octopus coordinates durable ingestion; the proxy and sensor produce observations. Schema Migrator is companion tooling. Public samples run independently in your browser.',
-  approach:
-    'Follow the Atheros Search workflow through focused components, with source observations and measurement limits visible.',
-  explore:
-    'Try product samples with synthetic records in your browser, or review Octopus operational evidence. No account or production connection required.',
+    'Atheros Search brings retrieval, ingestion visibility, and source readiness into one authenticated console. Octopus coordinates durable ingestion. The proxy and sensor produce observations. Schema Migrator is companion tooling. Public samples run independently in your browser.',
+  faqTitle: 'Practical questions',
+  faq: [
+    {
+      question: 'Do the samples use real data or change anything?',
+      answer:
+        'The Search, Migrator, and VPN / Proxy samples use synthetic records in your browser. They execute no SQL, open no VPN connection, and change no production systems. Octopus separately loads public production metrics.',
+    },
+    {
+      question: 'How do the projects fit together?',
+      answer:
+        'The proxy and sensor produce observations. Octopus records and processes them. Atheros Search indexes and retrieves them. Schema Migrator is companion tooling for reviewing SQL changes.',
+    },
+    {
+      question: 'Does Schema Migrator fix database drift?',
+      answer:
+        'It reports differences for review. Corrections require a separate migration. Catalog checks need a database connection and cover selected object definitions and table presence. Column definitions and nullability are outside comparison scope.',
+    },
+    {
+      question: 'Can I discuss my own data or deployment?',
+      answer:
+        'Email me with the project, environment, and constraints you want to discuss. The contact page has project-specific email links.',
+    },
+  ],
 } as const;
 
 export const catalogue = {
   title: 'Projects',
   description:
     'Explore Atheros Search, its proxy and Octopus ingestion components, and companion Schema Migrator tooling by input, responsibility, and output.',
-  headline: ['Explore the system', 'and its tools.'],
+  headline: ['Projects and', 'documentation'],
   summary:
-    'Start with Atheros Search, then follow the proxy and Octopus ingestion path. Schema Migrator is companion tooling for database change review. Each page includes implementation details and operating limits.',
-  comparisonTitle: 'One retrieval workflow. Focused responsibilities.',
-  comparisonSummary:
-    'Compare what goes in, what happens, and what you can review afterward.',
+    'Atheros Search retrieves observations produced by the proxy and sensor and processed by Octopus. Schema Migrator is separate tooling for SQL change review.',
+  comparisonTitle: 'Responsibilities',
+  comparisonSummary: 'Each component has a different input and output.',
 } as const;
 
 export const searchComponents = [
@@ -543,45 +538,10 @@ export const searchComponents = [
   },
 ] as const;
 
-// Homepage technical sections. Reference entries, capability tables and the
-// benchmark protocol are rendered from this reviewed structure at build time.
-// Only distinct information is published: no generated keyword variants. The
-// benchmark publishes protocol until results are measured; synthetic examples
-// are never reported as performance evidence.
-export const homeSections = {
-  guide: {
-    id: 'postgres-migration-review',
-    eyebrow: 'INTEGRATION GUIDE / POSTGRESQL',
-    title: 'Review PostgreSQL migrations before execution.',
-    summary:
-      'Reviewers need to inspect the SQL and the execution order before anything is applied. This guide runs a two-file sample directory through the offline commands, then separates what those commands establish from what they cannot.',
-    checks: {
-      title: 'What an offline dry run checks',
-      summary:
-        'File validation and planning read a directory. They do not connect to PostgreSQL.',
-      points: [
-        [
-          'Files only',
-          'list, validate, and --dry-run apply read SQL files: discovery order, required headers, declared dependencies, and SQL parsing.',
-        ],
-        [
-          'Target inspection',
-          'drift-check and apply open a PostgreSQL connection to read a live catalog or change it. They are separate steps with separate evidence.',
-        ],
-        [
-          'Boundary',
-          'Offline validation does not guarantee successful execution. Permissions, locks, and data-dependent failures only appear when SQL runs.',
-        ],
-      ],
-      note: 'Prerequisites: a JDK, sbt, and a directory of SQL files. The offline commands need no credentials, and every command below ran against a local sample with no production target.',
-    },
-    ordering: {
-      title: 'Define the SQL files and execution order',
-      summary:
-        'Order comes from the supported folder sequence and the dependencies each file declares, not from an arbitrary filename.',
-      detailLabel:
-        'Show the directory, the SQL files, and how order is decided',
-      tree: `sql/
+// Captured SQL inputs and CLI output used by the migration dry-run guide.
+const migrationExamples = {
+  ordering: {
+    tree: `sql/
   extensions/
   schemas/
   types/
@@ -591,10 +551,10 @@ export const homeSections = {
   views/
   cron/
   materialized_views/`,
-      files: [
-        {
-          path: 'tables/001_observations.sql',
-          sql: `-- object: observations
+    files: [
+      {
+        path: 'tables/001_observations.sql',
+        sql: `-- object: observations
 -- folder: tables
 -- depends_on: -
 create table if not exists observations (
@@ -602,370 +562,57 @@ create table if not exists observations (
   source text not null,
   observed_at timestamptz not null
 );`,
-        },
-        {
-          path: 'indexes/002_observed_at.sql',
-          sql: `-- object: observations observed_at index
+      },
+      {
+        path: 'indexes/002_observed_at.sql',
+        sql: `-- object: observations observed_at index
 -- folder: indexes
 -- depends_on: observations
 create index if not exists observations_observed_at_idx
   on observations (observed_at desc);`,
-        },
-      ],
-      notes: [
-        'For PostgreSQL the folder sequence is extensions, schemas, types, tables, indexes, functions, views, cron, then materialized_views. Files sort by name inside a folder, so the table file runs before its index file. A filename alone never moves a file in front of an earlier folder.',
-        'Every file carries -- object, -- folder, and -- depends_on headers. A missing or ambiguous dependency is reported as a validation error, so an ordering mistake surfaces before execution.',
-        'A directory that holds a manifest (core/manifest.yaml) uses its apply_order list instead of folder sorting, and SQL files not listed there are reported as ignored.',
-        'Folders in the sequence that hold no files still need to exist; otherwise discovery reports each missing folder as a warning.',
-      ],
-    },
-    preview: {
-      title: 'Validate the files and inspect the dry-run preview',
-      summary:
-        'Three commands cover discovery, validation, and the preview. Each output below was captured from the sample directory.',
-      detailLabel: 'Show the commands and their captured output',
-      runs: [
-        {
-          command: 'sbt "run --db-kind postgres --sql-dir ./sql list"',
-          output: `tables/001_observations.sql
+      },
+    ],
+  },
+  preview: {
+    runs: [
+      {
+        command: 'sbt "run --db-kind postgres --sql-dir ./sql list"',
+        output: `tables/001_observations.sql
 indexes/002_observed_at.sql`,
-          note: 'Discovery prints files in apply order. No database is contacted.',
-        },
-        {
-          command: 'sbt "run --db-kind postgres --sql-dir ./sql validate"',
-          output: `warning: tables/001_observations.sql: expected 'CREATE TABLE IF NOT EXISTS' for idempotency`,
-          note: 'Findings are reported per file with the path that produced them. A clean directory prints nothing and exits 0, and warnings do not fail the run.',
-        },
-        {
-          command: 'sbt "run --db-kind postgres --sql-dir ./sql validate"',
-          output: `error: tables/002_broken.sql: SQL parsing check failed (unterminated single-quoted string)`,
-          note: 'An invalid file is reported with its path and the run exits non-zero, so a pipeline can stop before any execution is attempted.',
-        },
-        {
-          command:
-            'sbt "run --db-kind postgres --sql-dir ./sql --dry-run apply"',
-          output: `tables/001_observations.sql                      -- object: observations -- folder: tables -- depends_on: - create table if not exists observations ( id bigint primary ...
+        note: 'Discovery prints files in apply order. No database is contacted.',
+      },
+      {
+        command: 'sbt "run --db-kind postgres --sql-dir ./sql validate"',
+        output: `warning: tables/001_observations.sql: expected 'CREATE TABLE IF NOT EXISTS' for idempotency`,
+        note: 'Findings are reported per file with the path that produced them. A clean directory prints nothing and exits 0, and warnings do not fail the run.',
+      },
+      {
+        command: 'sbt "run --db-kind postgres --sql-dir ./sql validate"',
+        output: `error: tables/002_broken.sql: SQL parsing check failed (unterminated single-quoted string)`,
+        note: 'An invalid file is reported with its path and the run exits non-zero, so a pipeline can stop before any execution is attempted.',
+      },
+      {
+        command: 'sbt "run --db-kind postgres --sql-dir ./sql --dry-run apply"',
+        output: `tables/001_observations.sql                      -- object: observations -- folder: tables -- depends_on: - create table if not exists observations ( id bigint primary ...
 indexes/002_observed_at.sql                      -- object: observations observed_at index -- folder: indexes -- depends_on: observations create index if not exists obs...`,
-          note: 'The preview prints each path with its SQL compacted to one line and cut after 120 characters. The current CLI shows ordered, shortened previews, not a complete executable deployment script.',
-        },
-      ],
-    },
-    separation: {
-      title: 'Separate file changes, catalog drift and execution risk',
-      summary:
-        'Three different questions use three different inputs. Keeping them apart is what makes a review readable.',
-      caption:
-        'Four checks, what each one reads, and what each one establishes.',
-      tableHead: ['Check', 'Reads', 'Needs a target', 'Establishes'],
-      tableRows: [
-        [
-          'File discovery and validation',
-          'SQL directory and ordering configuration',
-          'No',
-          'Files parse, headers and dependencies resolve, and the apply order is deterministic.',
-        ],
-        [
-          'Dry-run preview',
-          'Validated files',
-          'No',
-          'The ordered, shortened SQL that would be submitted for review.',
-        ],
-        [
-          'PostgreSQL catalog drift',
-          'Live catalog and expected definitions',
-          'Yes',
-          'Expected versus observed structure, reported as differences for review.',
-        ],
-        [
-          'Execution',
-          'Target connection and credentials',
-          'Yes',
-          'What actually ran. Permissions, locks, and data-dependent failures appear here.',
-        ],
-      ],
-      risk: 'Drift inspection reports differences; it corrects nothing on its own. A migration-file checksum establishes that a file changed, not what the database looks like now. Only a rehearsal against a non-production target covers permission, lock, and data-dependent failures.',
-    },
-    sample: {
-      title: 'Inspect a sample migration review',
-      summary:
-        'The browser demonstration runs on synthetic records. It shows the shape of a review, executes no SQL, and connects to no database.',
-      primary: {
-        label: 'Explore a sample migration review.',
-        href: '/schema-migrator/#demo',
-      },
-      secondary: {
-        label: 'Discuss your PostgreSQL review workflow.',
-        href: '/demo/#migrator',
-      },
-    },
-  },
-  reference: {
-    id: 'technical-reference',
-    eyebrow: 'TECHNICAL REFERENCE',
-    title: 'Six technical terms and what they do not prove.',
-    summary:
-      'Security and migration decisions depend on what evidence can establish. Each entry gives the meaning, an example, and its limits.',
-    entries: [
-      {
-        term: 'Migration checksum mismatch',
-        meaning:
-          'A SHA-256 calculated from a SQL file no longer matches the value stored with it, so the file changed after it was recorded in a snapshot or run.',
-        example:
-          'A snapshot comparison reports the path as changed with the checksum before and after. Added and removed files use the same comparison.',
-        limit:
-          'It says nothing about the structure of a live database. A checksum is calculated over files, not over catalog objects.',
-        link: {
-          label: 'Inspect SQL-file snapshots in the sample',
-          href: '/schema-migrator/#demo',
-        },
-      },
-      {
-        term: 'PostgreSQL catalog drift',
-        meaning:
-          'A difference between the structure your files and control records expect and the structure the live PostgreSQL catalog reports. Findings are typed as missing, untracked, definition changed, or pending control state.',
-        example:
-          'An index listed in the manifest but absent from the catalog is reported as missing. A tracked index with a different definition is reported as changed.',
-        limit:
-          'It corrects nothing. Drift inspection reports differences for a reviewed correction, and reading the catalog requires a target connection.',
-        link: {
-          label: 'See how file checks and drift are separated',
-          href: '/#postgres-migration-review',
-        },
-      },
-      {
-        term: 'Dry-run preview',
-        meaning:
-          'The output of --dry-run apply: every discovered file path followed by a shortened preview of its SQL, printed in apply order without contacting a target.',
-        example:
-          'Whitespace is collapsed to one line and the text stops after 120 characters with an ellipsis, so long statements are visible but not complete.',
-        limit:
-          'It is not a complete executable deployment script, and it proves nothing about how the same SQL behaves against a real database.',
-        link: {
-          label: 'Read the captured preview',
-          href: '/#postgres-migration-review',
-        },
-      },
-      {
-        term: 'Configured wireless indicator',
-        meaning:
-          'A sensor heuristic that flags a wireless pattern for an analyst to review, such as a suspected rogue access point, deauthentication flood, signal anomaly, attack sequence, or PMF-related pattern.',
-        example:
-          'A sample access point advertises an SSID that resembles a configured network name, so the sensor raises an indicator for review.',
-        limit:
-          'The configured heuristic raises a lead; it does not prove a successful attack, establish complete threat coverage, or replace analyst judgment.',
-        link: {
-          label: 'Review a synthetic wireless indicator',
-          href: '/atheros-search/#demo',
-        },
-      },
-      {
-        term: 'Observed relationship',
-        meaning:
-          'A link between records that observations support: a device seen with an access point, or two events sharing a recorded identifier.',
-        example:
-          'Observed Wi-Fi identifier 07 appeared in a synthetic beacon observation associated with a sample site.',
-        limit: searchCaveat,
-        link: {
-          label: 'Follow a relationship in the sample',
-          href: '/atheros-search/#demo',
-        },
-      },
-      {
-        term: 'SQL-file snapshot',
-        meaning:
-          'A saved set of SQL source files with their SHA-256 checksums, kept so a later reviewer can compare what changed between two points in time.',
-        example:
-          'Two snapshots compare per path as added, removed, or changed, with the checksum recorded on each side.',
-        limit: migratorCaveat,
-        link: {
-          label: 'Compare files in the sample',
-          href: '/schema-migrator/#demo',
-        },
+        note: 'The preview prints each path with its SQL compacted to one line and cut after 120 characters. The current CLI shows ordered, shortened previews, not a complete executable deployment script.',
       },
     ],
-  },
-  comparison: {
-    id: 'workflow-comparison',
-    eyebrow: 'ARCHITECTURE COMPARISON',
-    title: 'Schema Migrator versus manually reviewed SQL.',
-    summary:
-      'Both paths can review a change. This comparison lists what each one assembles, and where the manual workflow is already sufficient.',
-    caption:
-      'How Schema Migrator and a manually reviewed SQL workflow handle each stage.',
-    tableHead: ['Stage', 'Schema Migrator', 'Manually reviewed SQL'],
-    tableRows: [
-      [
-        'File discovery',
-        'Reads a fixed folder sequence or a manifest and lists the files it found.',
-        'A reviewer lists the files and keeps the order in conventions or notes.',
-      ],
-      [
-        'Ordering',
-        'Folder sequence plus declared dependencies; a missing or ambiguous dependency is an error.',
-        'Convention and reviewer memory; an ordering mistake surfaces in review or during execution.',
-      ],
-      [
-        'Validation',
-        'Offline parse, header, and idempotency checks reported per file as warnings or errors.',
-        'Each file is read by a reviewer, so coverage depends on attention and time.',
-      ],
-      [
-        'Target-state checks',
-        'PostgreSQL catalog drift check compares expected definitions with the live catalog.',
-        'Scripts are compared with the database by hand, or the comparison is skipped.',
-      ],
-      [
-        'Execution',
-        'Connection checks, guarded apply, and a dry run that prints before anything runs.',
-        'SQL runs through psql or another migration tool chosen outside this service.',
-      ],
-      [
-        'Retained evidence',
-        'Run records, audit rows, and SQL-file snapshots with checksums for later comparison.',
-        'Review history and comments; execution history is partial or reconstructed.',
-      ],
-    ],
-    adequacy: {
-      title: 'Where a manual review is enough',
-      summary:
-        'Adoption is not the point of this section. Keep the workflow you have when it already covers the case.',
-      points: [
-        'A small number of infrequent changes where one reviewer already reads every file end to end.',
-        'A pipeline whose run history, rollback story, and audit trail already satisfy your change-review process.',
-        'A review that must stay inside existing tooling. The file checks above need no target connection to evaluate.',
-      ],
-    },
-    atheros: {
-      title: 'Atheros Search / wireless indicators in site context',
-      summary:
-        'A synthetic review path shows how a monitored site, a configured wireless indicator, and its supporting observations fit together.',
-      caption:
-        'Illustrative path from a monitored site to an indicator and supporting wireless observation.',
-      tableHead: [
-        'Stage',
-        'What the sample shows',
-        'What it does not establish',
-      ],
-      tableRows: [
-        [
-          'Site scope',
-          'A sensor location label and the wireless records associated with it.',
-          'Complete coverage of the physical site or every device there.',
-        ],
-        [
-          'Indicator',
-          'A configured sensor heuristic, such as a suspected rogue access point or deauthentication pattern.',
-          'Proof of a successful attack or a confirmed threat.',
-        ],
-        [
-          'Observation',
-          'Supporting wireless audit records with their observed time and channel.',
-          'A current connection or a known physical device identity.',
-        ],
-        [
-          'Analyst review',
-          'An inspectable example that keeps the indicator beside its evidence.',
-          'An end-to-end site dashboard in the current production console.',
-        ],
-      ],
-    },
-    notes: {
-      title: 'Evaluation notes',
-      detailLabel: 'Show the references this page relies on',
-      summary:
-        'Alternative-tool questions are evaluation questions, so this page answers them plainly.',
-      items: [
-        {
-          label: 'Flyway documents migration dry runs',
-          href: 'https://documentation.red-gate.com/fd/migration-command-dry-runs-275218517.html',
-        },
-        {
-          label:
-            'Elasticsearch documents explanations for reciprocal rank fusion',
-          href: 'https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion#explain-in-rrf',
-        },
-        {
-          label:
-            'Google identifies scaled low-value content and doorway pages as spam',
-          href: 'https://developers.google.com/search/docs/essentials/spam-policies',
-        },
-      ],
-      close:
-        'We claim no drop-in compatibility, no performance advantage, and no unique dry-run feature. The last reference is why this page publishes four distinct sections instead of generated keyword variants.',
-    },
-    cta: { label: 'Discuss your review workflow.', href: '/demo/' },
-  },
-  benchmark: {
-    id: 'search-benchmark',
-    eyebrow: 'BENCHMARK REPORT / STATUS',
-    title: 'Term, vector and hybrid search on network observations.',
-    summary:
-      'One dataset, one labelled query set, three retrieval modes. The protocol is published now; numbers follow only once they are measured.',
-    modes: {
-      title: 'What is compared',
-      summary:
-        'All three modes read the same records, so a difference in results comes from retrieval rather than from different data.',
-      caption: 'The three retrieval modes read the same records.',
-      tableHead: ['Mode', 'How it retrieves', 'Queries in the labelled set'],
-      tableRows: [
-        [
-          'Term (sparse)',
-          'Matches terms present in the record text.',
-          'Exact identifiers such as a device or access-point name.',
-        ],
-        [
-          'Vector (dense)',
-          'Matches meaning with 768-dimension embeddings.',
-          'Paraphrases that share no terms with the record.',
-        ],
-        [
-          'Hybrid',
-          'Blends term and vector results; ATHSEARCH_HYBRID_ALPHA defaults to 0.5.',
-          'Filtered investigations and questions mixing identifiers with description.',
-        ],
-      ],
-    },
-    protocol: {
-      title: 'Methodology',
-      summary:
-        'Everything needed to reproduce a run, published together with the results.',
-      detailLabel: 'Show the measurement protocol',
-      points: [
-        'One versioned dataset, frozen before measurement, covering wireless, device, and proxy observations.',
-        'A labelled query set with exact identifiers, paraphrases, filtered investigations, and no-match cases.',
-        'Relevance metrics computed against the labels, plus p50 and p95 latency, storage footprint, hardware, embedding model, and the full test configuration.',
-        'Raw results and the reproducible method published side by side, with limitations stated next to the figures.',
-      ],
-    },
-    status: {
-      title: 'Status and limitations',
-      points: [
-        'No relevance, latency, or storage figures appear here yet, because measurement has not been run.',
-        'The interactive samples on this site are synthetic demonstrations. Synthetic examples are not performance evidence.',
-        'Atheros Search investigates wireless, device, and proxy observations; generic hybrid retrieval and explanations are not claimed as unique.',
-      ],
-      sample: {
-        label: 'Open the Search sample',
-        href: '/atheros-search/#demo',
-      },
-    },
   },
 } as const;
 
 // Shared section structure, with each product's story kept in its own model.
 const workflowSection = { label: 'HOW IT WORKS' } as const;
 const audienceSection = {
-  label: 'AUDIENCE VALUE',
-  note: 'Both readings are published openly. Choose the one that matches your question.',
+  label: 'USING THE SOFTWARE',
 } as const;
 const evidenceSection = {
-  label: 'SUPPORTING CAPABILITY EVIDENCE',
-  title: 'Mechanisms you can inspect.',
-  note: 'These are working behaviours of the product, not projected savings, latency, or market claims.',
+  label: 'IMPLEMENTATION',
+  title: 'Implementation details',
 } as const;
 const glossarySection = {
   label: 'GLOSSARY',
-  title: 'A few terms, made clear.',
+  title: 'Terms',
 } as const;
 
 export const products = [
@@ -975,29 +622,30 @@ export const products = [
     path: '/atheros-search/',
     label: 'INGESTION / INDEXING / EVIDENCE RETRIEVAL',
     homeTitle: 'Atheros Search',
-    headline: ['Trace ingestion.', 'Retrieve the evidence.'],
+    headline: ['Search over', 'source observations.'],
+    cardSummary:
+      'Go service and console for keyword and vector search over proxy and wireless observations.',
     summary:
-      'Atheros Search gives RAG builders and operators one workbench for evidence retrieval, indexing readiness, and ingestion visibility across configured proxy and wireless observations. Inspect source records and processing state before using retrieved evidence downstream.',
+      'Atheros Search combines keyword and vector retrieval over configured proxy and wireless observations. RAG builders and operators can inspect source records, embedding jobs, and ingestion state in one workbench.',
     problem:
       'RAG builders and operators who need retrievable evidence, visible processing gaps, and source context for human review.',
-    promise: 'Follow observations from ingestion to retrieval.',
     primaryCta: { label: 'Explore a sample site review', href: '#demo' },
     secondaryCta: { label: 'Discuss your use case', href: '/demo/#search' },
     sections: {
       workflow: {
         ...workflowSection,
-        title: 'From source observations to retrievable evidence.',
-        note: 'The authenticated workbench joins retrieval, ingestion, sources, evidence tools, and processing. This public synthetic sample illustrates a narrower site-to-indicator-to-observation workflow. The current production console does not yet show this complete site overview end to end. Generated answers and new connectors remain future work.',
+        title: 'Ingestion and retrieval',
+        note: 'The authenticated workbench includes retrieval, sources, ingestion, and processing. This synthetic sample follows a site, an indicator, and its observations. The current production console does not yet show this complete site overview end to end. Generated answers and new connectors remain future work.',
       },
       value: {
         ...audienceSection,
-        title: 'Two ways to assess Atheros Search.',
+        title: 'Working with Search',
       },
       evidence: {
         ...evidenceSection,
-        caveatLabel: 'COVERAGE AND IDENTITY / READ WITH CARE',
+        caveatLabel: 'COVERAGE AND IDENTITY',
         footnote:
-          'The sensor listens on configured channels and publishes audit records to the configured backend. Deployment requires monitor-mode Wi-Fi hardware. Audit fields and retention depend on deployment; no retention duration is promised here.',
+          'The sensor listens on configured channels and publishes audit records to the configured backend. Deployment requires monitor-mode Wi-Fi hardware. Audit fields and retention depend on deployment. No retention duration is promised here.',
       },
       glossary: glossarySection,
     },
@@ -1005,8 +653,7 @@ export const products = [
       {
         id: 'technical',
         title: 'For RAG builders',
-        proposition:
-          'Retrieve records with the context needed to evaluate their use.',
+        proposition: 'Retrieve records and their source context.',
         points: [
           'Search dense, sparse, or hybrid records through existing HTTP and gRPC interfaces, with supported filters and ranking explanations.',
           'Distinguish available lexical evidence from semantic coverage. Missing vectors, failed embedding jobs, and unknown measurements do not establish indexing readiness.',
@@ -1015,10 +662,10 @@ export const products = [
       {
         id: 'buyers',
         title: 'For operators and reviewers',
-        proposition: 'See where evidence stops moving.',
+        proposition: 'Check ingestion and indexing failures.',
         points: [
           'Inspect stages, backlog, failures, workers, and measurement freshness alongside retrieval, using the existing login and role permissions.',
-          'Separate indexed proxy evidence from operator-only live aggregate telemetry. Operational readings are global unless explicitly scoped; missing data stays unknown.',
+          'Separate indexed proxy evidence from operator-only live aggregate telemetry. Operational readings are global unless explicitly scoped. Missing data stays unknown.',
         ],
       },
     ],
@@ -1027,21 +674,21 @@ export const products = [
         step: 'Observe and ingest',
         input: 'Configured proxy and wireless observations',
         processing:
-          'Publish events; Octopus records evidence and deduplicates repeated delivery',
+          'Publish events. Octopus records evidence and deduplicates repeated delivery',
         output: 'Durable ingestion evidence within configured source coverage',
       },
       {
         step: 'Prepare and index',
         input: 'Ingested observations and maintained projections',
         processing:
-          'Octopus prepares documents and jobs; fenced Search workers create embeddings',
+          'Octopus prepares documents and jobs. Fenced Search workers create embeddings',
         output: 'Searchable documents and available vector coverage',
       },
       {
         step: 'Retrieve and inspect',
         input: 'A query and supported evidence filters',
         processing:
-          'Rank term and vector matches; inspect supporting records and explanations',
+          'Rank term and vector matches. Inspect supporting records and explanations',
         output: 'Evidence for human review or a downstream RAG workflow',
       },
     ],
@@ -1057,7 +704,7 @@ export const products = [
       ],
       [
         'Retrieve supporting evidence',
-        'Review ranked records and explanations; answer generation is deferred.',
+        'Review ranked records and explanations. Answer generation is deferred.',
       ],
     ],
     features: [
@@ -1114,26 +761,27 @@ export const products = [
     homeTitle: 'Schema Migrator',
     label: 'DATABASE CHANGE REVIEW',
     headline: ['Review SQL changes', 'before you run them.'],
+    cardSummary:
+      'Scala tooling for SQL-file validation, execution planning, catalog drift checks, and run history.',
     summary:
-      'Discover ordered SQL and validate it offline. Dry-run output is shortened; review the full source files alongside it. Catalog drift checks compare selected object definitions and table presence, but do not compare column definitions or nullability.',
+      'Discover ordered SQL and validate it offline. Dry-run output is shortened. Review the full source files alongside it. Catalog drift checks compare selected object definitions and table presence, but do not compare column definitions or nullability.',
     problem:
       'Platform and database engineers reviewing SQL execution order, target drift, and evidence of previous changes.',
-    promise: 'Read the plan before the run.',
     primaryCta: { label: 'Explore a sample migration review', href: '#demo' },
     secondaryCta: { label: 'Discuss your use case', href: '/demo/#migrator' },
     sections: {
       workflow: {
         ...workflowSection,
-        title: 'From source files to a reviewable record.',
-        note: 'Each step takes a defined input and produces something you can read. The public demonstration executes no SQL.',
+        title: 'Validation, planning, and run history',
+        note: 'File validation and planning run offline. Catalog checks and execution need a configured target. The public demonstration executes no SQL.',
       },
       value: {
         ...audienceSection,
-        title: 'Two ways to assess Schema Migrator.',
+        title: 'Working with Migrator',
       },
       evidence: {
         ...evidenceSection,
-        caveatLabel: 'SQL-FILE SNAPSHOTS / READ WITH CARE',
+        caveatLabel: 'SQL-FILE SNAPSHOTS',
         footnote:
           'The sample review records are synthetic. It connects to no target and executes no SQL.',
       },
@@ -1143,7 +791,7 @@ export const products = [
       {
         id: 'technical',
         title: 'For technical users',
-        proposition: 'Review the order, the target, and the evidence.',
+        proposition: 'Check SQL order and target state.',
         points: [
           'Discover ordered SQL and run offline validation before reviewing a dry-run plan.',
           'Inspect PostgreSQL catalog drift, SQL-file checksums, and recorded runs through the CLI and operator interfaces.',
@@ -1152,7 +800,7 @@ export const products = [
       {
         id: 'buyers',
         title: 'For operators and reviewers',
-        proposition: 'Make change review a repeatable handoff.',
+        proposition: 'Keep run records and target configuration.',
         points: [
           'Use stored run and audit records to support change reviews and operational handoffs.',
           'Keep target configuration and encrypted credentials in one service, with connection checks and guarded execution.',
@@ -1198,14 +846,14 @@ export const products = [
       ],
       [
         'Compare SQL files',
-        'Capture SQL-file snapshots and compare their checksums. These snapshots preserve source files; they are not database backups.',
+        'Capture SQL-file snapshots and compare their checksums. These snapshots preserve source files. They are not database backups.',
       ],
       [
         'Manage your targets',
         'Keep target configuration in one place, check connections, and store target credentials encrypted. PostgreSQL is the primary target story.',
       ],
       [
-        'Keep changes accountable',
+        'Record migration runs',
         'Discover files in order, validate offline, review dry-run plans, and inspect guarded migration runs and audit records. Review before applying to a real target.',
       ],
     ],
@@ -1239,23 +887,24 @@ export const products = [
     path: '/vpn-proxy/',
     homeTitle: 'RCLabs VPN / Proxy',
     label: 'ATHEROS SEARCH COMPONENT / OBSERVATION SOURCE',
-    headline: ['Follow the traffic.', 'Inspect the decision.'],
+    headline: ['WireGuard ingress.', 'Traffic classification.'],
+    cardSummary:
+      'Rust proxy for WireGuard ingress, configured traffic handling, and audit-event publishing.',
     summary:
-      'The proxy produces observations for Atheros Search: WireGuard ingress, transparent connection handling, classification, and audit publishing. This technical page explains that source component and its configured coverage.',
+      'The Rust proxy receives WireGuard traffic, applies configured connection policies, and publishes classified observations for Atheros Search. Coverage depends on the configured routing and available connection metadata.',
     problem:
       'Network and platform teams operating WireGuard ingress, transparent proxy policies, and traffic audit pipelines.',
-    promise: 'An inspectable path through your network.',
     primaryCta: { label: 'Explore a sample traffic flow', href: '#demo' },
     secondaryCta: { label: 'Explore Atheros Search', href: '/atheros-search/' },
     sections: {
       workflow: {
         ...workflowSection,
-        title: 'From ingress to an inspectable decision.',
-        note: 'Follow a configured traffic path, its classification, and the evidence it produces. The sample does not establish a tunnel.',
+        title: 'Ingress, handling, and audit records',
+        note: 'The sample follows one configured traffic path and its recorded decision. It does not establish a tunnel.',
       },
       value: {
         ...audienceSection,
-        title: 'Two ways to assess RCLabs VPN / Proxy.',
+        title: 'Operating the proxy',
       },
       evidence: {
         ...evidenceSection,
@@ -1269,7 +918,7 @@ export const products = [
       {
         id: 'technical',
         title: 'For technical users',
-        proposition: 'Trace ingress, handling, and evidence.',
+        proposition: 'Inspect traffic handling and classification.',
         points: [
           'Review WireGuard ingress and transparent proxy handling as distinct stages of the traffic path.',
           'Inspect coarse traffic categories and the configured reasons behind connection handling.',
@@ -1278,10 +927,10 @@ export const products = [
       {
         id: 'buyers',
         title: 'For operators and reviewers',
-        proposition: 'Understand the operating boundary.',
+        proposition: 'Configure peers and audit publishing.',
         points: [
           'Evaluate the proxy, administrative readiness surfaces, and the separate staged WireGuard key rotator.',
-          'Plan for audit publishing through Redpanda and backend processing through Octopus; persistence is owned by the backend.',
+          'Plan for audit publishing through Redpanda and backend processing through Octopus. Persistence is owned by the backend.',
         ],
       },
     ],
@@ -1362,12 +1011,13 @@ export const products = [
     path: '/octopus/',
     homeTitle: 'Octopus',
     label: 'ATHEROS SEARCH COMPONENT / INGESTION COORDINATOR',
-    headline: ['Trace pipeline work.', 'Recover with context.'],
+    headline: ['Durable event', 'ingestion.'],
+    cardSummary:
+      'Scala coordinator for durable ingestion, deduplication, job leases, and PostgreSQL projections.',
     summary:
-      'Octopus coordinates Atheros Search ingestion, document preparation, and maintained projections. Inspect its durable events, jobs, and database loads here, with measured activity and recorded history kept distinct.',
+      'Octopus coordinates ingestion, document preparation, and PostgreSQL projections for Atheros Search. It persists events, jobs, and load results so processing can resume after a restart. This page includes current metrics and recorded history.',
     problem:
       'For platform and data teams running event pipelines that need to recover from failures and account for repeated delivery.',
-    promise: 'A clear record of the work moving through your pipeline.',
     primaryCta: {
       label: 'View live metrics',
       href: '#operational-evidence',
@@ -1379,34 +1029,34 @@ export const products = [
     sections: {
       workflow: {
         ...workflowSection,
-        title: 'From incoming event to recorded result.',
-        note: 'Three stages connect the stream to the work it triggers.',
+        title: 'Events, jobs, and outcomes',
+        note: 'Each stage records the state needed by the next.',
       },
       value: {
         ...audienceSection,
-        label: 'BUILT FOR YOUR TEAM',
-        title: 'Understand the pipeline. Run it with context.',
+        label: 'ENGINEERING AND OPERATIONS',
+        title: 'Investigating pipeline state',
         note: 'Engineering traces delivery and recovery state. Operations checks throughput, backlog, and the freshness of reported activity.',
       },
       evidence: {
         ...evidenceSection,
-        label: 'UNDER THE HOOD',
-        title: 'Progress that survives a restart.',
+        label: 'IMPLEMENTATION',
+        title: 'Persistence and recovery',
         note: 'Built in Scala with Cats Effect and FS2, using Redpanda streams and PostgreSQL for persistent state.',
         caveatLabel: 'DELIVERY AND RECOVERY',
         footnote:
           'Consumer offsets, job state, and load results give operators a place to start when work stalls.',
       },
       glossary: {
-        label: 'QUICK REFERENCE',
-        title: 'The terms behind the pipeline.',
+        label: 'GLOSSARY',
+        title: 'Terms',
       },
     },
     audiences: [
       {
         id: 'technical',
         title: 'For engineers',
-        proposition: 'Trace a record from stream to result.',
+        proposition: 'Trace source records and recovery state.',
         points: [
           'Start incident triage at the source: find the consumer group, topic, partition, and offset behind an ingestion record.',
           'Inspect durable deduplication and committed offsets to understand replay after a restart.',
@@ -1416,7 +1066,7 @@ export const products = [
       {
         id: 'buyers',
         title: 'For operators',
-        proposition: 'See what is moving and what is waiting.',
+        proposition: 'Check processing and backlog.',
         points: [
           'Check processing rate and queued records to identify a growing backlog.',
           'See whether intake is accepting work or paused to let the backlog drain.',
@@ -1455,19 +1105,19 @@ export const products = [
     ],
     features: [
       [
-        'Know where a record came from',
+        'Source coordinates',
         'Start incident triage with the consumer group, topic, partition, and offset stored on each ingestion record. Replayed records keep their original first-seen time so you can trace the original delivery.',
       ],
       [
-        'Resume from saved progress',
+        'Committed offsets and deduplication',
         'Recover after a restart using committed consumer offsets and durable deduplication for repeated delivery. New groups begin at the earliest records still retained.',
       ],
       [
-        'Coordinate work in flight',
+        'Leases and pending work',
         'Time-limited claims coordinate workers competing for queued work. Inspect stored jobs, batches, and outgoing messages to see the state of each load when processing stalls.',
       ],
       [
-        'Maintain the data used downstream',
+        'PostgreSQL projections',
         'Octopus updates PostgreSQL data views and derives alerts. Atheros Search runs the separate workers that create embeddings.',
       ],
     ],
@@ -1502,16 +1152,16 @@ export const sampleProducts = products.filter(
 );
 
 export const contact = {
-  eyebrow: 'HAVE A USE CASE IN MIND?',
-  headline: ['Discuss your', 'use case.'],
+  eyebrow: 'CONTACT',
+  headline: ['Questions about', 'a project?'],
   supporting:
-    'Email Rafael about a project walkthrough or use case. Include the environment and constraints you want to discuss. This is an email conversation; hosted product access is not provisioned here.',
+    'Email me with the project, environment, and constraints you want to discuss. We can arrange a walkthrough or technical call by email.',
   cta: 'Discuss your use case',
   // Short form for a mailto link that already sits under the headline, so the
   // same words never appear twice in one block.
   link: 'Email Rafael',
   emailHint: 'Opens your email app, or email',
-  nextStep: 'Start by email; we can arrange a technical call together.',
+  nextStep: 'Start by email. We can arrange a technical call together.',
 } as const;
 
 export const allProducts = products.map((product) => product.name).join(', ');
@@ -1521,7 +1171,7 @@ export const contactOptions = [
     id: 'search',
     label: 'Atheros Search',
     subject: 'Atheros Search',
-    text: 'Trace ingestion, indexing readiness, and evidence retrieval across configured proxy and wireless sources.',
+    text: 'Keyword and vector retrieval, embedding jobs, and source observations.',
   },
   {
     id: 'migrator',
@@ -1533,19 +1183,19 @@ export const contactOptions = [
     id: 'vpn',
     label: 'RCLabs VPN / Proxy',
     subject: 'RCLabs VPN / Proxy',
-    text: 'Review WireGuard ingress, transparent proxy handling, and audit evidence.',
+    text: 'WireGuard peers, transparent proxy policies, and audit publishing.',
   },
   {
     id: 'octopus',
     label: 'Octopus',
     subject: 'Octopus',
-    text: 'Review durable ingestion, work leases, and measured ledger evidence.',
+    text: 'Ingestion, deduplication, work leases, backlog, and recovery.',
   },
   {
     id: 'all',
     label: 'System walkthrough',
     subject: allProducts,
-    text: 'Trace the ingestion and search system, its tradeoffs, and the companion SQL tooling.',
+    text: 'How the ingestion and search components fit together, plus the separate SQL tooling.',
   },
 ] as const;
 
@@ -1593,21 +1243,22 @@ export interface Guide {
 }
 
 export const guideIndex = {
-  title: 'PostgreSQL migration and wireless investigation guides',
+  title: 'Technical guides',
+  listLabel: 'All guides',
   description:
     'Practical guides to PostgreSQL migration dry runs, schema drift, file checksums, wireless indicators, and hybrid search, with worked examples and limits.',
   summary:
-    'Review migration files, compare PostgreSQL catalogs, and investigate wireless observations with distinct worked examples and explicit evidence boundaries.',
+    'Worked examples for SQL migrations, wireless investigations, and hybrid search.',
   eyebrow: 'TECHNICAL GUIDES',
   introduction:
-    'Follow a specific review task from its inputs to the evidence it produces. These guides explain the mechanisms behind Schema Migrator and Atheros Search software with local or clearly labelled synthetic examples.',
+    'These guides use local and synthetic examples to explain Schema Migrator and Atheros Search. Each includes source links and the limits of its checks.',
   contentsLabel: 'In this guide',
-  sourcesTitle: 'Implementation evidence',
+  sourcesTitle: 'Source code',
   sourcesNote:
-    'The linked repository files describe the implementation behind these examples. Examples are educational inputs, not production records or measured results.',
-  limitsLabel: 'Operating boundary',
-  relatedTitle: 'Continue the review',
-  productLinkLabel: 'Explore the product and its synthetic sample',
+    'The implementation behind the examples. Examples are educational inputs, not production records or measured results.',
+  limitsLabel: 'Limits',
+  relatedTitle: 'Related guides',
+  productLinkLabel: 'Project documentation and synthetic sample',
   indexLinkLabel: 'Browse all technical guides',
   readLabel: 'Read guide',
 } as const;
@@ -1629,13 +1280,13 @@ function repositorySource(path: string) {
 export const guides: readonly Guide[] = [
   {
     slug: 'postgresql-migration-dry-run',
-    title: 'Review a PostgreSQL migration dry run before execution',
+    title: 'PostgreSQL migration dry runs',
     description:
       'Run a two-file PostgreSQL migration example through discovery, validation, and an offline dry-run preview. Learn what the checks establish and what needs a target.',
     productId: 'migrator',
     eyebrow: 'POSTGRESQL / FILE REVIEW',
     introduction:
-      'Schema Migrator can discover and validate SQL files and print their order without opening a database connection. The CLI collapses whitespace and shortens SQL longer than 120 characters; review the complete source files alongside this preview. This local example creates a table before its index.',
+      'Schema Migrator can discover and validate SQL files and print their order without opening a database connection. The CLI collapses whitespace and shortens SQL longer than 120 characters. Review the complete source files alongside this preview. This local example creates a table before its index.',
     caveat: `${migratorCaveat} The public demonstration executes no SQL. An offline preview does not establish whether a target can execute the statements.`,
     sections: [
       {
@@ -1646,32 +1297,32 @@ export const guides: readonly Guide[] = [
         ],
         examples: [
           {
-            label: 'Local example directory; all listed folders exist',
-            code: homeSections.guide.ordering.tree.replace(
+            label: 'Local example directory. All listed folders exist',
+            code: migrationExamples.ordering.tree.replace(
               /^sql\//,
               'review-example/',
             ),
             note: 'Empty folders avoid missing-folder discovery warnings. This example uses folder ordering, not a manifest.',
           },
-          ...homeSections.guide.ordering.files.map((file) => ({
+          ...migrationExamples.ordering.files.map((file) => ({
             label: file.path,
             code: file.sql,
-            note: 'Illustrative source SQL for the local example; it is not a production migration.',
+            note: 'Illustrative source SQL for the local example. It is not a production migration.',
           })),
         ],
         points: [
           'PostgreSQL discovery orders extensions, schemas, types, tables, indexes, functions, views, cron, then materialized_views. Filenames sort inside each folder.',
           'The object, folder, and depends_on headers declare the object and its dependency. The index names observations as its prerequisite.',
-          'For a directory using core/manifest.yaml, apply_order determines the sequence instead; unlisted SQL is reported as ignored.',
+          'For a directory using core/manifest.yaml, apply_order determines the sequence instead. Unlisted SQL is reported as ignored.',
         ],
       },
       {
         id: 'discover-validate',
         title: 'Discover files, then review validation findings',
         paragraphs: [
-          'The application output below was captured for the local example and excludes sbt startup messages. list reports order. validate reports file-specific findings; warnings do not fail the command, while validation errors do.',
+          'The application output below was captured for the local example and excludes sbt startup messages. list reports order. validate reports file-specific findings. Warnings do not fail the command, while validation errors do.',
         ],
-        examples: homeSections.guide.preview.runs.slice(0, 2).map((run) => ({
+        examples: migrationExamples.preview.runs.slice(0, 2).map((run) => ({
           label: run.command.replace('./sql', './review-example'),
           code: run.output,
           note: run.note,
@@ -1687,13 +1338,13 @@ export const guides: readonly Guide[] = [
         paragraphs: [
           '--dry-run apply prints file paths and compacted SQL in apply order. It does not execute the table or index statement.',
         ],
-        examples: homeSections.guide.preview.runs.slice(3).map((run) => ({
+        examples: migrationExamples.preview.runs.slice(3).map((run) => ({
           label: run.command.replace('./sql', './review-example'),
           code: run.output,
           note: run.note,
         })),
         points: [
-          'The printer collapses whitespace and shortens SQL after 120 characters. Retain the full files as the review artifact; the displayed preview cannot be used as a complete deployment script.',
+          'The printer collapses whitespace and shortens SQL after 120 characters. Retain the full files as the review artifact. The displayed preview cannot be used as a complete deployment script.',
           'Check that each referenced table, type and extension precedes its dependent objects. Review destructive operations and transaction requirements in the full statements.',
         ],
       },
@@ -1715,7 +1366,7 @@ export const guides: readonly Guide[] = [
             [
               'What structure exists now?',
               'Connected catalog drift inspection',
-              'Findings require review; no automatic correction',
+              'Findings require review. No automatic correction',
             ],
             [
               'Will these statements work with these data and permissions?',
@@ -1753,8 +1404,7 @@ export const guides: readonly Guide[] = [
   },
   {
     slug: 'postgresql-schema-drift',
-    title:
-      'Investigate PostgreSQL schema drift with expected and observed definitions',
+    title: 'Investigating PostgreSQL schema drift',
     description:
       'Compare expected PostgreSQL definitions, live catalog objects, and migration control state in a worked schema drift example. Separate detection from remediation.',
     productId: 'migrator',
@@ -1779,7 +1429,7 @@ export const guides: readonly Guide[] = [
         id: 'example',
         title: 'Compare a synthetic expected catalog with an observed catalog',
         paragraphs: [
-          'The following teaching example is constructed, not captured from a database. Assume tracked objects without a pending status have an applied control status; the final object is pending.',
+          'The following teaching example is constructed, not captured from a database. Assume tracked objects without a pending status have an applied control status. The final object is pending.',
         ],
         table: {
           caption:
@@ -1806,7 +1456,7 @@ export const guides: readonly Guide[] = [
             ],
             [
               'public.observations_source_order_idx',
-              'Tracked index; apply_status=pending',
+              'Tracked index. Apply_status=pending',
               'Index absent',
               'pending_or_failed_control',
             ],
@@ -1832,7 +1482,7 @@ export const guides: readonly Guide[] = [
           },
         ],
         points: [
-          'Definition comparisons cover functions, procedures, triggers, views, materialized views and indexes. The reader checks table presence, but does not compare column definitions or nullability; those need a separate check.',
+          'Definition comparisons cover functions, procedures, triggers, views, materialized views and indexes. The reader checks table presence, but does not compare column definitions or nullability. Those need a separate check.',
           'An index definition finding describes structure, not how a proposed replacement will behave under load. Review data size, permissions and locking conditions before execution.',
         ],
       },
@@ -1843,8 +1493,8 @@ export const guides: readonly Guide[] = [
           'Preserve the observed definitions and check the source history. Decide whether the manifest or the live object reflects the intended design. Write a new ordered migration when a correction is needed, rehearse it against non-production data, and inspect the catalog again afterward.',
         ],
         points: [
-          'Keep active ordered migrations append-only; do not conceal drift by rewriting an already recorded file.',
-          'Handle target credentials and DDL through the deployment workflow. Catalog inspection may create and drop temporary session views to normalize view definitions; it applies no permanent correction.',
+          'Keep active ordered migrations append-only. Do not conceal drift by rewriting an already recorded file.',
+          'Handle target credentials and DDL through the deployment workflow. Catalog inspection may create and drop temporary session views to normalize view definitions. It applies no permanent correction.',
           'A clean report establishes agreement within the inspected scope and comparison logic, not complete database health.',
         ],
       },
@@ -1869,14 +1519,14 @@ export const guides: readonly Guide[] = [
   },
   {
     slug: 'migration-checksum-mismatch',
-    title: 'Understand a migration checksum mismatch before changing history',
+    title: 'Migration checksum mismatches',
     description:
       'Reproduce a SQL-file checksum mismatch locally, interpret added, removed, and changed snapshot paths, and distinguish file integrity from PostgreSQL schema drift.',
     productId: 'migrator',
     eyebrow: 'POSTGRESQL / SOURCE INTEGRITY',
     introduction:
       'A migration checksum mismatch means the recorded file bytes and the current file bytes differ. It does not tell you whether a live table or index changed. Schema Migrator snapshots compare SQL files by path and SHA-256, keeping this question separate from catalog drift.',
-    caveat: `${migratorCaveat} Equal checksums establish equal file content for the comparison; they do not prove successful execution or agreement with a live database.`,
+    caveat: `${migratorCaveat} Equal checksums establish equal file content for the comparison. They do not prove successful execution or agreement with a live database.`,
     sections: [
       {
         id: 'reproduce',
@@ -1917,7 +1567,7 @@ PY`,
         id: 'interpret',
         title: 'Read the path and both checksums',
         paragraphs: [
-          'Snapshot comparison matches files by path. A path present only in the newer snapshot is added; one present only in the base is removed. A path present in both is changed when its SHA-256 differs. Unchanged paths do not produce diff items.',
+          'Snapshot comparison matches files by path. A path present only in the newer snapshot is added. One present only in the base is removed. A path present in both is changed when its SHA-256 differs. Unchanged paths do not produce diff items.',
         ],
         table: {
           caption: 'Synthetic snapshot path comparison',
@@ -1940,7 +1590,7 @@ PY`,
         },
         points: [
           'Keep the full before and after checksums and the original source available to the reviewer.',
-          'A rename can appear as one removed path and one added path. The diff categorizes paths; it does not infer a semantic rename.',
+          'A rename can appear as one removed path and one added path. The diff categorizes paths. It does not infer a semantic rename.',
           'Whitespace, line endings and comments can change a file checksum without changing database semantics. Inspect the actual diff before deciding on a correction.',
         ],
       },
@@ -1977,13 +1627,13 @@ PY`,
   },
   {
     slug: 'rogue-access-point-investigation',
-    title: 'Investigate a suspected rogue access point with site context',
+    title: 'Investigating a suspected rogue access point',
     description:
       'Work through synthetic rogue access point observations using SSID, BSSID, channel, time, and authorized-network context. Separate wireless indicators from confirmed incidents.',
     productId: 'search',
     eyebrow: 'WIRELESS / ACCESS POINT REVIEW',
     introduction:
-      'A suspicious SSID or BSSID is a lead to investigate. Start with the monitored site and the observation time, then compare the advertised network with the site inventory. Atheros Sensor raises configured indicators; Atheros Search helps review the observations behind them.',
+      'A suspicious SSID or BSSID is a lead to investigate. Start with the monitored site and the observation time, then compare the advertised network with the site inventory. Atheros Sensor raises configured indicators. Atheros Search helps review the observations behind them.',
     caveat: `${searchCaveat} A rogue access point indicator does not prove an attack or an unauthorized physical device.`,
     sections: [
       {
@@ -2049,7 +1699,7 @@ PY`,
         points: [
           'Check the configured network list: was an open guest network, temporary AP or recent controller change omitted?',
           'Compare the AP inventory and maintenance history. An SSID shared by multiple BSSIDs can be expected in a managed deployment.',
-          'Review related observations before deciding whether the pattern persists. The detector also has reasons for similar SSIDs, changed BSSID-to-SSID mappings, and channel or vendor conflicts; each reason needs its own context.',
+          'Review related observations before deciding whether the pattern persists. The detector also has reasons for similar SSIDs, changed BSSID-to-SSID mappings, and channel or vendor conflicts. Each reason needs its own context.',
           'Use location or device identity suggestions as review candidates. Do not turn an observed address into a confirmed owner or physical asset.',
         ],
       },
@@ -2062,8 +1712,8 @@ PY`,
         examples: [
           {
             label: 'Synthetic analyst note',
-            code: 'Site: lab-west\nWindow: 10:00:00-10:00:05 UTC\nLead: known SSID LabNet observed without advertised encryption\nEvidence: BSSID 02:00:00:00:00:20, channel 6\nInventory check: unresolved; ask the site owner to confirm AP changes\nConclusion: review candidate; no connection or device identity confirmed',
-            note: 'An example of recording the evidence boundary; no message is sent by this guide.',
+            code: 'Site: lab-west\nWindow: 10:00:00-10:00:05 UTC\nLead: known SSID LabNet observed without advertised encryption\nEvidence: BSSID 02:00:00:00:00:20, channel 6\nInventory check: unresolved. Ask the site owner to confirm AP changes\nConclusion: review candidate. No connection or device identity confirmed',
+            note: 'An example of recording the evidence boundary. No message is sent by this guide.',
           },
         ],
         points: [
@@ -2100,8 +1750,7 @@ PY`,
   },
   {
     slug: 'wifi-deauthentication-investigation',
-    title:
-      'Investigate Wi-Fi deauthentication observations without overclaiming',
+    title: 'Investigating Wi-Fi deauthentication observations',
     description:
       'Use a synthetic time-window example to review Wi-Fi deauthentication and disassociation indicators, capture scope, detector thresholds, and corroborating evidence.',
     productId: 'search',
@@ -2114,7 +1763,7 @@ PY`,
         id: 'scope',
         title: 'Keep capture scope and detector settings together',
         paragraphs: [
-          'Use monitor-mode hardware on the channels under review and record the sensor, site, interval and configuration. Atheros Sensor groups valid BSSIDs separately; when a BSSID cannot be parsed, it uses a fallback source identity. Both deauthentication and disassociation frames count.',
+          'Use monitor-mode hardware on the channels under review and record the sensor, site, interval and configuration. Atheros Sensor groups valid BSSIDs separately. When a BSSID cannot be parsed, it uses a fallback source identity. Both deauthentication and disassociation frames count.',
         ],
         points: [
           'A zero threshold or zero window disables this detector path.',
@@ -2148,19 +1797,19 @@ PY`,
               '10:00:02',
               'deauthentication',
               '3',
-              'Threshold reached; eligible to alert',
+              'Threshold reached. Eligible to alert',
             ],
             [
               '10:00:03',
               'deauthentication',
               '4',
-              'Still observed; cooldown may suppress another alert',
+              'Still observed. Cooldown may suppress another alert',
             ],
           ],
         },
         examples: [
           {
-            label: 'Reproducible teaching count; not the sensor implementation',
+            label: 'Reproducible teaching count. Not the sensor implementation',
             code: `python3 - <<'PY'
 times = [0, 1, 2, 3]
 window_seconds = 10
@@ -2169,7 +1818,7 @@ for index, now in enumerate(times):
     count = sum(now - time < window_seconds for time in times[:index + 1])
     print(now, count, count >= threshold)
 PY`,
-            note: 'The four timestamps stay inside one window. The actual detector uses per-second buckets and a frame-time cooldown; this small example illustrates the threshold only.',
+            note: 'The four timestamps stay inside one window. The actual detector uses per-second buckets and a frame-time cooldown. This small example illustrates the threshold only.',
           },
           {
             label: 'Captured output from the teaching count',
@@ -2187,7 +1836,7 @@ PY`,
         points: [
           'Look for related association and authentication observations, but do not infer a complete session from a partial passive capture.',
           'Compare the interval with maintenance, AP restarts and client behavior. A frame subtype by itself does not reveal why the frame was transmitted.',
-          'Inspect PMF-related context when available; a PMF indicator remains a separate heuristic and does not prove a client accepted or rejected the frame.',
+          'Inspect PMF-related context when available. A PMF indicator remains a separate heuristic and does not prove a client accepted or rejected the frame.',
           'Retain the configured threshold and cooldown with the investigation so a later analyst can explain why one alert represents several observations.',
         ],
       },
@@ -2234,20 +1883,20 @@ PY`,
   },
   {
     slug: 'hybrid-search-network-observations',
-    title: 'Understand hybrid search for network and wireless observations',
+    title: 'Hybrid search over network observations',
     description:
       'Compare term, vector, and hybrid retrieval on the same synthetic observations. Work through weighted reciprocal-rank fusion and interpret explain data and sparse fallback.',
     productId: 'search',
     eyebrow: 'SEARCH / RETRIEVAL REVIEW',
     introduction:
-      'Term search and vector search offer different ways to retrieve a record. Atheros Search combines their ranked candidates with weighted reciprocal-rank fusion. A same-data example makes that mechanism inspectable without claiming that one mode is more accurate or faster.',
+      'Atheros Search combines term and vector results with weighted reciprocal-rank fusion. This example follows the same records through both rankings and calculates their fused scores. It includes no measured accuracy or latency comparison.',
     caveat: `${searchCaveat} Ranking is a retrieval signal, not a probability of an incident. This guide publishes no measured relevance, latency or storage result.`,
     sections: [
       {
         id: 'data',
         title: 'Fix the query and scope before comparing modes',
         paragraphs: [
-          'Use the same dataset, source kinds, site filter, observation interval and result budget for each mode. This synthetic text collection illustrates candidate ranking; it is not an ingested sensor payload or an actual embedding run.',
+          'Use the same dataset, source kinds, site filter, observation interval and result budget for each mode. This synthetic text collection illustrates candidate ranking. It is not an ingested sensor payload or an actual embedding run.',
         ],
         table: {
           caption: 'Synthetic observations, all scoped to lab-west',
@@ -2280,7 +1929,7 @@ PY`,
         ],
         table: {
           caption:
-            'Assigned teaching ranks on the same data; not measured retrieval results',
+            'Assigned teaching ranks on the same data. Not measured retrieval results',
           headers: [
             'Record',
             'Sparse rank',
@@ -2313,18 +1962,18 @@ PY`,
         id: 'fusion',
         title: 'Calculate an explainable fusion stage',
         paragraphs: [
-          'The implementation uses k = 60. A dense candidate contributes alpha / (60 + rank); a sparse candidate contributes (1 - alpha) / (60 + rank). For the example alpha = 0.5, the record appearing in both lists accumulates both contributions. These values are arithmetic outputs for the assigned ranks, not service measurements.',
+          'The implementation uses k = 60. A dense candidate contributes alpha / (60 + rank). A sparse candidate contributes (1 - alpha) / (60 + rank). For the example alpha = 0.5, the record appearing in both lists accumulates both contributions. These values are arithmetic outputs for the assigned ranks, not service measurements.',
         ],
         examples: [
           {
-            label: 'Synthetic weighted RRF calculation; alpha = 0.5',
+            label: 'Synthetic weighted RRF calculation. Alpha = 0.5',
             code: 'A = 0.5 / (60 + 2) + 0.5 / (60 + 1) = 0.016261\nB = 0.5 / (60 + 1)                      = 0.008197\nC = 0.5 / (60 + 2)                      = 0.008065\nFusion order: A, B, C',
             note: 'Values are rounded to six decimals. This illustrates the fusion stage, not an incident confidence score.',
           },
         ],
         points: [
           'Candidates are deduplicated by source key. Equal final scores use source-key ordering as the tie-break.',
-          'Changing alpha changes the relative weight of the two ranked lists; it does not calibrate the result into a probability.',
+          'Changing alpha changes the relative weight of the two ranked lists. It does not calibrate the result into a probability.',
           'Retain the selected record and the original result envelope when explaining a real result. A later search can observe a changed collection or embedding state.',
         ],
       },

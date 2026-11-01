@@ -15,7 +15,7 @@ import HiringContact from '../../components/HiringContact.astro';
         <span aria-hidden="true">/</span>
         <span aria-current="page">Contact</span>
       </nav>
-      <p class="eyebrow">CONTACT / ENGINEERING ROLES AND PROJECTS</p>
+      <p class="eyebrow">{hiring.eyebrow}</p>
       <h1>{hiring.pageTitle}</h1>
       <p class="lead">{hiring.pageSummary}</p>
     </div>
@@ -24,13 +24,8 @@ import HiringContact from '../../components/HiringContact.astro';
   <section class="section" aria-labelledby="options-title">
     <!--email_off-->
     <div class="section-heading">
-      <p class="eyebrow">CHOOSE A STARTING POINT</p>
-      <h2 id="options-title">Project discussions and walkthroughs</h2>
-      <p>
-        Each option opens an email request. Nothing is submitted through this
-        site. This is an email conversation; hosted product access is not
-        provisioned here.
-      </p>
+      <h2 id="options-title">{hiring.projectsTitle}</h2>
+      <p>{hiring.projectsSummary}</p>
     </div>
     <div class="feature-grid">
       {contactOptions.map((option) => (
@@ -48,9 +43,8 @@ import HiringContact from '../../components/HiringContact.astro';
   <section class="section" aria-labelledby="address-title">
     <!--email_off-->
     <div class="section-heading">
-      <p class="eyebrow">WRITE YOUR OWN</p>
-      <h2 id="address-title">Prefer to write your own email?</h2>
-      <p>Use this address. No information is submitted through this site.</p>
+      <h2 id="address-title">{hiring.addressTitle}</h2>
+      <p>{hiring.addressSummary}</p>
     </div>
     <div class="email-row">
       <a href={`mailto:${email}`}>{email}</a>

@@ -1,6 +1,6 @@
 # Messaging framework
 
-RCLabs is Rafael Cardoso dos Santos's independently maintained backend and
+RCLabs is Rafael Cardoso's independently maintained backend and
 data-platform engineering portfolio. Recruiters, engineering managers, and
 technical interviewers are the primary portfolio audience. The homepage leads
 with professional positioning, Synchro experience, independent engineering
@@ -33,8 +33,9 @@ The project catalogue retains the `/products/` URL and compares all four
 components and companion tools within the Atheros Search workflow. Do not present the page count as evidence of four commercial
 products, customer adoption, or a particular career level. The `/about/` page
 identifies the author, links source, and summarizes security boundaries and
-remaining evidence gaps. The homepage playground runs
-one of three synthetic samples at a time. Octopus has no synthetic demo.
+remaining evidence gaps. The homepage links to the project documentation.
+Search, Migrator, and VPN / Proxy samples belong on their respective project
+pages. Do not duplicate them in a combined homepage playground. Octopus has no synthetic demo.
 Its production activity section follows the hero, with current readings before
 historical peaks and a disclosure for measurement definitions.
 The same-origin runtime feed refreshes every 30 seconds. Never embed measurements
@@ -112,7 +113,7 @@ LinkedIn profile, and website supplied in the owner's current resume. General
 site and hiring inquiry links keep the existing `rafael@rclabs.uk` address.
 
 General calls to action use `mailto:` links for `rafael@rclabs.uk`. The privacy
-notice identifies Rafael Cardoso dos Santos as the individual controller and
+notice identifies Rafael Cardoso as the individual controller and
 uses his confirmed privacy contact, `racasantos@icloud.com`. Subjects are
 `Use-case discussion: [product]`. The contact page keeps the address visible
 with a copy fallback. Email begins a discussion; it does not schedule a meeting.
@@ -130,3 +131,37 @@ backlog, intake control, throughput, and measurement freshness.
 3. Update [content evidence](content-evidence.md) and the relevant browser
    tests when product copy, a caveat, or a destination changes.
 4. Run `npm run build` and `npm test`.
+
+## Editorial style
+
+Never use semicolons in public prose, including contact copy, labels, caveats,
+metadata, and example explanations. Split sentences or use commas and
+conjunctions. Keep punctuation required by code and SQL examples intact.
+Use Rafael Cardoso as the public name everywhere, including the resume,
+privacy notice, metadata, and structured data.
+
+Write as Rafael, the individual author. Use concrete project names, inputs,
+failures and implementation choices. A heading should name its subject rather
+than tell the reader to explore, inspect or assess it. Avoid repeating the same
+claim as a category label, slogan, summary and feature list. Project cards have
+one factual description and their existing destinations. The homepage introduces
+the work and links to guides; full technical chapters belong on guide routes.
+Preserve caveats beside the examples they qualify, employment attribution, and
+measurement definitions. The resume and privacy notice retain their factual
+structure.
+
+## Portfolio review rules
+
+The [portfolio review article](https://labs.codersarts.com/blog/build-in-public/portfolio-projects-get-developers-hired-2026)
+is editorial inspiration. Apply these checks to the existing projects:
+
+- Verify every sample destination works today, with clear synthetic labels.
+- Link readable source and tests alongside the implementation they support.
+- Explain the problem, intended audience, technical decisions, failure handling,
+  accepted tradeoffs and known limits using repository evidence.
+- Keep the backend and data-platform work easy for employers to review.
+- Distinguish historical employer workload, current runtime readings and
+  synthetic examples. Never infer users, adoption or performance from them.
+
+Do not add projects, user counts, popularity targets or hiring promises merely
+to match the article. A working browser sample demonstrates that sample only.

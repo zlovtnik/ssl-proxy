@@ -19,7 +19,7 @@ async function expectContainedLayout(page: Page) {
     const visible = (element: Element) =>
       element.checkVisibility() && element.getBoundingClientRect().height > 0;
     for (const panel of document.querySelectorAll(
-      '.landing-playground, .demo-panel, .product-card',
+      '.demo-panel, .product-card',
     )) {
       if (!visible(panel)) continue;
       const bounds = panel.getBoundingClientRect();
@@ -104,36 +104,13 @@ for (const route of [
       for (const width of [1440, 1024, 768, 375, 320]) {
         await page.setViewportSize({ width, height: 1000 });
         await expectContainedLayout(page);
-        const choices =
-          route === '/'
-            ? sampleProducts
-            : sampleProducts.filter((product) => product.path === route);
+        const choices = sampleProducts.filter(
+          (product) => product.path === route,
+        );
         for (const product of choices) {
-          if (route === '/') {
-            await page
-              .locator('.preview-switch')
-              .getByRole('button', { name: product.name, exact: true })
-              .click();
-            await expect(page.locator('.preview-panel:visible')).toHaveCount(1);
-            expect(
-              await page
-                .locator('.preview-panel[hidden]')
-                .evaluateAll((panels) =>
-                  panels.every(
-                    (panel) =>
-                      panel.getBoundingClientRect().height === 0 &&
-                      panel.hasAttribute('inert'),
-                  ),
-                ),
-            ).toBe(true);
-          }
           if (product.id === 'migrator') {
             for (const step of await page
-              .locator(
-                route === '/'
-                  ? '.preview-steps button'
-                  : '.step-controls button',
-              )
+              .locator('.step-controls button')
               .all()) {
               await step.click();
               await expectContainedLayout(page);
@@ -143,17 +120,6 @@ for (const route of [
               await page
                 .getByLabel('Sample traffic flow', { exact: true })
                 .selectOption(String(i));
-              await expectContainedLayout(page);
-            }
-          } else if (route === '/') {
-            const filter = page.getByLabel(
-              'Filter sample sites, indicators, and observations',
-            );
-            await filter.fill('no-results');
-            await expectContainedLayout(page);
-            await filter.fill('');
-            for (const record of await page.locator('.preview-record').all()) {
-              await record.click();
               await expectContainedLayout(page);
             }
           } else {
@@ -233,13 +199,10 @@ test('Octopus pipeline and audience toggle stay contained at every width', async
   }
 });
 
-test('VPN samples update their evidence and retain state through product switching', async ({
+test('VPN samples update their decision and audit evidence on the project page', async ({
   page,
 }) => {
-  await page.goto('/');
-  await page
-    .getByRole('button', { name: 'RCLabs VPN / Proxy', exact: true })
-    .press('Space');
+  await page.goto('/vpn-proxy/#demo');
   await page
     .getByText('Inspect the sample audit record', { exact: true })
     .click();
@@ -253,29 +216,16 @@ test('VPN samples update their evidence and retain state through product switchi
     await expect(page.locator('.flow-result')).toContainText(
       trafficFlows[i].decision,
     );
-    await expect(page.locator('.panel-vpn pre')).toContainText(
+    await expect(page.locator('.vpn-demo pre')).toContainText(
       `Destination: ${trafficFlows[i].destination}`,
     );
   }
-  await page
-    .getByRole('button', { name: 'Atheros Search', exact: true })
-    .click();
-  await expect(
-    page.getByLabel('Sample traffic flow', { exact: true }),
-  ).toBeHidden();
-  await page
-    .getByRole('button', { name: 'RCLabs VPN / Proxy', exact: true })
-    .click();
   await expect(
     page.getByLabel('Sample traffic flow', { exact: true }),
   ).toHaveValue('5');
-  await expect(page.locator('.panel-vpn details').first()).toHaveAttribute(
+  await expect(page.locator('.vpn-demo details').first()).toHaveAttribute(
     'open',
   );
-  await page
-    .getByRole('link', { name: 'Open the traffic walkthrough' })
-    .click();
-  await expect(page).toHaveURL(/\/vpn-proxy\/#demo$/);
 });
 
 test('VPN categories and catalogue links remain available without JavaScript', async ({

@@ -334,40 +334,6 @@ h4 {
 .about-hero {
   padding-bottom: 4rem;
 }
-.about-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-  margin: 4rem 0 0;
-  border-block: 1px solid var(--divider);
-}
-.about-metrics > div {
-  display: grid;
-  gap: 0.3rem;
-  padding: 1.5rem;
-  border-left: 1px solid var(--divider);
-}
-.about-metrics > div:first-child {
-  border-left: 0;
-}
-.about-metrics dt {
-  font-family: 'JetBrains Mono Variable', monospace;
-  font-size: clamp(1.75rem, 3vw, 2.75rem);
-  font-weight: 600;
-  line-height: 1;
-  color: var(--action);
-}
-.about-metrics dd {
-  display: grid;
-  gap: 0.2rem;
-  margin: 0;
-  font-size: 0.875rem;
-  color: var(--muted);
-}
-.about-metrics dd strong,
-.about-item-index,
-.about-index,
-.about-case-index,
 .about-case-kind,
 .about-tags,
 .about-case-fields dt {
@@ -378,15 +344,8 @@ h4 {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.about-metrics dd strong {
-  color: var(--text);
-}
-.about-indexed-section {
-  padding-block: var(--section-space);
-}
 .about-section-header {
   display: grid;
-  grid-template-columns: minmax(6rem, 1fr) minmax(0, 3fr);
   gap: 2rem;
   align-items: start;
   margin-bottom: 3rem;
@@ -394,19 +353,13 @@ h4 {
 .about-section-header h2 {
   margin: 0;
 }
-.about-section-header p:not(.about-index) {
+.about-section-header p {
   color: var(--muted);
   margin: 1rem 0 0;
 }
-.about-index,
-.about-item-index,
-.about-case-index,
 .about-case-kind,
 .about-case-fields dt {
   color: var(--action);
-}
-.about-index {
-  margin: 0;
 }
 .about-scope-grid {
   display: grid;
@@ -428,7 +381,7 @@ h4 {
 .about-scope-grid h3 {
   margin: 0.6rem 0 0;
 }
-.about-scope-grid article > p:not(.about-item-index) {
+.about-scope-grid article > p {
   color: var(--muted);
 }
 .about-tags {
@@ -448,7 +401,7 @@ h4 {
 }
 .about-case-study summary {
   display: grid;
-  grid-template-columns: minmax(2.5rem, 0.35fr) minmax(0, 3fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 1rem;
   align-items: start;
   padding: 1.5rem 0;
@@ -459,7 +412,7 @@ h4 {
 }
 .about-case-intro {
   display: grid;
-  grid-template-columns: minmax(13rem, 1fr) minmax(6rem, 0.5fr) minmax(0, 2fr);
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, 2fr);
   gap: 1rem;
   align-items: baseline;
 }
@@ -471,9 +424,6 @@ h4 {
 }
 .about-case-kind {
   color: var(--action);
-}
-.about-case-summary {
-  color: var(--muted);
 }
 .about-case-toggle {
   display: grid;
@@ -491,8 +441,6 @@ h4 {
   color: var(--action-text);
   background: var(--action);
   border-color: var(--action);
-}
-.about-case-study[open] .about-case-toggle {
   font-size: 0;
 }
 .about-case-study[open] .about-case-toggle::after {
@@ -502,7 +450,7 @@ h4 {
 .about-case-detail {
   display: grid;
   gap: 2rem;
-  padding: 0 0 2rem 3.5rem;
+  padding: 0 0 2rem;
 }
 .about-case-fields {
   display: grid;
@@ -539,15 +487,6 @@ h4 {
   flex-wrap: wrap;
   gap: 0.5rem 1.5rem;
 }
-.about-boundaries {
-  max-width: var(--reading-width);
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--divider);
-}
-.about-boundaries-title {
-  margin: 0 0 1.5rem;
-  font-weight: 600;
-}
 .about-prose-section {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
@@ -556,8 +495,6 @@ h4 {
 }
 .about-prose-section .about-section-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 0.75rem;
   margin: 0;
 }
 .about-prose-section .about-section-header h2 {
@@ -572,34 +509,16 @@ h4 {
   font-size: clamp(1.125rem, 1.5vw, 1.35rem);
   line-height: 1.5;
 }
-.about-principles {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.about-principles li,
 .about-signal-list > div {
   display: grid;
-  grid-template-columns: 2.25rem minmax(10rem, 0.9fr) minmax(0, 1.6fr);
+  grid-template-columns: minmax(10rem, 0.9fr) minmax(0, 1.6fr);
   gap: 1rem;
   align-items: baseline;
   padding: 1.25rem 0;
   border-top: 1px solid var(--divider);
 }
-.about-principles h3 {
-  margin: 0;
-  font-size: 1rem;
-  letter-spacing: normal;
-}
-.about-principles p {
-  margin: 0;
-  color: var(--muted);
-}
 .about-signal-list {
   margin: 0;
-}
-.about-signal-list > div {
-  grid-template-columns: minmax(10rem, 0.9fr) minmax(0, 1.6fr);
 }
 .about-signal-list dt {
   font-family: 'JetBrains Mono Variable', monospace;
@@ -791,10 +710,8 @@ h4 {
 .feature-grid p {
   color: var(--muted);
 }
-.feature-number {
-  font-family: 'JetBrains Mono Variable', monospace;
-  font-size: 0.875rem;
-  color: var(--accent, var(--muted));
+.guide-cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
 }
 .glossary,
 .prose {
@@ -928,10 +845,6 @@ details > section {
   gap: 0.65rem;
   min-height: 44px;
 }
-.privacy-consent-status {
-  min-height: 1.5em;
-  margin: 0.5rem 0 0 !important;
-}
 .demo-panel {
   border: 1px solid var(--rule);
   border-radius: var(--panel-radius);
@@ -1045,10 +958,6 @@ code {
   align-items: center;
   overflow-wrap: anywhere;
 }
-.email-status[data-state='ok'] {
-  color: var(--success);
-  font-weight: 600;
-}
 .diagram {
   margin: 1.5rem 0 0;
   color: var(--accent, var(--muted));
@@ -1093,13 +1002,15 @@ code {
 }
 .hero-outline > a,
 .hero-outline > div {
-  display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr) auto;
   align-items: start;
   gap: 1rem;
   padding: 1.5rem 0;
   border-bottom: 1px solid var(--divider);
   text-decoration: none;
+}
+.hero-outline > a {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 .hero-outline > a:hover .outline-title {
   text-decoration: underline;
@@ -1115,11 +1026,9 @@ code {
   font-size: 0.875rem;
   margin: 0.4rem 0 0;
 }
-.hero-outline svg,
-.hero-outline > a > span {
+.hero-outline svg {
   color: var(--action);
 }
-.playground-section,
 .product-demo {
   padding-bottom: var(--section-space);
 }
@@ -1133,12 +1042,9 @@ code {
 .product-card {
   display: flex;
   flex-direction: column;
-  gap: 1.75rem;
-  padding: clamp(1.25rem, 2.2vw, 2rem);
-  background: var(--surface);
-  border: 1px solid var(--divider);
-  border-radius: var(--panel-radius);
-  box-shadow: var(--panel-shadow);
+  gap: 1rem;
+  padding: 1.5rem 0;
+  border-top: 1px solid var(--divider);
 }
 .product-card-top {
   display: flex;
@@ -1150,35 +1056,12 @@ code {
   font-size: 1.55rem;
   margin: 0.75rem 0;
 }
-.product-card-copy > .eyebrow {
-  font-size: 0.75rem;
-  letter-spacing: 0.07em;
-}
-.product-card-copy > p:not(.product-promise),
-.product-capabilities span {
+.product-card-copy > p {
   color: var(--muted);
   font-size: 0.875rem;
 }
 .product-card-copy > p:last-child {
   margin-bottom: 0;
-}
-.product-promise {
-  font-weight: 550;
-}
-.product-capabilities {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.product-capabilities li {
-  display: grid;
-  gap: 0.2rem;
-  padding: 0.85rem 0;
-  border-top: 1px solid var(--divider);
-}
-.product-capabilities strong {
-  font-size: 0.875rem;
-  font-weight: 600;
 }
 .product-links {
   display: grid;
@@ -1218,6 +1101,16 @@ code {
 .product-evidence {
   margin-top: 3rem;
   align-items: start;
+}
+.landing-list {
+  margin: 1.25rem 0;
+  padding-left: 1.15rem;
+  max-width: var(--reading-width);
+}
+.landing-list li {
+  font-size: 0.875rem;
+  color: var(--muted);
+  margin: 0.6rem 0;
 }
 .ops-peaks,
 .ops-metrics {
@@ -1260,9 +1153,7 @@ code {
   margin-bottom: 1.25rem;
 }
 .demo-output,
-.demo-inputs,
-.preview-detail,
-.preview-inputs {
+.demo-inputs {
   display: flow-root;
   min-width: 0;
 }
@@ -1449,22 +1340,6 @@ select:disabled {
   .hero {
     padding-block: 2rem 3.5rem;
   }
-  .hero-proof::before {
-    inset: -1.5rem -12px;
-  }
-  .about-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    margin-top: 2.5rem;
-  }
-  .about-metrics > div:nth-child(odd) {
-    border-left: 0;
-  }
-  .about-metrics > div:nth-child(n + 3) {
-    border-top: 1px solid var(--divider);
-  }
-  .about-metrics > div {
-    padding: 1.25rem;
-  }
   .about-section-header,
   .about-prose-section {
     display: block;
@@ -1482,7 +1357,7 @@ select:disabled {
     grid-template-columns: minmax(0, 1fr);
   }
   .about-case-study summary {
-    grid-template-columns: 2.25rem minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
   .about-case-intro {
     grid-template-columns: minmax(0, 1fr);
@@ -1494,7 +1369,6 @@ select:disabled {
   .about-prose {
     margin-top: 2rem;
   }
-  .about-principles li,
   .about-signal-list > div {
     grid-template-columns: minmax(0, 1fr);
     gap: 0.4rem;

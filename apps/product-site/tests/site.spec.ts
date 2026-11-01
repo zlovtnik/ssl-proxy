@@ -8,7 +8,6 @@ import {
   email,
   author,
   home,
-  homeSections,
   products,
   sampleProducts,
   octopusCaveat,
@@ -127,6 +126,32 @@ test('public routes and committed evidence expose no internal dashboard addresse
   }
 });
 
+test('public prose uses the preferred name and avoids semicolon punctuation', async ({
+  page,
+}) => {
+  for (const route of [...routes, '/404.html']) {
+    await page.goto(route);
+    const prose = await page.locator('body').evaluate((body) => {
+      const copy = body.cloneNode(true) as HTMLElement;
+      copy
+        .querySelectorAll('code, pre, script, style, noscript')
+        .forEach((element) => element.remove());
+      return copy.textContent ?? '';
+    });
+    expect(prose, route).not.toContain(';');
+    expect(await page.content(), route).not.toMatch(/dos Santos/i);
+    expect(await page.title(), route).not.toContain(';');
+    for (const content of await page
+      .locator(
+        'meta[name="description"], meta[property="og:title"], meta[property="og:description"]',
+      )
+      .evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute('content') ?? ''),
+      ))
+      expect(content, `${route} metadata`).not.toContain(';');
+  }
+});
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem(
@@ -140,26 +165,28 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('header stays visible and product samples preserve the landing layout', async ({
+test('homepage sample links open the corresponding project demos', async ({
   page,
 }) => {
   await page.goto('/');
-  const preview = page.locator('.landing-playground');
+  await expect(page.locator('#playground, .landing-playground')).toHaveCount(0);
   await expect(
-    preview.getByRole('button', { name: 'Schema Migrator', exact: true }),
-  ).toBeEnabled();
+    page.getByRole('heading', { name: 'Try the interfaces' }),
+  ).toHaveCount(0);
   for (const product of sampleProducts) {
-    await page
-      .getByRole('link', { name: `Try the ${product.name} sample` })
-      .click();
+    const link = page.getByRole('link', {
+      name: `Try the ${product.name} sample`,
+    });
+    await expect(link).toHaveAttribute('href', `${product.path}#demo`);
+    await link.click();
+    await expect(page).toHaveURL(
+      new URL(`${product.path}#demo`, 'http://127.0.0.1:4323').href,
+    );
+    await expect(page.locator('#demo')).toBeVisible();
     await expect(
-      preview.getByRole('button', { name: product.name, exact: true }),
-    ).toHaveAttribute('aria-pressed', 'true');
-    expect(new URL(page.url()).pathname).toBe('/');
-    await expect(preview.locator('.preview-panel:visible')).toHaveCount(1);
-    const panel = (await preview.boundingBox())!;
-    const next = (await page.locator('#products').boundingBox())!;
-    expect(panel.y).toBeGreaterThanOrEqual(next.y + next.height);
+      page.locator('#demo select, #demo button').first(),
+    ).toBeEnabled();
+    await page.goBack();
   }
   await page
     .getByRole('navigation', { name: 'Main navigation', exact: true })
@@ -180,73 +207,27 @@ test('header stays visible and product samples preserve the landing layout', asy
   await expect(page.locator('.product-card')).toHaveCount(4);
 });
 
-test('landing preview filters site-scoped wireless samples and reviews migration steps', async ({
-  page,
+test('homepage sample links remain usable without JavaScript', async ({
+  browser,
 }) => {
-  await page.goto('/');
-  const preview = page.locator('.landing-playground');
-  await expect(
-    preview.getByRole('button', { name: 'Schema Migrator', exact: true }),
-  ).toBeEnabled();
-  await expect(
-    preview.getByRole('button', { name: /North Campus/ }),
-  ).toHaveAttribute('aria-pressed', 'true');
-  await expect(
-    preview.getByRole('button', { name: /West Distribution/ }),
-  ).toHaveAttribute('aria-pressed', 'false');
-  await preview
-    .getByLabel('Filter sample sites, indicators, and observations')
-    .fill('West Distribution');
-  await expect(preview.getByRole('status')).toContainText('1 wireless samples');
-  await preview
-    .getByRole('button', { name: /West Distribution/ })
-    .press('Space');
-  await expect(preview.locator('.preview-evidence')).toContainText(
-    'deauthentication observation followed by a reassociation observation',
-  );
-  await preview
-    .getByLabel('Filter sample sites, indicators, and observations')
-    .fill('no-matching-record');
-  await expect(preview.getByRole('status')).toContainText('0 wireless samples');
-  await expect(preview.locator('.preview-evidence')).toHaveCount(0);
-  await preview
-    .getByLabel('Filter sample sites, indicators, and observations')
-    .fill('');
-  for (const theme of ['dark']) {
-    await page.evaluate(
-      (value) => (document.documentElement.dataset.theme = value),
-      theme,
-    );
-    await preview
-      .getByRole('button', { name: 'Atheros Search', exact: true })
-      .click();
-    expect(
-      (await new AxeBuilder({ page }).withTags(tags).analyze()).violations,
-    ).toEqual([]);
-    await preview
-      .getByRole('button', { name: 'Schema Migrator', exact: true })
-      .press('Space');
-    for (const name of [
-      'Inspect SQL',
-      'Review validation',
-      'Examine plan',
-      'Inspect run record',
-    ]) {
-      const button = preview.getByRole('button', { name, exact: true });
-      await button.click();
-      await expect(button).toHaveAttribute('aria-pressed', 'true');
-      expect(
-        (await new AxeBuilder({ page }).withTags(tags).analyze()).violations,
-      ).toEqual([]);
-      for (const width of [1440, 1024, 768, 375, 320]) {
-        await page.setViewportSize({ width, height: 900 });
-        expect(
-          await page.evaluate(
-            () => document.documentElement.scrollWidth <= innerWidth,
-          ),
-        ).toBe(true);
-      }
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  try {
+    const page = await context.newPage();
+    for (const product of sampleProducts) {
+      await page.goto('http://127.0.0.1:4323/');
+      await page
+        .getByRole('link', { name: `Try the ${product.name} sample` })
+        .click();
+      await expect(page).toHaveURL(
+        new URL(`${product.path}#demo`, 'http://127.0.0.1:4323').href,
+      );
+      await expect(page.locator('#demo')).toContainText(/synthetic/i);
+      expect(await page.locator('#demo').textContent()).toContain(
+        product.caveat,
+      );
     }
+  } finally {
+    await context.close();
   }
 });
 
@@ -394,7 +375,7 @@ test('Atheros Search explains retrieval boundaries and links component details',
 }) => {
   await page.goto('/atheros-search/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-    'Trace ingestion. Retrieve the evidence.',
+    products.find((product) => product.id === 'search')!.headline.join(' '),
   );
   await expect(
     page.getByText('Generated answers and new connectors remain future work.', {
@@ -403,7 +384,7 @@ test('Atheros Search explains retrieval boundaries and links component details',
   ).toBeVisible();
   await expect(
     page.getByText(
-      'Operational readings are global unless explicitly scoped; missing data stays unknown.',
+      'Operational readings are global unless explicitly scoped. Missing data stays unknown.',
       { exact: false },
     ),
   ).toBeVisible();
@@ -489,10 +470,9 @@ test('email requests have the recipient, product subjects, and honest scheduling
     ),
   ).toBe('rafael@rclabs.uk');
   await expect(
-    page.getByText(
-      'This is an email conversation; hosted product access is not provisioned here.',
-      { exact: false },
-    ),
+    page.getByText('Hosted product access is not provisioned here.', {
+      exact: false,
+    }),
   ).toBeVisible();
 });
 
@@ -1003,21 +983,13 @@ test('rendered text and control boundaries meet the documented targets in every 
       await page.setViewportSize({ width, height: 1000 });
       const state = `${route} ${width}px`;
       await audit(`${state} page`);
-      const choices =
-        route === '/'
-          ? sampleProducts
-          : sampleProducts.filter((product) => product.path === route);
+      const choices = sampleProducts.filter(
+        (product) => product.path === route,
+      );
       for (const product of choices) {
-        if (route === '/')
-          await page
-            .locator('.preview-switch')
-            .getByRole('button', { name: product.name, exact: true })
-            .click();
         if (product.id === 'migrator') {
           for (const step of await page
-            .locator(
-              route === '/' ? '.preview-steps button' : '.step-controls button',
-            )
+            .locator('.step-controls button')
             .all()) {
             await step.click();
             await audit(`${state} ${await step.textContent()}`);
@@ -1027,17 +999,6 @@ test('rendered text and control boundaries meet the documented targets in every 
           for (const option of await flow.locator('option').all()) {
             await flow.selectOption((await option.getAttribute('value'))!);
             await audit(`${state} ${await option.textContent()}`);
-          }
-        } else if (route === '/') {
-          const filter = page.getByLabel(
-            'Filter sample sites, indicators, and observations',
-          );
-          await filter.fill('no-results');
-          await audit(`${state} empty search`);
-          await filter.fill('');
-          for (const record of await page.locator('.preview-record').all()) {
-            await record.click();
-            await audit(`${state} ${await record.textContent()}`);
           }
         } else {
           for (const sample of ['0', '1']) {
@@ -1096,25 +1057,6 @@ test('sample caveats ship from the content model beside the content they qualify
     );
     await page.locator('#demo').scrollIntoViewIfNeeded();
   }
-  await page.goto('/');
-  const home = await page.content();
-  for (const product of sampleProducts)
-    expect(
-      home.includes(product.caveat),
-      `${product.name} caveat in the playground`,
-    ).toBe(true);
-  await page
-    .getByRole('button', { name: 'Atheros Search', exact: true })
-    .click();
-  await expect(
-    page.getByRole('link', { name: 'Open the Search sample workflow' }),
-  ).toHaveAttribute('href', `${products[0].path}#demo`);
-  await page
-    .getByRole('button', { name: 'Schema Migrator', exact: true })
-    .click();
-  await expect(
-    page.getByRole('link', { name: 'Open the migration walkthrough' }),
-  ).toHaveAttribute('href', `${products[1].path}#demo`);
 });
 
 test('every tabbable control shows a compliant focus ring and keeps tab order', async ({
@@ -1300,14 +1242,6 @@ test('the four product routes share the same section structure from the model', 
         }),
         `${product.name} ${section}`,
       ).toHaveCount(1);
-    // Shared structure; each product keeps its own model labels.
-    for (const section of ['workflow', 'value', 'evidence'] as const)
-      await expect(
-        page.locator('.section-heading .eyebrow', {
-          hasText: product.sections[section].label,
-        }),
-        `${product.name} ${section} label`,
-      ).toHaveCount(1);
     await expect(page.locator('.workflow-step')).toHaveCount(3);
     await expect(page.locator('.audience-card')).toHaveCount(2);
     await expect(page.locator('.evidence-panel')).toHaveCount(1);
@@ -1341,7 +1275,7 @@ test('each product demo appears once below its introduction', async ({
   }
 });
 
-test('homepage metadata, identity markup and technical sections ship from the model', async ({
+test('homepage identity and guide destinations remain available after shortening', async ({
   page,
 }) => {
   await page.goto('/');
@@ -1376,38 +1310,32 @@ test('homepage metadata, identity markup and technical sections ship from the mo
   expect(nodes[1].publisher['@id']).toBe(nodes[0]['@id']);
   expect(nodes[0]['@id']).toBe(siteOrigin + '/#author');
 
-  // Every modelled section is published once, with its own heading.
-  for (const section of Object.values(homeSections)) {
-    await expect(page.locator(`#${section.id}`), section.id).toHaveCount(1);
-    await expect(
-      page.getByRole('heading', { level: 2, name: section.title }),
-      section.id,
-    ).toHaveCount(1);
-  }
   await expect(page.locator('#products .product-card h2')).toHaveText(
     products.map((product) => product.homeTitle),
   );
-
-  // The four new calls to action keep their documented destinations.
-  await expect(
-    page.getByRole('link', { name: homeSections.guide.sample.primary.label }),
-  ).toHaveAttribute('href', homeSections.guide.sample.primary.href);
-  await expect(
-    page.getByRole('link', { name: homeSections.guide.sample.secondary.label }),
-  ).toHaveAttribute('href', homeSections.guide.sample.secondary.href);
-  await expect(
-    page.getByRole('link', { name: homeSections.comparison.cta.label }),
-  ).toHaveAttribute('href', homeSections.comparison.cta.href);
-  await expect(
-    page.getByRole('link', {
-      name: homeSections.benchmark.status.sample.label,
-      exact: true,
-    }),
-  ).toHaveAttribute('href', homeSections.benchmark.status.sample.href);
-  // The benchmark stays a protocol until results are measured.
-  await expect(page.locator('#search-benchmark')).toContainText(
-    'No relevance, latency, or storage figures appear here yet',
-  );
+  for (const product of products) {
+    const card = page.locator(`#products .product-card.${product.id}`);
+    await expect(card).toContainText(product.cardSummary);
+    await expect(card.locator(`a[href="${product.path}"]`)).toBeVisible();
+  }
+  // Full chapters live on guide routes; legacy homepage fragments still land
+  // at the guide index and all six destinations remain usable without scripting.
+  for (const fragment of [
+    'approach',
+    'postgres-migration-review',
+    'technical-reference',
+    'workflow-comparison',
+    'search-benchmark',
+  ]) {
+    await expect(page.locator(`#guides #${fragment}`)).toHaveCount(1);
+  }
+  for (const guide of guides) {
+    const link = page
+      .locator('#guides')
+      .getByRole('link', { name: guide.title, exact: true });
+    await expect(link).toHaveAttribute('href', guidePath(guide.slug));
+    expect((await page.request.get(guidePath(guide.slug))).ok()).toBe(true);
+  }
   // Other pages can describe their visible breadcrumbs without claiming identity.
   for (const route of routes.slice(1)) {
     await page.goto(route);
@@ -1499,13 +1427,6 @@ test('GA4 waits for consent, tracks safe events, and stops on withdrawal', async
       ),
     )
     .toBe(true);
-  await page
-    .getByLabel('Filter sample sites, indicators, and observations')
-    .fill('visitor@example.com');
-  await page
-    .locator('#playground')
-    .getByRole('button', { name: 'Schema Migrator', exact: true })
-    .click();
   const inspectDataLayer = async () => {
     const snapshot = await page.evaluate(() => {
       const entries =
@@ -1523,13 +1444,22 @@ test('GA4 waits for consent, tracks safe events, and stops on withdrawal', async
   };
   const queued = await inspectDataLayer();
   expect(queued).toContain('page_view');
-  expect(queued).toContain('sample_interaction');
   expect(queued).toContain('linkedin');
   expect(queued).toContain('fall-2026');
   expect(queued).not.toContain('visitor@example.com');
   expect(queued).not.toContain('person=');
   expect(queued).not.toContain('search=');
   expect(queued).not.toContain('mailto:');
+
+  await page.goto(
+    'http://127.0.0.1:4323/atheros-search/?person=visitor%40example.com&search=confidential#demo',
+  );
+  await page.getByRole('button', { name: 'Try the next sample site' }).click();
+  const sampleEvents = await inspectDataLayer();
+  expect(sampleEvents).toContain('sample_interaction');
+  expect(sampleEvents).not.toContain('visitor@example.com');
+  expect(sampleEvents).not.toContain('person=');
+  expect(sampleEvents).not.toContain('search=');
 
   await page.goto('http://127.0.0.1:4323/about/');
   const aboutPageView = await inspectDataLayer();

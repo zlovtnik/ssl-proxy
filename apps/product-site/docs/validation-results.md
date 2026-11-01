@@ -4,6 +4,60 @@ This record covers the four-project site and technical guides: the shared
 RCLabs dark/green visual system, product catalogue, natural-height demos and
 disclosures, and search routing. No accessibility conformance claim is made.
 
+## 2026-10-31: direct project samples and editorial rules
+
+- Removed the combined homepage playground and its exclusive styles. Project
+  links now navigate directly to dedicated samples without click interception.
+  Existing project demos and Octopus runtime metrics remain on their routes.
+- Public pages, metadata, structured data, resume and privacy copy now use
+  Rafael Cardoso. Site-wide rules prohibit semicolons in public prose while
+  preserving code and SQL syntax. Browser coverage checks all 19 pages.
+- `npm run build` passed with zero Astro/TypeScript diagnostics and 19 pages.
+- `npm test`: 89 passed, two production-only analytics tests skipped because
+  no measurement ID is configured. Both JavaScript and no-JavaScript sample
+  navigation pass, alongside the existing project interaction checks.
+- `npm run review` completed 38 desktop/mobile route runs with zero page errors.
+  Homepage desktop/mobile screenshots and the mobile Search interaction were
+  inspected. The visual verdict is 94/100 for the requested simplification.
+  These local lab runs are not field performance or accessibility-conformance
+  evidence.
+- Touched-file formatting, `git diff --check`, and the repository documentation
+  checker pass. The full formatting command reports six pre-existing warnings
+  in untouched Contact, MigratorDemo, SearchDemo and the Search, Migrator and
+  VPN route files. The same warnings reproduce from their HEAD versions.
+- Generated build, test and screenshot outputs were refreshed locally. Visual
+  verdict state is stored under ignored `.omx/`. No publication was performed.
+  Assistive-technology and participant evaluation remain pending.
+
+## 2026-10-31: site-wide editorial cleanup
+
+- Baseline and final `npm run build` passed. The final build reports zero
+  Astro/TypeScript errors, warnings or hints and produces all 19 pages.
+- Baseline and final `npm test`: 88 passed; two production analytics tests
+  skipped because no measurement ID is configured. Existing metrics, samples,
+  keyboard, contrast, forced-colours, reflow, print and no-JavaScript coverage
+  remain intact. The portfolio test now follows every guide link without JS.
+- The first post-edit run found a duplicate guide landmark name and three
+  assertions tied to old copy. The landmark names are now distinct; assertions
+  retain the Search production-scope and contact limitations in the final copy.
+- `npm run review` completed 38 desktop/mobile runs across all 19 routes,
+  including the guide index, six guides and 404 page, with zero page errors.
+  Desktop/mobile route overviews and the full homepage, catalogue and Octopus
+  composition were inspected. The final visual verdict is 92/100.
+- The initial screenshot attempt used the changing development server and
+  timed out waiting for hydration. The complete successful run used the stable
+  built-site preview. The lab measurements are not field performance evidence.
+- Guide section bodies, SQL examples, caveats and source links were compared
+  before and after removing the unused homepage model and remained identical.
+- Touched-file Prettier checks, `git diff --check`, and the repository
+  `python3 scripts/check-docs.py` pass. There is no separate lint script in this
+  app; Astro diagnostics provide static/type checking.
+- Generated build, browser-report, screenshot and visual-verdict artifacts were
+  regenerated locally. No dependencies, runtime metrics code, resume facts,
+  hosting or deployment configuration changed.
+- VoiceOver/Safari, NVDA/Firefox and participant evaluation remain pending.
+  Backend integration suites were not run for this frontend-only cleanup.
+
 ## 2026-10-27: hiring portfolio and current resume
 
 - `npm run build`: passed; Astro/TypeScript reported zero errors, warnings, or
@@ -90,9 +144,9 @@ earlier revision and do not verify the 2026-10-09 changes:
   A repository-wide formatting cleanup was not performed.
 
 The browser suite covers the shared dark theme (including saved light/system
-values and system colour preferences being ignored), product switching, all
+values and system colour preferences being ignored), all
 three synthetic samples, focus, contrast, responsive reflow, and link
-destinations across all 15 public content routes. It confirms the display-settings
+destinations across all 19 public pages. It confirms the display-settings
 dock is absent while previously
 saved display choices still apply.
 
@@ -107,8 +161,8 @@ saved display choices still apply.
 
 The shared dark theme should be checked on the homepage, catalogue, and each
 product sample. The expected layout is a short intro beside a workflow outline,
-followed by a full-width demo in normal document flow. The homepage playground
-shows one selected product at a time; inactive panels are hidden and inert.
+followed by a full-width demo in normal document flow. The homepage links
+directly to dedicated project samples and does not embed a combined playground.
 
 ## Manual work still required
 

@@ -13,18 +13,18 @@ with `make theme-check`. Do not hand-edit colour hexes in `site.css`.
 
 ## Palette
 
-| Role | Shared dark theme |
-| --- | --- |
-| Page | `#090909` |
-| Panel | `#141414` |
-| Raised surface | `#1C1C1C` |
-| Inset surface | `#0E0E0E` |
-| Main text | `#F5F5F2` |
-| Secondary text | `#BEC2B9` |
-| Action / product accent / focus | `#A3E6A3` |
-| Action text | `#102010` |
-| Control boundary | `#7D8278` |
-| Decorative divider | `#343632` |
+| Role                            | Shared dark theme |
+| ------------------------------- | ----------------- |
+| Page                            | `#090909`         |
+| Panel                           | `#141414`         |
+| Raised surface                  | `#1C1C1C`         |
+| Inset surface                   | `#0E0E0E`         |
+| Main text                       | `#F5F5F2`         |
+| Secondary text                  | `#BEC2B9`         |
+| Action / product accent / focus | `#A3E6A3`         |
+| Action text                     | `#102010`         |
+| Control boundary                | `#7D8278`         |
+| Decorative divider              | `#343632`         |
 
 Dark is the only theme. The public site, Search, Migrator web and desktop, and
 custom Keycloak login share the six core RCLabs colours. The site renders dark
@@ -50,8 +50,9 @@ are not control boundaries.
 - Shell: 1280px maximum. Gutters: 24px mobile, 32px tablet, 48px desktop.
 - Reading width: 64ch by default.
 - Section spacing: 96px desktop, 56px mobile. Controls: 6px radius; panels: 12px.
-- Product cards: two columns at desktop and tablet, one below 768px, so four
-  products form balanced rows without narrowing the reading width.
+- Project cards use open rows with dividing rules, one description and links.
+  They use two columns above 768px and one below. Six-guide lists use up to three
+  columns, with at least 20rem per column when space allows.
 - Heroes place introductory copy beside a short workflow outline and stack
   below 1024px. Demos always occupy a separate full-width section below.
 - Demo inputs and results use two columns at desktop and stack below 768px.
@@ -59,10 +60,9 @@ are not control boundaries.
 
 ## Expansion and interaction
 
-The playground keeps each product's state mounted. Inactive panels use
-`hidden`, `inert`, and `aria-hidden`; they occupy no layout space. Visible
-panels grow naturally. No overlapping grid placement or fixed preview height
-is used.
+Homepage project links navigate directly to each project's dedicated sample.
+Do not intercept these links or combine the samples into a homepage switcher.
+Project demos grow naturally in document flow without a fixed preview height.
 
 Octopus UX islands follow the same progressive-enhancement rules. Pipeline
 emphasis keeps all three workflow steps visible. Both audience cards are
@@ -100,9 +100,12 @@ and partial refreshes. The widget uses one inset surface,
 tabular numbers, explicit status text, and quiet dividers.
 [octopus.css](../src/styles/octopus.css) composes shared tokens.
 
-The homepage technical sections retain captioned tables, scoped headers, native
-disclosures, and labelled diagrams. Wide tables scroll inside named,
-keyboard-accessible regions. Product comparisons use responsive definition lists.
+Technical guides retain captioned tables, scoped headers, and labelled examples.
+Wide tables scroll inside named, keyboard-accessible regions. The homepage links
+to those guides instead of repeating full chapters. Product comparisons use
+responsive definition lists. Hero summaries and feature lists omit ornamental
+numbering; real migration and pipeline sequences retain their step order.
+Octopus uses the shared hero treatment without a decorative graph or glow.
 
 Browser zoom, custom styles, forced colours, and system reduced-motion settings
 remain supported. Previously saved text size, line width, spacing, and movement

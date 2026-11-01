@@ -1,6 +1,6 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { email } from '../../data/products';
+import { accessibility, email } from '../../data/products';
 ---
 
 <Layout
@@ -14,15 +14,8 @@ import { email } from '../../data/products';
         <span aria-hidden="true">/</span>
         <span aria-current="page">Accessibility statement</span>
       </nav>
-      <p class="eyebrow">ACCESSIBILITY / PUBLIC PRODUCT SITE</p>
-      <h1>
-        Make the details
-        <span class="muted">accessible to everyone.</span>
-      </h1>
-      <p class="lead">
-        Our target is all applicable WCAG 2.2 A, AA, and AAA criteria.
-        Evaluation is in progress. We do not currently claim conformance.
-      </p>
+      <h1>{accessibility.title}</h1>
+      <p class="lead">{accessibility.summary}</p>
     </div>
   </section>
   <section class="section prose">

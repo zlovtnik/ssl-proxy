@@ -239,8 +239,7 @@ if (configuredMeasurementId && consentPanel) {
         link &&
         (isEmail ||
           link.classList.contains('button') ||
-          link.classList.contains('text-link') ||
-          link.hasAttribute('data-preview'))
+          link.classList.contains('text-link'))
       ) {
         send(isEmail ? 'mailto_click' : 'cta_click', {
           cta_type: isEmail ? 'email' : 'site_link',

@@ -11,7 +11,7 @@ export const investigations = [
     source: 'Beacon observation / sample',
     channel: 'Channel 6 / 09:42 UTC / sample time',
     explanation:
-      'A sample beacon advertises an SSID that resembles a configured network name. The sensor can raise this configured heuristic as an indicator for analyst review; the match alone does not prove a rogue access point.',
+      'A sample beacon advertises an SSID that resembles a configured network name. The sensor can raise this configured heuristic as an indicator for analyst review. The match alone does not prove a rogue access point.',
     relation:
       'Sensor 02 recorded a beacon from observed access point 07 on channel 6 at the sample time. This synthetic relationship does not prove an active connection or physical device identity.',
   },
@@ -60,10 +60,52 @@ export const migrationSteps = [
 
 // Labels and decisions are fixed illustrations, not a browser policy engine.
 export const trafficFlows = [
-  { category: 'ads_tracker', label: 'Advertising / tracker', destination: 'ads.example.test:443', decision: 'Block', reason: 'The sample configuration blocks this destination. Its advertising/tracking category is a heuristic label, not proof of malicious traffic.' },
-  { category: 'analytics', label: 'Analytics', destination: 'metrics.example.test:443', decision: 'Block', reason: 'This fictional analytics destination matches a configured block rule in the sample. Other deployments may handle it differently.' },
-  { category: 'cdn', label: 'Content delivery', destination: 'cdn.example.test:443', decision: 'Bypass inspection', reason: 'The sample configuration forwards this content-delivery flow through its bypass path.' },
-  { category: 'essential_api', label: 'Essential API', destination: 'api.example.test:443', decision: 'Bypass inspection', reason: 'The sample configuration bypasses inspection for this application endpoint. The category does not guarantee that a service is essential in your environment.' },
-  { category: 'auth', label: 'Authentication', destination: 'login.example.test:443', decision: 'Bypass inspection', reason: 'A configured exception sends this sample authentication flow through the bypass path.' },
-  { category: 'unknown', label: 'Unknown traffic', destination: 'unclassified.example.test:9443', decision: 'Block', reason: 'The sample has no matching category heuristic and uses a configured block rule. Unknown traffic is not automatically malicious or automatically blocked in every deployment.' },
+  {
+    category: 'ads_tracker',
+    label: 'Advertising / tracker',
+    destination: 'ads.example.test:443',
+    decision: 'Block',
+    reason:
+      'The sample configuration blocks this destination. Its advertising/tracking category is a heuristic label, not proof of malicious traffic.',
+  },
+  {
+    category: 'analytics',
+    label: 'Analytics',
+    destination: 'metrics.example.test:443',
+    decision: 'Block',
+    reason:
+      'This fictional analytics destination matches a configured block rule in the sample. Other deployments may handle it differently.',
+  },
+  {
+    category: 'cdn',
+    label: 'Content delivery',
+    destination: 'cdn.example.test:443',
+    decision: 'Bypass inspection',
+    reason:
+      'The sample configuration forwards this content-delivery flow through its bypass path.',
+  },
+  {
+    category: 'essential_api',
+    label: 'Essential API',
+    destination: 'api.example.test:443',
+    decision: 'Bypass inspection',
+    reason:
+      'The sample configuration bypasses inspection for this application endpoint. The category does not guarantee that a service is essential in your environment.',
+  },
+  {
+    category: 'auth',
+    label: 'Authentication',
+    destination: 'login.example.test:443',
+    decision: 'Bypass inspection',
+    reason:
+      'A configured exception sends this sample authentication flow through the bypass path.',
+  },
+  {
+    category: 'unknown',
+    label: 'Unknown traffic',
+    destination: 'unclassified.example.test:9443',
+    decision: 'Block',
+    reason:
+      'The sample has no matching category heuristic and uses a configured block rule. Unknown traffic is not automatically malicious or automatically blocked in every deployment.',
+  },
 ] as const;

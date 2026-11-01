@@ -18,9 +18,24 @@ substitute for assistive-technology or participant testing.
 | Content and status      | CODE: synthetic labels, visible caveats, glossary definitions, and polite status messages.                                                                                                                                                                                                                                                                                              | MANUAL: clarity and announcement timing with VoiceOver/Safari and NVDA/Firefox.                    |
 | Non-text content        | CODE: labelled diagrams and decorative SVGs hidden from the accessibility tree.                                                                                                                                                                                                                                                                                                         | MANUAL: equivalent-text usefulness.                                                                |
 | Operational evidence    | CODE: semantic metric definitions, distinct feed status text, a polite status announcement, separate UTC reading/history timestamps, and a native methodology disclosure. Missing or expired snapshots show a compact explanation and workflow link. No-JavaScript output has no measurements and retains that link. Regression tests cover refresh, stale data, failure, and recovery. | MANUAL: screen-reader interpretation of periods, partial weeks, and update announcements.          |
-| Octopus UX islands      | CODE: labelled pipeline and audience controls; inactive audience content uses `hidden`, `inert`, and `aria-hidden`; decorative motif and status dot stay hidden from assistive technology. Metrics have no count-up animation. Layout tests cover 320-1440px and 200% text.                                                                                                             | MANUAL: keyboard order, forced-colours, switch access, and announcement timing.                    |
+| Octopus UX islands      | CODE: labelled pipeline and audience controls; inactive audience content uses `hidden`, `inert`, and `aria-hidden`; the decorative status dot stays hidden from assistive technology. Metrics have no count-up animation. Layout tests cover 320-1440px and 200% text.                                                                                                                  | MANUAL: keyboard order, forced-colours, switch access, and announcement timing.                    |
 
 ## Current automated coverage
+
+The 2026-10-31 homepage sample revision removes the combined playground.
+Automated navigation tests follow each homepage sample link to its dedicated
+project page with JavaScript enabled and disabled. Project-route keyboard,
+contrast, focus, reflow, sample interactions and caveat checks remain covered.
+The rendered-prose check covers all 19 pages, including hidden disclosure text
+and page metadata, for the preferred public name and semicolon-free prose.
+Code and SQL examples retain their required punctuation.
+
+The 2026-10-31 cleanup retains the no-JavaScript guide navigation and all
+product interactions. The guide index gives its introduction and guide list
+distinct landmark names. Decorative numbering and the Octopus hero animation
+were removed. The automated and visual checks recorded in
+[validation results](validation-results.md) do not replace the pending
+assistive-technology and participant evaluation below.
 
 The [portfolio regressions](../tests/portfolio.spec.ts) check the hiring path and
 project disclosures without JavaScript, distinct employment and project email
