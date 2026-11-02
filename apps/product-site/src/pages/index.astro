@@ -1,19 +1,11 @@
 ---
-import { ArrowRight, ArrowUpRight, Plus } from '@lucide/astro';
+import { ArrowDown, ArrowUpRight, Plus } from '@lucide/astro';
 import Layout from '../layouts/Layout.astro';
-import Contact from '../components/Contact.astro';
-import ProductCards from '../components/ProductCards.astro';
-import ProjectStudies from '../components/ProjectStudies.astro';
-import ProfessionalExperience from '../components/ProfessionalExperience.astro';
-import HiringContact from '../components/HiringContact.astro';
 import {
-  allProducts,
   email,
   author,
   home,
-  guides,
   guidePath,
-  guideIndex,
   hiring,
   portfolio,
 } from '../data/products';
@@ -51,90 +43,123 @@ const structuredData = {
 >
   <section id="top" class="hero home-hero" aria-labelledby="hero-title">
     <div class="hero-copy">
-      <p class="eyebrow">
-        <span class="eyebrow-stroke" aria-hidden="true" />
-        {home.eyebrow}
-      </p>
+      <p class="eyebrow">{home.eyebrow}</p>
       <h1 id="hero-title">
         {home.headline[0]} <span class="accent">{home.headline[1]}</span>
       </h1>
       <p class="lead">{home.subheadline}</p>
       <div class="actions">
         <a class="button primary" href={home.primaryCta.href}>
-          {home.primaryCta.label} <ArrowRight size={18} aria-hidden="true" />
+          {home.primaryCta.label} <ArrowDown size={14} aria-hidden="true" />
         </a>
-        <a class="text-link" href={home.secondaryCta.href}>
+        <a class="button" href={home.secondaryCta.href}>
           {home.secondaryCta.label}{' '}
-          <ArrowUpRight size={18} aria-hidden="true" />
+          <ArrowUpRight size={14} aria-hidden="true" />
         </a>
-        <!--email_off-->
-        <a class="text-link" href={hiring.href}>
-          {hiring.cta} <ArrowUpRight size={18} aria-hidden="true" />
-        </a>
-        <!--/email_off-->
       </div>
       <p class="hero-note">{home.supporting}</p>
     </div>
     <div class="hero-outline" aria-label="Engineering review path">
+      <p class="eyebrow">{home.reviewTitle}</p>
       {home.reviewPath.map((item) => (
         <a href={item.href}>
           <div>
-            <strong class="outline-title">{item.title}</strong>
+            <strong class="outline-title">
+              {item.title} <ArrowUpRight size={14} aria-hidden="true" />
+            </strong>
             <p>{item.text}</p>
           </div>
-          <ArrowUpRight size={20} aria-hidden="true" />
         </a>
       ))}
     </div>
   </section>
-  <ProfessionalExperience />
-  <ProjectStudies />
   <section
-    id="technical-evidence"
-    class="section"
-    aria-labelledby="technical-evidence-title"
+    id="experience"
+    class="home-experience"
+    aria-labelledby="experience-title"
   >
-    <div class="section-heading">
-      <h2 id="technical-evidence-title">{portfolio.evidence.title}</h2>
-      <p>{portfolio.evidence.summary}</p>
+    <div>
+      <p class="eyebrow">{home.experience.eyebrow}</p>
+      <h2 id="experience-title">{home.experience.employer}</h2>
+      <p class="eyebrow">{home.experience.period}</p>
     </div>
-    <div class="feature-grid">
-      {portfolio.evidence.categories.map((category) => (
-        <article>
-          <h3>{category.title}</h3>
-          <p>{category.text}</p>
+    <div class="home-experience-copy">
+      <h3>{home.experience.title}</h3>
+      <p>{home.experience.summary}</p>
+      <p class="fine-print">{home.experience.attribution}</p>
+    </div>
+  </section>
+  <section
+    id="selected-work"
+    class="section home-work"
+    aria-labelledby="work-title"
+  >
+    <span id="products" aria-hidden="true" />
+    <div class="section-heading">
+      <p class="eyebrow">{home.workEyebrow}</p>
+      <h2 id="work-title">{portfolio.workTitle}</h2>
+      <p>{home.workSummary}</p>
+    </div>
+    <div class="home-project-grid">
+      {home.projects.map((project) => (
+        <article id={`case-${project.id}`} class="product-card home-project">
+          <p class="eyebrow">{project.category}</p>
+          <h3>{project.title}</h3>
+          <p class="eyebrow project-stack">{project.stack}</p>
+          <p>{project.summary}</p>
+          <a class="text-link" href={project.link.href}>
+            {project.link.label} <ArrowUpRight size={14} aria-hidden="true" />
+          </a>
+          <p class="fine-print evidence-boundary">{project.caveat}</p>
         </article>
       ))}
     </div>
-    <div class="actions">
-      <a class="button primary" href={portfolio.evidence.metrics.href}>
-        {portfolio.evidence.metrics.label}
-        <ArrowRight size={18} aria-hidden="true" />
-      </a>
+    <p class="fine-print">{home.sampleNote}</p>
+  </section>
+  <section
+    id="technical-evidence"
+    class="section home-evidence home-band"
+    aria-labelledby="technical-evidence-title"
+  >
+    <div class="section-heading">
+      <p class="eyebrow">{home.evidence.eyebrow}</p>
+      <h2 id="technical-evidence-title">{home.evidence.title}</h2>
+      <p>{home.evidence.summary}</p>
       <a class="text-link" href={author.profile}>
-        GitHub profile
-        <ArrowUpRight size={18} aria-hidden="true" />
+        {home.evidence.link}
+        <ArrowUpRight size={14} aria-hidden="true" />
       </a>
     </div>
   </section>
   <section
-    id="products"
-    class="section landing-products"
-    aria-labelledby="products-title"
+    class="section home-guides"
+    id="guides"
+    aria-labelledby="guides-title"
   >
-    <div class="section-heading split">
-      <div>
-        <p class="eyebrow">{home.productsEyebrow}</p>
-        <h2 id="products-title">{home.productsTitle}</h2>
-      </div>
-      <p>{home.productsSummary}</p>
+    <span id="approach" aria-hidden="true" />
+    <span id="postgres-migration-review" aria-hidden="true" />
+    <span id="technical-reference" aria-hidden="true" />
+    <span id="workflow-comparison" aria-hidden="true" />
+    <span id="search-benchmark" aria-hidden="true" />
+    <div class="section-heading">
+      <p class="eyebrow">{home.guidesEyebrow}</p>
+      <h2 id="guides-title">{home.guidesTitle}</h2>
     </div>
-    <ProductCards />
-    <div class="actions">
-      <a class="text-link" href="/products/">
-        Explore all projects <ArrowRight size={18} aria-hidden="true" />
-      </a>
+    <div class="feature-grid guide-cards">
+      {home.guides.map((item) => (
+        <article>
+          <h3>
+            <a href={guidePath(item.slug)}>
+              {item.title} <ArrowUpRight size={14} aria-hidden="true" />
+            </a>
+          </h3>
+          <p>{item.summary}</p>
+        </article>
+      ))}
     </div>
+    <a class="text-link" href="/guides/">
+      {home.guidesLink} <ArrowUpRight size={14} aria-hidden="true" />
+    </a>
   </section>
 
   <section
@@ -157,33 +182,31 @@ const structuredData = {
       ))}
     </div>
   </section>
-  <section class="section" id="guides" aria-labelledby="guides-title">
-    <span id="approach" aria-hidden="true" />
-    <span id="postgres-migration-review" aria-hidden="true" />
-    <span id="technical-reference" aria-hidden="true" />
-    <span id="workflow-comparison" aria-hidden="true" />
-    <span id="search-benchmark" aria-hidden="true" />
-    <div class="section-heading">
-      <h2 id="guides-title">
-        <a href="/guides/">{guideIndex.title}</a>
-      </h2>
-      <p>{guideIndex.summary}</p>
-    </div>
-    <div class="feature-grid guide-cards">
-      {guides.map((item) => (
-        <article>
-          <h3>
-            <a href={guidePath(item.slug)}>{item.title}</a>
-          </h3>
-          <p>{item.description}</p>
-        </article>
-      ))}
+  <!--email_off-->
+  <section
+    id="contact"
+    class="section contact-banner home-contact home-band"
+    aria-labelledby="contact-title"
+  >
+    <div id="employment">
+      <p class="eyebrow">{home.contact.eyebrow}</p>
+      <h2 id="contact-title">{home.contact.title}</h2>
+      <p>{home.contact.summary}</p>
+      <div class="actions">
+        <a class="button primary" href={hiring.href}>
+          {hiring.cta} <ArrowUpRight size={14} aria-hidden="true" />
+        </a>
+        <a class="button" href={home.contact.projects.href}>
+          {home.contact.projects.label}{' '}
+          <ArrowUpRight size={14} aria-hidden="true" />
+        </a>
+      </div>
+      <a class="text-link" href={`mailto:${email}`}>
+        {email} <ArrowUpRight size={14} aria-hidden="true" />
+      </a>
     </div>
   </section>
-  <HiringContact />
-  <div id="contact" class="section">
-    <Contact product={allProducts} />
-  </div>
+  <!--/email_off-->
 </Layout>
 <script>
   const navigation = document.querySelectorAll(

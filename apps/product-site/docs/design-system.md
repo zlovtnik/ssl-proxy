@@ -60,6 +60,18 @@ are not control boundaries.
 
 ## Expansion and interaction
 
+The homepage follows the edited desktop and mobile
+[Figma layout](https://www.figma.com/design/FcboDrnxKQP4TFhsq7O8ib?node-id=2-12).
+Its `.homepage` presentation in `site.css` uses the shared palette and fonts,
+68px desktop and 42px mobile hero type, compact section headings, outlined
+secondary actions on the page surface, and full-width evidence/contact bands.
+`landing.css` arranges the compact desktop sections and stacked mobile content.
+The landing header uses Work, Guides, About, Resume and Contact links,
+with a native mobile menu. Other routes retain their existing header.
+Four static project summaries link to documentation and preserve evidence
+boundaries. Full case studies remain on About. Guides precede the native FAQ,
+and a single contact block separates general inquiries from project questions.
+
 Homepage project links navigate directly to each project's dedicated sample.
 Do not intercept these links or combine the samples into a homepage switcher.
 Project demos grow naturally in document flow without a fixed preview height.

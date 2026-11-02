@@ -6,7 +6,7 @@ import '@fontsource-variable/jetbrains-mono';
 import interLatin from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
 import monoLatin from '@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url';
 import '../styles/site.css';
-import { hiring } from '../data/products';
+import { hiring, home } from '../data/products';
 import PrivacyConsent from '../components/PrivacyConsent.astro';
 import { ArrowUpRight, Menu } from '@lucide/astro';
 interface Props {
@@ -37,13 +37,21 @@ const analyticsMeasurementId =
   /^G-[A-Z0-9]{5,}$/.test(candidateMeasurementId)
     ? candidateMeasurementId
     : '';
-const navigation = [
-  ['/about/', 'Experience'],
-  ['/products/', 'Projects'],
-  ['/guides/', 'Guides'],
-  ['/resume/', 'Resume'],
-  ['/#faq', 'FAQ'],
-];
+const isHomepage = product === 'landing';
+const navigation = isHomepage
+  ? [
+      ['/#selected-work', 'Work'],
+      ['/#guides', 'Guides'],
+      ['/about/', 'About'],
+      ['/resume/', 'Resume'],
+    ]
+  : [
+      ['/about/', 'Experience'],
+      ['/products/', 'Projects'],
+      ['/guides/', 'Guides'],
+      ['/resume/', 'Resume'],
+      ['/#faq', 'FAQ'],
+    ];
 const breadcrumbData =
   breadcrumbs.length > 1
     ? {
@@ -154,22 +162,33 @@ const breadcrumbData =
       }
     </script>
   </head>
-  <body class={product}>
+  <body class:list={[product, { homepage: isHomepage }]}>
     <a class="skip-link" href="#main">
       Skip to content
     </a>
     <div class="site-top">
       <header class="site-header shell">
         <a href="/" class="wordmark" aria-label="RCLabs home">
-          <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
-            <path
-              d="M5 25V7h13l8 9-8 9H5zm7-5h5l4-4-4-4h-5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            />
-          </svg>
-          RCLabs<span class="wordmark-label">/ engineering</span>
+          {isHomepage ? (
+            'rc / labs'
+          ) : (
+            <>
+              <svg
+                viewBox="0 0 32 32"
+                width="28"
+                height="28"
+                aria-hidden="true"
+              >
+                <path
+                  d="M5 25V7h13l8 9-8 9H5zm7-5h5l4-4-4-4h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                />
+              </svg>
+              RCLabs<span class="wordmark-label">/ engineering</span>
+            </>
+          )}
         </a>
         <nav aria-label="Main navigation">
           {navigation.map(([path, label]) => (
@@ -181,23 +200,25 @@ const breadcrumbData =
             </a>
           ))}
           <a
-            href="/demo/#employment"
+            href={isHomepage ? '/#contact' : '/demo/#employment'}
             class="button small"
             aria-current={Astro.url.pathname === '/demo/' ? 'page' : undefined}
           >
-            {hiring.cta} <ArrowUpRight size={18} aria-hidden="true" />
+            {isHomepage ? home.navigationContact : hiring.cta}{' '}
+            <ArrowUpRight size={14} aria-hidden="true" />
           </a>
         </nav>
         <details class="mobile-menu">
           <summary aria-label="Toggle navigation">
-            <Menu size={20} aria-hidden="true" />
+            {isHomepage ? 'Menu' : <Menu size={20} aria-hidden="true" />}
           </summary>
           <nav aria-label="Mobile navigation">
             {navigation.map(([path, label]) => (
               <a href={path}>{label}</a>
             ))}
-            <a href="/demo/#employment">
-              {hiring.cta} <ArrowUpRight size={18} aria-hidden="true" />
+            <a href={isHomepage ? '/#contact' : '/demo/#employment'}>
+              {isHomepage ? home.navigationContact : hiring.cta}{' '}
+              <ArrowUpRight size={14} aria-hidden="true" />
             </a>
           </nav>
         </details>
@@ -208,12 +229,12 @@ const breadcrumbData =
     </main>
     <footer class="shell site-footer">
       <a class="wordmark" href="/">
-        RCLabs
+        {isHomepage ? 'rc / labs' : 'RCLabs'}
       </a>
       <p>Backend and data-platform engineering by Rafael Cardoso.</p>
       <nav aria-label="Footer">
         <a href="/about/">About Rafael</a>
-        <a href={hiring.resume.href}>Resume</a>
+        {!isHomepage && <a href={hiring.resume.href}>Resume</a>}
         <a href="/accessibility/">Accessibility</a>
         <a href="/privacy/">Privacy &amp; cookies</a>
         {analyticsMeasurementId && (
@@ -221,7 +242,7 @@ const breadcrumbData =
             Cookie preferences
           </button>
         )}
-        <a href="/demo/">Contact</a>
+        {!isHomepage && <a href="/demo/">Contact</a>}
       </nav>
     </footer>
     <PrivacyConsent measurementId={analyticsMeasurementId} />

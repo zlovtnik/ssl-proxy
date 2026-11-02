@@ -23,6 +23,18 @@ implementation evidence, synthetic demonstrations, deployment observations, and
 unpublished customer or benchmark outcomes. Identity markup uses a person as
 publisher and makes no registered-company claim.
 
+The 2026-11-01 homepage summaries and contact copy follow the owner's edited
+[Figma design](https://www.figma.com/design/FcboDrnxKQP4TFhsq7O8ib?node-id=2-12).
+The owner subsequently requested a general `Contact` action across all routes,
+using the subject `General inquiry` and a general email body. Shared contact
+copy stays in the product model. The concise Search caveat keeps
+the observation/identity boundary and labels identity suggestions as candidates.
+The Migrator summary preserves the drift-scope, shortened-preview and backup
+limitations. Proxy classification remains an operator review aid. Full project
+failure cases and regression coverage remain on About, with existing links to
+source and tests. Homepage production readings are linked through Octopus and
+are never replaced by sample values.
+
 The homepage, About page, and printable [resume](../src/pages/resume/index.astro)
 attribute career context to the resume supplied directly by the owner on
 2026-10-27:

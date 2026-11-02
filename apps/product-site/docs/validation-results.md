@@ -4,6 +4,32 @@ This record covers the four-project site and technical guides: the shared
 RCLabs dark/green visual system, product catalogue, natural-height demos and
 disclosures, and search routing. No accessibility conformance claim is made.
 
+## 2026-11-01: edited Figma homepage and general contact
+
+- Implemented the edited desktop and mobile Figma layout with four static
+  project summaries, compact sections, guides before the FAQ, and one contact
+  block. Full case studies and employer workload attribution remain on About.
+- Shared contact actions now read `Contact`, use the `General inquiry` subject,
+  and prefill a general message. Product-specific discussion subjects remain.
+- `PUBLIC_SITE_URL=https://rclabs.uk npm run build` passed with zero
+  Astro/TypeScript errors, warnings or hints and built 19 pages.
+- `npm test` passed: 91 passed, two analytics tests skipped without a configured
+  measurement ID. Coverage includes general contact across all public routes,
+  no-JavaScript navigation, caveats, contrast, focus and responsive reflow.
+- The first suite found stale navigation and shared-style expectations plus
+  a homepage caveat mismatch. These were corrected before the final full pass.
+- `REVIEW_ORIGIN=http://127.0.0.1:4322 npm run review` completed 38
+  desktop/mobile route runs without page errors. Final homepage screenshots
+  were inspected against Figma. Visual verdict: 94/100. Native control target
+  sizes and the requested general contact copy take precedence over the static
+  design. These local observations do not establish field performance.
+- Touched-file formatting, `git diff --check` and the repository documentation
+  checker passed. Astro diagnostics provide static/type checks. The app has
+  no separate lint script.
+- Generated build, test, review screenshots and ignored visual-verdict state
+  were refreshed locally. No dependency or hosting configuration changed.
+  Publication, assistive-technology and participant evaluation remain pending.
+
 ## 2026-10-31: direct project samples and editorial rules
 
 - Removed the combined homepage playground and its exclusive styles. Project

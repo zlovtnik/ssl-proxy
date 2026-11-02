@@ -22,6 +22,14 @@ substitute for assistive-technology or participant testing.
 
 ## Current automated coverage
 
+The 2026-11-01 Figma homepage revision uses four static project summaries,
+direct documentation links, a native mobile menu and FAQ disclosures, and one
+contact section. The complete engineering disclosures and source-link checks
+remain on About. No-JavaScript tests cover homepage summaries, guide navigation,
+project-to-sample navigation, and distinct general and project email subjects.
+Automated contrast, focus and reflow checks remain applicable to the revised
+homepage. Screen-reader and participant evaluation remain pending.
+
 The 2026-10-31 homepage sample revision removes the combined playground.
 Automated navigation tests follow each homepage sample link to its dedicated
 project page with JavaScript enabled and disabled. Project-route keyboard,

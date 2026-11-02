@@ -51,6 +51,8 @@ test('Octopus never publishes saved metrics without JavaScript', async ({
     const page = await context.newPage();
     await page.goto('http://127.0.0.1:4323/');
     await expect(page.locator('.product-card')).toHaveCount(4);
+    await page.locator('#case-octopus a[href="/octopus/"]').click();
+    await expect(page).toHaveURL('http://127.0.0.1:4323/octopus/');
     await page
       .getByRole('link', { name: 'View live metrics', exact: true })
       .click();
@@ -165,7 +167,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('homepage sample links open the corresponding project demos', async ({
+test('homepage project links lead to their documentation and samples', async ({
   page,
 }) => {
   await page.goto('/');
@@ -174,11 +176,13 @@ test('homepage sample links open the corresponding project demos', async ({
     page.getByRole('heading', { name: 'Try the interfaces' }),
   ).toHaveCount(0);
   for (const product of sampleProducts) {
-    const link = page.getByRole('link', {
-      name: `Try the ${product.name} sample`,
-    });
-    await expect(link).toHaveAttribute('href', `${product.path}#demo`);
+    const link = page.locator(`#case-${product.id} a[href="${product.path}"]`);
+    await expect(link).toBeVisible();
     await link.click();
+    await expect(page).toHaveURL(
+      new URL(product.path, 'http://127.0.0.1:4323').href,
+    );
+    await page.locator('.product-hero a[href="#demo"]').click();
     await expect(page).toHaveURL(
       new URL(`${product.path}#demo`, 'http://127.0.0.1:4323').href,
     );
@@ -186,28 +190,28 @@ test('homepage sample links open the corresponding project demos', async ({
     await expect(
       page.locator('#demo select, #demo button').first(),
     ).toBeEnabled();
-    await page.goBack();
+    await page.goto('/');
   }
   await page
     .getByRole('navigation', { name: 'Main navigation', exact: true })
-    .getByRole('link', { name: 'FAQ', exact: true })
+    .getByRole('link', { name: 'Work', exact: true })
     .click();
   await expect
     .poll(async () => (await page.locator('.site-top').boundingBox())!.y)
     .toBe(0);
-  await expect(page.locator('#faq')).toBeInViewport();
+  await expect(page.locator('#selected-work')).toBeInViewport();
   await page.setViewportSize({ width: 375, height: 900 });
   await page.getByLabel('Toggle navigation').click();
   await page
     .getByRole('navigation', { name: 'Mobile navigation', exact: true })
-    .getByRole('link', { name: 'Projects', exact: true })
+    .getByRole('link', { name: 'Work', exact: true })
     .click();
-  await expect(page).toHaveURL(/\/products\/$/);
+  await expect(page).toHaveURL(/\/#selected-work$/);
   await expect(page.locator('.mobile-menu')).not.toHaveAttribute('open');
   await expect(page.locator('.product-card')).toHaveCount(4);
 });
 
-test('homepage sample links remain usable without JavaScript', async ({
+test('homepage documentation and sample links remain usable without JavaScript', async ({
   browser,
 }) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
@@ -216,8 +220,9 @@ test('homepage sample links remain usable without JavaScript', async ({
     for (const product of sampleProducts) {
       await page.goto('http://127.0.0.1:4323/');
       await page
-        .getByRole('link', { name: `Try the ${product.name} sample` })
+        .locator(`#case-${product.id} a[href="${product.path}"]`)
         .click();
+      await page.locator('.product-hero a[href="#demo"]').click();
       await expect(page).toHaveURL(
         new URL(`${product.path}#demo`, 'http://127.0.0.1:4323').href,
       );
@@ -487,6 +492,52 @@ test('clipboard failure gives a usable fallback', async ({ page }) => {
   await expect(page.getByRole('status')).toContainText(
     'Select the visible address',
   );
+});
+
+test('every public route offers general Contact without the retired hiring label or subject', async ({
+  page,
+}) => {
+  for (const route of routes) {
+    await page.goto(route);
+    await expect(
+      page.getByRole('link', {
+        name: 'Contact for full-time roles',
+        exact: true,
+      }),
+      route,
+    ).toHaveCount(0);
+    const navigation = page.getByRole('navigation', {
+      name: 'Main navigation',
+      exact: true,
+    });
+    await expect(
+      navigation.getByRole('link', { name: 'Contact', exact: true }),
+      route,
+    ).toHaveAttribute(
+      'href',
+      route === '/' ? '/#contact' : '/demo/#employment',
+    );
+    for (const href of await page
+      .locator('a[href^="mailto:"]')
+      .evaluateAll((links) =>
+        links.map((link) => link.getAttribute('href')!),
+      )) {
+      expect(new URL(href).searchParams.get('subject'), route).not.toBe(
+        'Full-time engineering role',
+      );
+    }
+    for (const link of await page
+      .getByRole('link', { name: 'Contact', exact: true })
+      .all()) {
+      const href = (await link.getAttribute('href'))!;
+      if (!href.startsWith('mailto:')) continue;
+      const request = new URL(href);
+      expect(request.pathname, route).toBe(email);
+      expect(request.searchParams.get('subject'), route).toBe(
+        'General inquiry',
+      );
+    }
+  }
 });
 
 test('core story, navigation, contact and text demos work without JavaScript', async ({
@@ -1139,6 +1190,7 @@ test('all public routes share one system of colours, header geometry, type and c
         header: `${Math.round(header.width)}x${Math.round(header.height)}`,
         h1: `${h1.fontSize}/${h1.fontWeight}/${h1.fontFamily}`,
         body: getComputedStyle(document.body).fontFamily,
+        pageBackground: root.backgroundColor,
         controlRadius: control.borderRadius,
         controlMinHeight: control.minHeight,
         controlBackground: control.backgroundColor,
@@ -1146,8 +1198,14 @@ test('all public routes share one system of colours, header geometry, type and c
     });
   };
   for (const theme of ['dark']) {
-    const reference = await snapshot(routes[0], theme);
-    for (const route of routes.slice(1))
+    const reference = await snapshot(routes[1], theme);
+    const landing = await snapshot('/', theme);
+    expect(landing.tokens).toEqual(reference.tokens);
+    expect(landing.body).toEqual(reference.body);
+    expect(landing.controlRadius).toEqual(reference.controlRadius);
+    expect(landing.controlMinHeight).toEqual(reference.controlMinHeight);
+    expect(landing.controlBackground).toEqual(landing.pageBackground);
+    for (const route of routes.slice(2))
       expect(await snapshot(route, theme), `${route} ${theme}`).toEqual(
         reference,
       );
@@ -1199,6 +1257,24 @@ test('every route that offers a commercial action uses the shared contact patter
     await page.goto(route);
     const banner = page.locator('.contact-banner');
     await expect(banner, route).toHaveCount(1);
+    if (!product) {
+      await expect(banner.getByRole('heading', { level: 2 })).toHaveText(
+        home.contact.title,
+      );
+      await expect(
+        banner.getByRole('link', {
+          name: 'Contact',
+          exact: true,
+        }),
+      ).toHaveAttribute('href', /^mailto:rafael@rclabs\.uk\?subject=General/);
+      await expect(
+        banner.getByRole('link', { name: 'Project questions', exact: true }),
+      ).toHaveAttribute('href', '/demo/#options-title');
+      await expect(
+        banner.getByRole('link', { name: email, exact: true }),
+      ).toHaveAttribute('href', `mailto:${email}`);
+      continue;
+    }
     // Product-specific introductions retain the shared action and visible address.
     await expect(banner.getByRole('heading', { level: 2 })).toHaveText(
       (product?.id === 'octopus' ? octopusContact : contact).headline.join(' '),
@@ -1310,12 +1386,12 @@ test('homepage identity and guide destinations remain available after shortening
   expect(nodes[1].publisher['@id']).toBe(nodes[0]['@id']);
   expect(nodes[0]['@id']).toBe(siteOrigin + '/#author');
 
-  await expect(page.locator('#products .product-card h2')).toHaveText(
-    products.map((product) => product.homeTitle),
-  );
+  await expect(page.locator('#selected-work .product-card')).toHaveCount(4);
   for (const product of products) {
-    const card = page.locator(`#products .product-card.${product.id}`);
-    await expect(card).toContainText(product.cardSummary);
+    const card = page.locator(`#selected-work #case-${product.id}`);
+    await expect(card.getByRole('heading', { level: 3 })).toHaveText(
+      product.name,
+    );
     await expect(card.locator(`a[href="${product.path}"]`)).toBeVisible();
   }
   // Full chapters live on guide routes; legacy homepage fragments still land
@@ -1332,7 +1408,7 @@ test('homepage identity and guide destinations remain available after shortening
   for (const guide of guides) {
     const link = page
       .locator('#guides')
-      .getByRole('link', { name: guide.title, exact: true });
+      .locator(`a[href="${guidePath(guide.slug)}"]`);
     await expect(link).toHaveAttribute('href', guidePath(guide.slug));
     expect((await page.request.get(guidePath(guide.slug))).ok()).toBe(true);
   }

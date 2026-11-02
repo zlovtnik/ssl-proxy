@@ -765,6 +765,278 @@ details > section {
 .site-footer nav button {
   padding-inline: 0.65rem;
 }
+/* Homepage brand, type, surfaces and controls from the editable Figma design.
+   Route CSS only arranges these patterns. */
+.homepage {
+  padding-bottom: 0;
+  line-height: 1.55;
+}
+.homepage .site-top {
+  position: relative;
+}
+.homepage .site-header {
+  padding-block: 1.5rem;
+}
+.homepage .wordmark {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+.homepage .site-header nav {
+  gap: 2rem;
+}
+.homepage .button {
+  padding: 1rem;
+  gap: 0.3rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  background: var(--bg);
+}
+.homepage .button.primary {
+  background: var(--action);
+}
+.homepage .site-header nav a {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.homepage .site-header nav .button {
+  color: var(--text);
+}
+.homepage .eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.homepage h1 {
+  max-width: none;
+  font-size: clamp(2.625rem, 4.725vw, 4.25rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: 0;
+  text-wrap: initial;
+  margin: 0;
+}
+.homepage h1 > span {
+  margin-top: 0.5rem;
+}
+.homepage h2,
+.homepage h3 {
+  font-weight: 600;
+  letter-spacing: 0;
+  text-wrap: initial;
+  margin: 0;
+}
+.homepage h2 {
+  font-size: 1.75rem;
+  line-height: 1.1;
+}
+.homepage .home-work h2 {
+  font-size: 2.5rem;
+}
+.homepage h3 {
+  line-height: 1.55;
+}
+.homepage p {
+  margin: 0;
+}
+.homepage .lead {
+  font-size: 1.125rem;
+  line-height: 1.55;
+  max-width: min(40rem, var(--reading-width));
+}
+.homepage .hero-note,
+.homepage .fine-print {
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+.homepage .hero-note {
+  max-width: min(35rem, var(--reading-width));
+}
+.homepage .home-work > .fine-print {
+  max-width: none;
+}
+.homepage .actions {
+  gap: 1rem;
+  margin: 0;
+}
+.homepage .text-link {
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  color: var(--action);
+}
+.homepage .text-link:hover {
+  text-decoration: underline;
+}
+.homepage .hero-outline {
+  margin: 0;
+  padding: 1.5rem;
+  border: 0;
+  border-radius: var(--panel-radius);
+  background: var(--surface);
+}
+.homepage .hero-outline > .eyebrow {
+  font-size: 0.6875rem;
+}
+.homepage .hero-outline > a {
+  display: block;
+  padding: 0 0 1.25rem;
+}
+.homepage .hero-outline > a:last-child {
+  padding-bottom: 0;
+  border: 0;
+}
+.homepage .outline-title {
+  font-size: 1rem;
+  font-weight: 500;
+}
+.homepage .outline-title svg {
+  color: var(--text);
+  vertical-align: middle;
+}
+.homepage .hero-outline a p {
+  font-size: 0.875rem;
+  margin-top: 0.25rem;
+}
+.homepage .section {
+  border: 0;
+}
+.homepage .section-heading {
+  max-width: none;
+  margin: 0;
+}
+.homepage .section-heading > p:not(.eyebrow) {
+  max-width: min(47.5rem, var(--reading-width));
+}
+.homepage .home-experience h2,
+.homepage .home-project h3 {
+  font-size: 1.75rem;
+}
+.homepage .home-experience h3 {
+  font-size: 1.5rem;
+  font-weight: 500;
+}
+.homepage .home-experience-copy > p,
+.homepage .home-project > p:not(.eyebrow) {
+  color: var(--muted);
+}
+.homepage .home-project {
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--divider);
+  border-radius: 0;
+  box-shadow: none;
+}
+.homepage .project-stack {
+  text-transform: none;
+}
+.homepage .evidence-boundary {
+  max-width: none;
+  padding: 1rem;
+  background: var(--inset);
+}
+.homepage .home-band {
+  position: relative;
+  isolation: isolate;
+  background: var(--surface);
+}
+.homepage .home-band::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset-block: 0;
+  left: calc(50% - 50vw);
+  width: 100vw;
+  background: var(--surface);
+}
+.homepage .guide-cards article {
+  padding-top: 0.75rem;
+}
+.homepage .guide-cards h3 {
+  font-size: 1.25rem;
+  font-weight: 500;
+}
+.homepage .guide-cards a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+}
+.homepage .guide-cards a:hover {
+  text-decoration: underline;
+}
+.homepage .guide-cards p {
+  font-size: 0.875rem;
+}
+.homepage .landing-faq h2 {
+  font-size: 1.5rem;
+  line-height: 1.55;
+}
+.homepage .landing-faq summary {
+  font-size: 1rem;
+}
+.homepage .home-contact {
+  border: 0;
+  border-radius: 0;
+}
+.homepage .home-contact h2 {
+  font-size: 2.5rem;
+}
+.homepage .home-contact .button {
+  margin: 0;
+}
+.homepage .site-footer {
+  flex-direction: column;
+  align-items: start;
+  gap: 1rem;
+  border: 0;
+}
+.homepage .site-footer .wordmark {
+  font-size: 1.375rem;
+}
+.homepage .site-footer p,
+.homepage .site-footer nav {
+  font-size: 0.75rem;
+}
+.homepage .site-footer nav {
+  gap: 1rem;
+}
+@media (max-width: 767px) {
+  .homepage .mobile-menu summary {
+    width: auto;
+    border: 0;
+    padding-inline: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .homepage h1 {
+    font-size: 2.625rem;
+  }
+  .homepage h1 > span {
+    margin-top: 0;
+  }
+  .homepage .lead {
+    font-size: 1.0625rem;
+  }
+  .homepage .home-work h2,
+  .homepage .home-guides h2 {
+    font-size: 2rem;
+  }
+  .homepage .home-evidence h2 {
+    font-size: 1.875rem;
+  }
+  .homepage .home-experience h3 {
+    font-size: 1.25rem;
+  }
+  .homepage .landing-faq h2 {
+    font-size: 1.75rem;
+  }
+  .homepage .home-contact h2 {
+    font-size: 2.25rem;
+  }
+}
 .skip-link {
   position: absolute;
   left: 1rem;

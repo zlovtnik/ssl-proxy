@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { guides, guidePath } from '../src/data/products';
 
-test('employers can review positioning, attributed experience and engineering evidence without JavaScript', async ({
+test('the homepage summaries and guide destinations work without JavaScript', async ({
   browser,
 }) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
@@ -11,18 +11,66 @@ test('employers can review positioning, attributed experience and engineering ev
     await page.goto('http://127.0.0.1:4323/');
     const sectionOrder = await page
       .locator('main > section')
-      .evaluateAll((sections) =>
-        sections.slice(0, 6).map((section) => section.id),
-      );
+      .evaluateAll((sections) => sections.map((section) => section.id));
     expect(sectionOrder).toEqual([
       'top',
       'experience',
       'selected-work',
       'technical-evidence',
-      'products',
+      'guides',
       'faq',
+      'contact',
     ]);
 
+    const experience = page.locator('#experience');
+    await expect(experience).toContainText('Synchro');
+    await expect(experience).toContainText(/historical|employer/i);
+
+    const projects = [
+      ['octopus', '/octopus/', /delivery may repeat/i],
+      [
+        'search',
+        '/atheros-search/',
+        /does not confirm a current connection or device identity/i,
+      ],
+      ['migrator', '/schema-migrator/', /do not back up database data/i],
+      ['vpn', '/vpn-proxy/', /traffic outside the configured path/i],
+    ] as const;
+    for (const [id, destination, caveat] of projects) {
+      const card = page.locator(`#selected-work #case-${id}`);
+      await expect(card).toBeVisible();
+      await expect(card).toContainText(caveat);
+      await expect(card.locator(`a[href="${destination}"]`)).toBeVisible();
+    }
+    await expect(page.locator('#selected-work details')).toHaveCount(0);
+    await expect(
+      page.locator('#technical-evidence a[href^="https://github.com/"]'),
+    ).toBeVisible();
+    await expect(page.locator('#top a[href="/resume/"]')).toBeVisible();
+    await expect(
+      page.locator('#contact a[href^="mailto:"]').first(),
+    ).toBeVisible();
+    for (const guide of guides) {
+      const link = page.locator(`#guides a[href="${guidePath(guide.slug)}"]`);
+      await expect(link).toBeVisible();
+      await link.click();
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+        guide.title,
+      );
+      await page.goBack();
+    }
+  } finally {
+    await context.close();
+  }
+});
+
+test('the about page retains attributed experience and full engineering evidence without JavaScript', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  try {
+    const page = await context.newPage();
+    await page.goto('http://127.0.0.1:4323/about/');
     const experience = page.locator('#experience');
     await expect(experience).toContainText('Synchro');
     await expect(experience).toContainText(/20 million|~20M/);
@@ -76,33 +124,12 @@ test('employers can review positioning, attributed experience and engineering ev
       /lease|fenc/i,
     ])
       await expect(octopus).toContainText(mechanism);
-    await expect(page.locator('#technical-evidence')).toContainText(
-      /synthetic/i,
-    );
-    await expect(page.locator('#technical-evidence')).toContainText(
-      /benchmark/i,
-    );
-    await expect(page.locator('#top a[href="/resume/"]')).toBeVisible();
-    await expect(page.locator('#top a[href^="mailto:"]')).toBeVisible();
-    // The shortened homepage retains the complete guide navigation without JS.
-    for (const guide of guides) {
-      const link = page.locator('#guides').getByRole('link', {
-        name: guide.title,
-        exact: true,
-      });
-      await expect(link).toHaveAttribute('href', guidePath(guide.slug));
-      await link.click();
-      await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-        guide.title,
-      );
-      await page.goBack();
-    }
   } finally {
     await context.close();
   }
 });
 
-test('full-time hiring has a direct contact path distinct from project inquiries', async ({
+test('general contact has a direct email path distinct from project inquiries', async ({
   page,
 }) => {
   await page.goto('/');
@@ -113,23 +140,21 @@ test('full-time hiring has a direct contact path distinct from project inquiries
   await expect(
     navigation.getByRole('link', { name: /resume/i }),
   ).toHaveAttribute('href', '/resume/');
-  await navigation
-    .getByRole('link', { name: 'Contact for full-time roles', exact: true })
-    .click();
-  await expect(page).toHaveURL(/\/demo\/#employment$/);
-  const employment = page.locator('#employment');
+  await navigation.getByRole('link', { name: 'Contact', exact: true }).click();
+  await expect(page).toHaveURL(/\/#contact$/);
+  const employment = page.locator('#contact');
   const request = new URL(
     (await employment
-      .locator('a[href^="mailto:"]')
-      .first()
+      .getByRole('link', { name: 'Contact', exact: true })
       .getAttribute('href'))!,
   );
   expect(request.pathname).toBe('rafael@rclabs.uk');
-  expect(request.searchParams.get('subject')).toBe(
-    'Full-time engineering role',
+  expect(request.searchParams.get('subject')).toBe('General inquiry');
+  expect(request.searchParams.get('body')).toBe(
+    'Hello Rafael,\n\nI would like to get in touch about:\n\nThank you.',
   );
-  expect(request.searchParams.get('body')).toMatch(/role|position/i);
 
+  await page.goto('/demo/');
   for (const id of ['search', 'migrator', 'vpn', 'octopus', 'all']) {
     const href = await page.locator(`#${id} a`).getAttribute('href');
     expect(new URL(href!).searchParams.get('subject')).toMatch(

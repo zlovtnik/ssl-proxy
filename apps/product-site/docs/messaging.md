@@ -104,10 +104,11 @@ Keep these statements in the model, product page, and relevant sample:
 
 ## Contact
 
-Hiring actions link to the static, printable `/resume/` page and the employment
-section at `/demo/#employment`. Direct hiring email uses the distinct subject
-`Full-time engineering role`. Product discussion emails retain
-`Use-case discussion: [product]`; employers do not need a product use case.
+The shared action is labelled `Contact` and opens a general inquiry with the
+subject `General inquiry`. It does not request a role, employer, or location.
+The existing `/demo/#employment` anchor remains compatible and now contains the
+general inquiry block. Resume links retain the static, printable `/resume/`
+page. Product discussion emails retain `Use-case discussion: [product]`.
 The public resume includes the phone, email, location, work authorization,
 LinkedIn profile, and website supplied in the owner's current resume. General
 site and hiring inquiry links keep the existing `rafael@rclabs.uk` address.

@@ -15,19 +15,19 @@ export const accessibility = {
 export const hiring = {
   pageTitle: 'Contact Rafael.',
   pageSummary:
-    'Email me about an engineering role or one of the projects below.',
+    'Email me with a question, an idea, or a project you would like to discuss.',
   eyebrow: 'CONTACT',
   projectsTitle: 'Project questions',
   projectsSummary:
     'Choose a project to start an email. Hosted product access is not provisioned here.',
   addressTitle: 'Email address',
   addressSummary: 'You can also write to me directly.',
-  cta: 'Contact for full-time roles',
-  href: `mailto:${email}?subject=${encodeURIComponent('Full-time engineering role')}&body=${encodeURIComponent('Hello Rafael,\n\nI would like to discuss a full-time engineering role.\n\nCompany and role:\n\nEngineering scope:\n\nLocation / remote expectations:\n\nThank you.')}`,
+  cta: 'Contact',
+  href: `mailto:${email}?subject=${encodeURIComponent('General inquiry')}&body=${encodeURIComponent('Hello Rafael,\n\nI would like to get in touch about:\n\nThank you.')}`,
   resume: { label: 'Read my resume', href: '/resume/' },
-  title: 'Engineering roles',
+  title: 'General inquiries',
   summary:
-    'I am interested in backend, distributed-systems, and data-platform roles. Send me the role, engineering scope, and location or remote expectations.',
+    'Get in touch with a question, an idea, or something you would like to discuss.',
 } as const;
 
 const octopusTests = 'services/octopus/src/test/scala/com/sslproxy/coordinator';
@@ -465,22 +465,137 @@ export const home = {
     href: '#selected-work',
   },
   secondaryCta: hiring.resume,
-  supporting: portfolio.audience,
+  supporting:
+    'For recruiters, engineering managers, and technical interviewers evaluating my engineering work.',
   eyebrow: 'RAFAEL CARDOSO / RCLABS',
+  reviewTitle: 'A closer look',
+  navigationContact: 'Contact',
+  experience: {
+    eyebrow: 'Professional experience',
+    employer: 'Synchro',
+    period: 'Feb 2011 - Sep 2024',
+    title: 'Software Analyst → Senior Staff Software Engineer',
+    summary:
+      'I designed fiscal integrations and guided teams of 3 to 8 engineers through architecture decisions and code reviews.',
+    attribution:
+      'Historical employer work. The projects below were built independently.',
+  },
+  workEyebrow: 'Independent projects',
+  workSummary:
+    'Search, ingestion, network observations, and SQL change review. Implementation details and evidence live with each project.',
+  projects: [
+    {
+      id: 'octopus',
+      title: 'Octopus',
+      category: 'Durable ingestion',
+      stack: 'Scala / Cats Effect / PostgreSQL',
+      summary:
+        'Persisted ingestion, deduplication, leases, and outbox dispatch for event pipelines.',
+      caveat:
+        'Delivery may repeat. Saved progress and deduplication support replay across configured streams.',
+      link: { label: 'Workflow and live readings', href: '/octopus/' },
+    },
+    {
+      id: 'search',
+      title: 'Atheros Search',
+      category: 'Retrieval & investigation',
+      stack: 'Go / PostgreSQL / SolidJS',
+      summary:
+        'Semantic, keyword, and fused retrieval across source observations, with leased embedding workers.',
+      caveat:
+        'Synthetic public sample. An observation does not confirm a current connection or device identity. Identity suggestions are review candidates.',
+      link: { label: 'Search documentation', href: '/atheros-search/' },
+    },
+    {
+      id: 'migrator',
+      title: 'Schema Migrator',
+      category: 'SQL change review',
+      stack: 'Scala / Cats Effect',
+      summary:
+        'Ordered SQL-file validation, shortened dry-run previews, and selected catalog checks. Column definitions and nullability are outside drift comparison scope.',
+      caveat: `${migratorCaveat} The sample executes no SQL.`,
+      link: { label: 'Migration walkthrough', href: '/schema-migrator/' },
+    },
+    {
+      id: 'vpn',
+      title: 'RCLabs VPN / Proxy',
+      category: 'Network observations',
+      stack: 'Rust / WireGuard',
+      summary:
+        'WireGuard ingress, transparent proxy handling, classification, and audit-event publishing.',
+      caveat:
+        'Classification is a review aid. It does not prove intent, prevent a connection, or cover traffic outside the configured path.',
+      link: { label: 'Proxy walkthrough', href: '/vpn-proxy/' },
+    },
+  ],
+  sampleNote:
+    'Public Search, Migrator, and VPN / Proxy samples use synthetic data. Octopus operational readings come from its runtime feed.',
+  evidence: {
+    eyebrow: 'Source & tests',
+    title: 'The implementation stays visible.',
+    summary:
+      'Review failure handling, regression coverage, and known gaps beside the source. Source links do not certify a current passing test run.',
+    link: 'View source on GitHub',
+  },
+  guidesEyebrow: 'Worked examples',
+  guidesTitle: 'Technical guides',
+  guidesLink: 'All guides',
+  guides: [
+    {
+      slug: 'postgresql-migration-dry-run',
+      title: 'PostgreSQL migration dry runs',
+      summary:
+        'Discovery, validation, and an offline preview before execution.',
+    },
+    {
+      slug: 'postgresql-schema-drift',
+      title: 'PostgreSQL schema drift',
+      summary:
+        'Expected definitions, observed catalog state, and review boundaries.',
+    },
+    {
+      slug: 'migration-checksum-mismatch',
+      title: 'Migration checksum mismatches',
+      summary: 'File integrity, snapshot changes, and what they establish.',
+    },
+    {
+      slug: 'rogue-access-point-investigation',
+      title: 'Suspected rogue access points',
+      summary:
+        'Wireless observations with site and authorized-network context.',
+    },
+    {
+      slug: 'wifi-deauthentication-investigation',
+      title: 'Wi-Fi deauthentication indicators',
+      summary: 'Time windows, capture scope, and corroborating evidence.',
+    },
+    {
+      slug: 'hybrid-search-network-observations',
+      title: 'Hybrid search for observations',
+      summary: 'Term, vector, and fused retrieval on synthetic records.',
+    },
+  ],
+  contact: {
+    eyebrow: 'Contact',
+    title: 'Let’s talk engineering.',
+    summary:
+      'Questions, ideas, and conversations about backend engineering, distributed systems, or one of these projects.',
+    projects: { label: 'Project questions', href: '/demo/#options-title' },
+  },
   reviewPath: [
     {
       title: 'Professional experience',
-      text: 'Synchro roles, contributions, and historical workload.',
+      text: 'Roles, contributions, and historical workload.',
       href: '#experience',
     },
     {
       title: 'Selected engineering work',
-      text: 'What I built, failure modes, regression coverage, and gaps.',
+      text: 'Implementation, failure modes, and regression coverage.',
       href: '#selected-work',
     },
     {
       title: 'Source and tests',
-      text: 'Implementation, regression tests, and Octopus metrics.',
+      text: 'Code, test evidence, and verification gaps.',
       href: '#technical-evidence',
     },
   ],
@@ -490,7 +605,7 @@ export const home = {
     'Search, ingestion, network observations, and SQL change review. The documentation is for RAG builders and operators.',
   relationship:
     'Atheros Search brings retrieval, ingestion visibility, and source readiness into one authenticated console. Octopus coordinates durable ingestion. The proxy and sensor produce observations. Schema Migrator is companion tooling. Public samples run independently in your browser.',
-  faqTitle: 'Practical questions',
+  faqTitle: 'Before you start',
   faq: [
     {
       question: 'Do the samples use real data or change anything?',
@@ -501,11 +616,6 @@ export const home = {
       question: 'How do the projects fit together?',
       answer:
         'The proxy and sensor produce observations. Octopus records and processes them. Atheros Search indexes and retrieves them. Schema Migrator is companion tooling for reviewing SQL changes.',
-    },
-    {
-      question: 'Does Schema Migrator fix database drift?',
-      answer:
-        'It reports differences for review. Corrections require a separate migration. Catalog checks need a database connection and cover selected object definitions and table presence. Column definitions and nullability are outside comparison scope.',
     },
     {
       question: 'Can I discuss my own data or deployment?',
