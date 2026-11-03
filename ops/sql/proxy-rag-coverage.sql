@@ -4,6 +4,7 @@
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SELECT set_config('statement_timeout', :'statement_timeout_ms', true) AS timeout_setting \gset
 SET LOCAL lock_timeout = '1s';
+SET LOCAL timezone = 'UTC';
 WITH source_page AS MATERIALIZED (
   SELECT event_id, event_time, event_type, host, registered_device_id,
          blocked, classification, status_code, correlation_id, payload, bytes_up, bytes_down, observation_revision, evidence
@@ -39,6 +40,8 @@ WITH source_page AS MATERIALIZED (
     count(DISTINCT event_id) FILTER (WHERE document_id IS NOT NULL AND
       (template_version <> 'proxy-event-v2' OR normalization_version <> 'proxy-authority-v1'
        OR evidence_revision IS DISTINCT FROM observation_revision)) AS outdated_current_contract,
+    count(DISTINCT event_id) FILTER (WHERE active_documents = 1 AND template_version = 'proxy-event-v2'
+      AND normalization_version = 'proxy-authority-v1' AND evidence_revision = observation_revision) AS current_document,
     count(DISTINCT event_id) FILTER (WHERE expected_legacy_sha IS NULL) AS unverifiable_unicode_legacy_text,
     count(DISTINCT event_id) FILTER (WHERE document_id IS NOT NULL AND NOT detail_json @> expected_legacy_detail) AS outdated_legacy_detail,
     count(DISTINCT event_id) FILTER (WHERE active_documents > 1) AS multiple_active_documents,
@@ -52,17 +55,33 @@ WITH source_page AS MATERIALIZED (
     ,count(DISTINCT event_id) FILTER (WHERE jsonb_typeof(evidence->'port')='number') AS explicit_port_observed
     ,count(DISTINCT event_id) FILTER (WHERE evidence->'measurement'->>'bytes_status'='measured_terminal') AS terminal_transfer_measurement_present
   FROM source_matches GROUP BY event_type, disposition, date_trunc('hour',event_time)
-), document_page AS MATERIALIZED (
-  SELECT document_id, source_kind, normalized_sha256, normalized_text, observed_at, metadata, input_revision,
-         template_version, normalization_version
+), document_slice AS NOT MATERIALIZED (
+  SELECT document_id, source_kind, source_table, source_key, source_version, normalized_sha256, normalized_text,
+         observed_at, window_start, window_end, search_vector, metadata, detail_json, filters, evidence_revision,
+         input_revision, template_version, normalization_version,
+         CASE WHEN source_kind='proxy_blocked_host_window' THEN coalesce(window_start, observed_at)
+              ELSE observed_at END AS scope_time
   FROM atheros_search.search_documents
   WHERE source_kind IN ('proxy_event','proxy_blocked_host_window') AND status = 'active'
-    AND observed_at >= :'window_start'::timestamptz AND observed_at < :'window_end'::timestamptz
-    AND (observed_at, document_id) > (:'document_after_time'::timestamptz, :'document_after_id'::uuid)
-  ORDER BY observed_at, document_id LIMIT :page_size
+    AND ((observed_at >= :'window_start'::timestamptz AND observed_at < :'window_end'::timestamptz)
+      OR (source_kind='proxy_blocked_host_window' AND window_start >= :'window_start'::timestamptz
+        AND window_start < :'window_end'::timestamptz))
+), document_page AS MATERIALIZED (
+  SELECT * FROM document_slice
+  WHERE scope_time >= :'window_start'::timestamptz AND scope_time < :'window_end'::timestamptz
+    AND (scope_time, document_id) > (:'document_after_time'::timestamptz, :'document_after_id'::uuid)
+  ORDER BY scope_time, document_id LIMIT :page_size
 ), document_matches AS (
-  SELECT d.*, j.status AS job_status, j.attempt_count, j.max_attempts,
+  SELECT d.*, j.job_id, j.status AS job_status, j.attempt_count, j.max_attempts, j.lease_fence,
     u.content_sha256 AS unified_sha, k.content_sha256 AS per_kind_sha,
+    u.embedding::text AS unified_vector, k.embedding::text AS per_kind_vector,
+    CASE WHEN j.status NOT IN ('failed','cancelled') OR j.status IS NULL THEN 'not_terminal'
+         WHEN j.last_error LIKE 'embedding lease expired;%' THEN 'lease_expired'
+         WHEN j.last_error LIKE 'document missing;%' THEN 'missing_document'
+         WHEN j.last_error LIKE 'document status %' THEN 'inactive_document'
+         WHEN j.last_error = 'document input checksum or revision changed' THEN 'input_changed'
+         WHEN j.last_error IS NULL THEN 'no_diagnostic'
+         ELSE 'other_review_required' END AS terminal_cause,
     u.embedding IS DISTINCT FROM k.embedding AS vector_value_mismatch,
     EXISTS (SELECT 1 FROM atheros_search.embedding_jobs old_job
       WHERE old_job.document_id=d.document_id AND old_job.embedding_kind='event'
@@ -81,11 +100,11 @@ WITH source_page AS MATERIALIZED (
   LEFT JOIN atheros_search.search_vectors_event k ON k.document_id = d.document_id AND k.embedding_model = :'model'
     AND k.input_revision = d.input_revision
 ), document_counts AS (
-  SELECT source_kind, date_trunc('hour',observed_at) AS observed_hour,
+  SELECT source_kind, date_trunc('hour',scope_time) AS observed_hour,
     CASE WHEN template_version='legacy_unknown' THEN 'unknown_legacy' ELSE template_version END AS template_version,
     CASE WHEN normalization_version='legacy_unknown' THEN 'unknown_legacy' ELSE normalization_version END AS normalization_version,
     CASE WHEN input_revision='legacy_unknown' THEN 'unknown_legacy' ELSE input_revision END AS preprocessing_version,
-    normalized_sha256 AS text_checksum,
+    normalized_sha256 AS text_checksum, terminal_cause,
     CASE WHEN job_status IS NULL THEN 'absent'
       WHEN job_status IN ('pending','failed') AND attempt_count >= max_attempts THEN job_status || '_exhausted'
       ELSE job_status END AS job_disposition,
@@ -95,12 +114,13 @@ WITH source_page AS MATERIALIZED (
     count(*) FILTER (WHERE unified_sha = normalized_sha256) AS content_matching_unified,
     count(*) FILTER (WHERE per_kind_sha = normalized_sha256) AS content_matching_per_kind,
     count(*) FILTER (WHERE job_status = 'completed' AND
-      (unified_sha IS DISTINCT FROM normalized_sha256 OR per_kind_sha IS DISTINCT FROM normalized_sha256)) AS completed_job_vector_gap,
+      (unified_sha IS DISTINCT FROM normalized_sha256 OR per_kind_sha IS DISTINCT FROM normalized_sha256
+        OR vector_value_mismatch)) AS completed_job_vector_gap,
     count(*) FILTER (WHERE unified_sha IS DISTINCT FROM per_kind_sha) AS vector_checksum_parity_gap,
     count(*) FILTER (WHERE unified_sha IS NOT NULL AND per_kind_sha IS NOT NULL AND vector_value_mismatch) AS vector_value_parity_gap,
     count(*) FILTER (WHERE (unified_sha IS NULL) <> (per_kind_sha IS NULL)) AS vector_presence_parity_gap
-  FROM document_matches GROUP BY source_kind, date_trunc('hour',observed_at), template_version, normalization_version,
-    input_revision, normalized_sha256,
+  FROM document_matches GROUP BY source_kind, date_trunc('hour',scope_time), template_version, normalization_version,
+    input_revision, normalized_sha256, terminal_cause,
     CASE WHEN job_status IS NULL THEN 'absent'
       WHEN job_status IN ('pending','failed') AND attempt_count >= max_attempts THEN job_status || '_exhausted'
       ELSE job_status END
@@ -109,6 +129,12 @@ SELECT jsonb_build_object(
   'audit_version', 'proxy-rag-coverage-v1', 'measured_at', CURRENT_TIMESTAMP,
   'window_start', :'window_start', 'window_end', :'window_end', 'model', :'model',
   'source_rows', (SELECT count(*) FROM source_page), 'document_rows', (SELECT count(*) FROM document_page),
+  'source_page_sha256', (SELECT encode(sha256(convert_to(coalesce(
+    string_agg(encode(sha256(convert_to(to_jsonb(s)::text, 'UTF8')), 'hex'), '' ORDER BY event_time, event_id),
+    ''), 'UTF8')), 'hex') FROM source_page s),
+  'document_page_sha256', (SELECT encode(sha256(convert_to(coalesce(
+    string_agg(encode(sha256(convert_to(to_jsonb(d)::text, 'UTF8')), 'hex'), '' ORDER BY scope_time, document_id),
+    ''), 'UTF8')), 'hex') FROM document_matches d),
   'source_page', coalesce((SELECT jsonb_agg(to_jsonb(s)) FROM source_counts s), '[]'::jsonb),
   'document_page', coalesce((SELECT jsonb_agg(to_jsonb(d)) FROM document_counts d), '[]'::jsonb),
   'availability', jsonb_build_object(
@@ -117,7 +143,7 @@ SELECT jsonb_build_object(
     'terminal_measured_bytes', 'unknown_legacy', 'tls_clienthello', 'unknown_legacy',
     'validated_flows', 'unavailable_pending_lifecycle_contract'),
   'source_cursor', (SELECT jsonb_build_array(event_time,event_id) FROM source_page ORDER BY event_time DESC,event_id DESC LIMIT 1),
-  'document_cursor', (SELECT jsonb_build_array(observed_at,document_id) FROM document_page ORDER BY observed_at DESC,document_id DESC LIMIT 1),
+  'document_cursor', (SELECT jsonb_build_array(scope_time,document_id) FROM document_page ORDER BY scope_time DESC,document_id DESC LIMIT 1),
   'scope', 'bounded independent source and active-document pages; not retained totals',
   'preprocessing_gate', 'content matches do not establish current preprocessing compatibility'
 );

@@ -1,6 +1,6 @@
 # Proxy-only RAG and ML implementation workmap
 
-> **Status: Stages 1-4 application code implemented; live capacity/backend acceptance pending.** Source review:
+> **Status: Stages 1-4 application code implemented; R01-R03 verified locally.** Source review:
 > 2026-10-19. Parent commit `99ed0dfbed057ac1fd2c574bcedbb338f90c85bc`;
 > Integration Console `6a648e8ecb6e84cb029e738b5df7409f6aee7797`;
 > Octopus `c8d603ed015ea71484f06ca4dcb874d23b3d5d10`.
@@ -276,15 +276,87 @@ read-only measurement surfaces. Production execution depends on release tasks.
 | Done | ID | Action | Acceptance evidence / gate |
 | --- | --- | --- | --- |
 | [ ] | R01 | Freeze campaign scope, retained source bounds, target revisions and baseline M01-M07. Classify permanently absent/expired sources and terminal failures. | Signed-off campaign parameters and explicit nonrecoverable dispositions; no promise to recreate unretained evidence; G3, G8 |
-| [ ] | R02 | Replay a small representative retained slice through Octopus preparation, supersession and job enqueueing; consume it with scoped existing Go workers. | Event/ingestion evidence counts remain stable; document/job/vector checksums align; G3 |
-| [ ] | R03 | Resume historical keyset slices from durable checkpoints, with transaction and queue caps. Keep late-arrival correction work independent of advancing historical progress. | Crash/restart, same-timestamp sources, deleted source and delayed-arrival cases converge; G3 |
+| [x] | R02 | Replay a small representative retained slice through Octopus preparation, supersession and job enqueueing; consume it with scoped existing Go workers. | Canonical PostgreSQL fixture preserves event/ingestion counts and verifies document/job/vector parity and replay idempotence; G3 local |
+| [x] | R03 | Resume historical keyset slices from durable checkpoints, with transaction and queue caps. Keep late-arrival correction work independent of advancing historical progress. | Canonical PostgreSQL fixture covers rollback/restart, queue saturation, same-timestamp sources, deleted source and delayed arrival; G3 local |
 | [ ] | R04 | Reserve measured capacity for fresh traffic and interactive queries; throttle or pause backfill on M07 thresholds. | Current/recovery throughput, lag and query latency recorded independently during drain; G8 |
-| [ ] | R05 | Recover expired leases through Go recovery; inspect exhausted/failed/cancelled work by cause. Retry only eligible reviewed scoped failures without resetting processor state. | Stale-owner tests pass; bounded retry cannot revive superseded/orphan work or exhaust current capacity; G3, G5 |
+| [x] | R05 | Recover expired leases through Go recovery; inspect exhausted/failed/cancelled work by cause. Retry only eligible reviewed scoped failures without resetting processor state. | G3/G5 local. Canonical tests verify stale-owner fencing, scoped retries, queue reserve, and exhausted, superseded and orphan exclusions. |
 | [ ] | R06 | Repeat the same coverage audit after each batch/campaign checkpoint; reconcile source/doc/job/unified/per-kind differences. | Every eligible source has current coverage or an explicit disposition; completed current jobs have both matching vectors; G3, G4, G8 |
 | [ ] | R07 | Replay the completed slice again and compare identities, evidence counts, current projections and jobs. Publish actual recovered counts, retained limits, unresolved failures and remaining drain estimate. | Zero unexplained coverage gaps in the frozen slice; unchanged input produces unchanged durable results; G3, G8 |
 
 No runbook step may replace source reconciliation with SQL document inserts,
 global failed-job retries, bulk processor-state deletion or direct cluster edits.
+
+### R01-R03 implementation record (2026-11-03)
+
+- R01 adds an offline campaign receipt to the
+  [coverage auditor](../ops/sql/proxy-rag-measurements.md#freeze-a-recovery-campaign).
+  The receipt pins the retained interval, snapshot, target revisions and exact
+  baseline file hash. It separates terminal jobs from expired or missing
+  sources and records an unknown when a retained ledger is unavailable.
+- R02 replays the retained synthetic envelope corpus through ingestion,
+  Octopus preparation and the scoped Go worker in one disposable canonical
+  PostgreSQL database. Eight event documents and one blocked-host window reach
+  matching document, job and vector checksums. The old document and job are
+  superseded and cancelled, respectively. A second pass preserves ingestion
+  counts and document/job identities, with zero new embeddings. The wireless
+  canary stays pending with zero attempts. The test supplies synthetic vectors.
+- R03 reuses the fenced Octopus preparation transaction. Historical pages
+  keyset by unique arrival revision. A durable lane marker gives dirty
+  notifications a turn even when there is only one queue slot. Dirty work
+  leaves the historical cursor unchanged, including for deleted sources and
+  observations that commit below the cursor.
+
+Local verification started from parent `4d1af9af`, Octopus `d5e0a1c`, and
+Integration Console `0ad4e6c`, with the implementation changes applied in
+their working trees. The 11 campaign auditor unit tests pass with
+`python3 -m unittest discover -s scripts/tests -p 'test_proxy_rag_measure.py' -v`.
+Both focused database tests pass with Docker and Go available. Run from
+`services/octopus`:
+
+```sh
+OCTOPUS_PROXY_REPLAY_E2E=true OCTOPUS_REQUIRE_DOCKER=true \
+  sbt 'testOnly com.sslproxy.coordinator.ingest.OctopusPersistenceIntegrationSuite -- *retained*proxy*envelopes* *proxy*historical*recovery*'
+```
+
+The full `sbt test` run with the same settings passed 579 tests and skipped
+the opt-in live hydration probe. Search `make quality-go` passed with Go
+1.26.1 and golangci-lint 2.13.2. Documentation and schema contract checks
+passed.
+
+Production campaign review and activation remain gated on M07/D07, V01/V02,
+the legacy preparation timezone and the release checks below. R01 stays open
+for the measured baseline and campaign sign-off. The receipt is a review
+artifact. Octopus keeps its existing rolling preparation cursor.
+
+### R04-R07 local implementation record (2026-11-03)
+
+- R04 separates current and backfill throughput, applies the measured reserve
+  and reports the breached M07 threshold. The
+  [checkpoint procedure](../ops/sql/proxy-rag-measurements.md#recovery-checkpoints-and-replay)
+  uses that decision to admit or pause reviewed batches. Production capacity
+  samples and independent throttling of Octopus historical preparation are open.
+- R05 reuses Go lease recovery and the existing scoped repair transaction.
+  A reviewed retry matches one job UUID and its reviewed update timestamp,
+  keeps a measured queue reserve and uses the lowest worker priority. Attempts
+  and previous diagnostics are preserved in the job and repair receipt.
+- R06 adds current-contract counts and blocked-window dispositions to the
+  bounded read-only audit. A window document belongs to its start hour. A
+  completed job with differing vector values counts as a vector gap.
+- R07 compares complete before/after audit fingerprints for a frozen source
+  slice. The canonical replay test preserved eight published evidence rows,
+  nine current document pointers and nine completed job/vector pairs. The
+  second replay issued zero embedding calls and preserved ingestion counts.
+  The full Octopus suite passed 579 tests with the opt-in live probe skipped.
+
+The audit passed 12 unit tests and 18 canonical PostgreSQL integration tests.
+Search passed `make quality-go` and the required canonical database contracts
+under actual runtime grants. The repair CLI test used the local container host's
+non-loopback address to satisfy the service's connection policy. Documentation
+and schema contract checks passed.
+
+R04, R06 and R07 remain open for live campaign acceptance. Production
+coverage, recovered counts, retained limits, unresolved failures and drain
+time require a reviewed campaign and measurements from the deployed stack.
 
 ## Stage 6: Build bounded behavioral evidence
 

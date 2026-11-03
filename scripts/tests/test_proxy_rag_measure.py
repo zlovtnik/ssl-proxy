@@ -3,6 +3,8 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import call, patch
@@ -14,6 +16,93 @@ spec.loader.exec_module(measure)
 
 
 class ProxyRagMeasureTest(unittest.TestCase):
+    def campaign_fixture(self):
+        bounds = {"window_start": "2026-10-19T00:00:00Z", "window_end": "2026-10-19T01:00:00Z"}
+        request = {**bounds, "snapshot_sha256": "a" * 64, "input_revision": "legacy_unknown",
+                   "revisions": {"parent": "b" * 40, "octopus": "c" * 40, "integration_console": "d" * 40},
+                   "schema_manifest_sha256": {"octopus_core": "e" * 64, "atheros_search": "f" * 64}}
+        page = {**bounds, "audit_version": "proxy-rag-coverage-v1", "model": measure.MODEL,
+                "source_rows": 4, "source_page": [{"sources": 3, "disposition": "eligible_unvalidated_authority"},
+                                                  {"sources": 1, "disposition": "excluded_missing_host"}],
+                "document_rows": 3, "document_page": [
+                    {"documents": 1, "source_kind": "proxy_event", "job_disposition": "failed_exhausted"},
+                    {"documents": 1, "source_kind": "proxy_event", "job_disposition": "pending"},
+                    {"documents": 1, "source_kind": "proxy_blocked_host_window", "job_disposition": "cancelled"}]}
+        report = {"audit_version": "proxy-rag-measure-v1", "model": measure.MODEL, "embedding_dimensions": 768,
+                  "measured_at": "2026-10-19T01:01:00Z", "snapshot_sha256": request["snapshot_sha256"],
+                  "retained_source_range": {"source_first": "2026-10-19T00:01:00Z",
+                                            "source_last": "2026-10-19T00:59:00Z"},
+                  "coverage": {"status": "window_pages_exhausted", "pages": [page]},
+                  "blocked_windows": {"hours": [{**bounds, "audit_version": "proxy-window-coverage-v1",
+                                                "complete_input": True}], "hour_budget_exhausted": False},
+                  "capacity": {"status": "blocked_unmeasured"}}
+        return request, report
+
+    def test_campaign_cli_pins_offline_baseline_and_dispositions(self):
+        request, report = self.campaign_fixture()
+        report_bytes = json.dumps(report).encode()
+        with tempfile.TemporaryDirectory() as directory:
+            request_path = Path(directory) / "request.json"
+            baseline_path = Path(directory) / "baseline.json"
+            request_path.write_text(json.dumps(request))
+            baseline_path.write_bytes(report_bytes)
+            result = subprocess.run([sys.executable, str(ROOT / "ops/sql/proxy-rag-measure.py"),
+                                     "--freeze-campaign", str(request_path), "--baseline", str(baseline_path)],
+                                    check=True, capture_output=True, text=True)
+        campaign = json.loads(result.stdout)
+        self.assertEqual(campaign, measure.freeze_campaign(request, report_bytes))
+        self.assertEqual(campaign["status"], "frozen_candidate_requires_review")
+        self.assertEqual(campaign["source_kinds"], ["proxy_blocked_host_window", "proxy_event"])
+        self.assertEqual(campaign["baseline"]["report_sha256"], hashlib.sha256(report_bytes).hexdigest())
+        self.assertEqual(campaign["baseline"]["capacity_status"], "blocked_unmeasured")
+        self.assertEqual(campaign["baseline"]["source_dispositions"]["excluded_missing_host"], 1)
+        self.assertEqual(campaign["baseline"]["terminal_jobs_by_kind"]["proxy_event"]["failed_exhausted"], 1)
+        self.assertEqual(campaign["baseline"]["terminal_jobs_by_kind"]["proxy_blocked_host_window"]["cancelled"], 1)
+        self.assertEqual(campaign["unrecoverable_sources"],
+                         {"status": "unknown_without_retained_ledger", "expired": None, "missing": None})
+        request["unrecoverable_sources"] = {"ledger_sha256": "1" * 64, "expired": 2, "missing": 1}
+        attested = measure.freeze_campaign(request, report_bytes)
+        self.assertEqual(attested["unrecoverable_sources"]["expired"], 2)
+        self.assertNotEqual(attested["campaign_sha256"], campaign["campaign_sha256"])
+        self.assertNotEqual(measure.freeze_campaign(request, report_bytes + b"\n")["campaign_sha256"],
+                            attested["campaign_sha256"])
+
+    def test_campaign_rejects_invalid_pins_and_incomplete_or_mismatched_baseline(self):
+        for section, key, value, error in (
+            ("request", "input_revision", "nomic-prefix-v1:missing", "invalid revision"),
+            ("request", "snapshot_sha256", "b" * 64, "snapshot pins differ"),
+            ("retained_source_range", "source_last", "2026-10-18T00:59:00Z", "overlap"),
+            ("coverage", "status", "page_budget_exhausted", "complete source"),
+            ("page", "window_end", "2026-10-19T02:00:00Z", "match campaign"),
+            ("page", "source_rows", 5, "do not reconcile"),
+            ("document", "source_kind", "wireless_event", "non-proxy"),
+            ("hour", "complete_input", False, "incomplete or mismatched"),
+        ):
+            with self.subTest(section=section, key=key):
+                request, report = self.campaign_fixture()
+                page = report["coverage"]["pages"][0]
+                sections = {**report, "request": request, "page": page, "document": page["document_page"][0],
+                            "hour": report["blocked_windows"]["hours"][0]}
+                sections[section][key] = value
+                with self.assertRaisesRegex(ValueError, error):
+                    measure.freeze_campaign(request, json.dumps(report).encode())
+
+    def test_replay_comparison_requires_complete_matching_scope_and_detects_identity_change(self):
+        _, report = self.campaign_fixture()
+        report["page_size"] = 10
+        page = report["coverage"]["pages"][0]
+        page.update(source_page_sha256="1" * 64, document_page_sha256="2" * 64)
+        repeated = json.loads(json.dumps(report))
+        self.assertEqual(measure.replay_comparison(report, repeated)["status"], "unchanged")
+        repeated["coverage"]["pages"][0]["document_page_sha256"] = "3" * 64
+        self.assertEqual(measure.replay_comparison(report, repeated)["changed"], ["document_job_vector"])
+        repeated["page_size"] = 11
+        with self.assertRaisesRegex(ValueError, "same frozen scope"):
+            measure.replay_comparison(report, repeated)
+        repeated["blocked_windows"]["hours"][0]["complete_input"] = False
+        with self.assertRaisesRegex(ValueError, "requires complete"):
+            measure.replay_comparison(report, repeated)
+
     def test_proxy_producer_corpus_is_bundled_without_drift(self):
         canonical = ROOT / "sql/postgres/contracts/fixtures/proxy-events-v1.json"
         bundled = ROOT / "services/octopus/src/test/resources/contracts/proxy-events-v1.json"
@@ -108,8 +197,13 @@ class ProxyRagMeasureTest(unittest.TestCase):
                       current_ingest_lag_seconds=1, pause_ingest_lag_seconds=10,
                       backend_error_rate=0, pause_backend_error_rate=0.01,
                       memory_bytes=100, pause_memory_bytes=200,
-                      pending_jobs=60, queue_growth_per_second=0)
+                      pending_jobs=100, pending_backfill_jobs=60, backfill_jobs_per_second=6,
+                      current_jobs_per_second=4, queue_growth_per_second=0)
         self.assertEqual(measure.capacity(values)["drain_seconds"], 10)
+        values["current_jobs_per_second"] = 5
+        self.assertIn("backfill_over_budget", measure.capacity(values)["pause_reasons"])
+        values["backfill_jobs_per_second"] = 5
+        self.assertEqual(measure.capacity(values)["drain_seconds"], 12)
         values["queue_growth_per_second"] = 1
         self.assertEqual(measure.capacity(values)["status"], "pause")
         self.assertIsNone(measure.capacity(values)["drain_seconds"])

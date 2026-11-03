@@ -146,6 +146,27 @@ FROM atheros_search.search_documents WHERE source_key='job-state-9';
                 variables["document_after_time"], variables["document_after_id"] = page["document_cursor"]
         self.assertEqual((sources, documents), (10, 2))
 
+    def test_completed_window_uses_hour_start_and_job_identity_affects_replay_hash(self):
+        variables = self.variables()
+        variables.update(window_start="2026-10-18T01:00Z", window_end="2026-10-18T02:00Z",
+                         after_time="2026-10-18T01:00Z", document_after_time="2026-10-18T01:00Z")
+        self.sql("""INSERT INTO atheros_search.search_documents(document_id,source_kind,source_id,source_table,source_key,
+          normalized_text,normalized_sha256,observed_at,window_start,window_end)
+          VALUES ('00000000-0000-0000-0000-000000000099','proxy_blocked_host_window','audit-window','proxy_events','audit-window',
+            'test',encode(sha256(convert_to('test','UTF8')),'hex'),'2026-10-18T02:00Z','2026-10-18T01:00Z','2026-10-18T02:00Z');
+          INSERT INTO atheros_search.embedding_jobs(job_id,document_id,embedding_kind,embedding_model,content_sha256,status,last_error)
+          SELECT document_id,document_id,'event','nomic-embed-text-v2-moe',normalized_sha256,'failed','embedding lease expired; retries exhausted'
+          FROM atheros_search.search_documents WHERE source_key='audit-window';""")
+        sql = (ROOT / "ops/sql/proxy-rag-coverage.sql").read_text()
+        before = json.loads(self.sql(sql, "proxy_audit", variables))
+        self.assertEqual(before["document_rows"], 1)
+        self.assertEqual(before["document_page"][0]["terminal_cause"], "lease_expired")
+        self.sql("UPDATE atheros_search.embedding_jobs SET job_id=gen_random_uuid() "
+                 "WHERE job_id='00000000-0000-0000-0000-000000000099'")
+        after = json.loads(self.sql(sql, "proxy_audit", variables))
+        self.assertEqual(before["document_page"], after["document_page"])
+        self.assertNotEqual(before["document_page_sha256"], after["document_page_sha256"])
+
     def test_lifecycle_crosses_both_boundaries(self):
         result = json.loads(self.sql((ROOT / "ops/sql/proxy-tunnel-completeness.sql").read_text(), "proxy_audit", self.variables()))
         self.assertEqual(result["seed_rows"], 2)
@@ -253,7 +274,7 @@ ANALYZE octopus_core.proxy_events;""")
                                            pending_exhausted=1,failed_exhausted=1,completed=2,absent=1))
         self.assertEqual(sum(r["stale_checksum_job_present"] for r in result["document_page"]), 1)
         self.assertEqual(sum(r["vector_value_parity_gap"] for r in result["document_page"]), 1)
-        self.assertEqual(sum(r["completed_job_vector_gap"] for r in result["document_page"]), 1)
+        self.assertEqual(sum(r["completed_job_vector_gap"] for r in result["document_page"]), 2)
 
     def test_window_input_is_bounded_before_aggregation(self):
         variables = self.variables()

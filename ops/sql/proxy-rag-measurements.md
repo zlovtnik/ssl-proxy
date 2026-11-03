@@ -1,6 +1,7 @@
 # Proxy RAG measurements
 
-Scope: stages 1 and 2 of the [workmap](../../advisor-plans/002-proxy-rag-ml-workmap.md).
+Scope includes measurement for stages 1 and 2 and recovery audits for Stage 5 in the
+[workmap](../../advisor-plans/002-proxy-rag-ml-workmap.md).
 The [collector](proxy-rag-measure.py), [coverage SQL](proxy-rag-coverage.sql),
 [aggregate-window SQL](proxy-rag-window-coverage.sql),
 [baseline SQL](proxy-rag-baseline.sql) and [lifecycle SQL](proxy-tunnel-completeness.sql)
@@ -67,8 +68,9 @@ The audit does not mint identities. Expected legacy text follows the existing
 template for ASCII hosts only; Unicode host text is explicitly unverifiable
 because PostgreSQL and Java locale/normalization behavior need not agree.
 
-Document pages cover active `proxy_event` and `proxy_blocked_host_window` records
-whose observed time is inside the frozen interval. Source-event pages cannot
+Document pages cover active `proxy_event` records by observed time and
+`proxy_blocked_host_window` records by window start, falling back to observed
+time for legacy documents without window bounds. Source-event pages cannot
 establish absent aggregate windows. `--blocked-windows` separately audits closed,
 whole UTC hours with at most page-size + 1 input rows before aggregation. An
 overflow sentinel suppresses the entire hour's denominator. UTC legacy keys and
@@ -80,7 +82,9 @@ Current-content jobs match document ID, event embedding kind, model
 `nomic-embed-text-v2-moe` and exact normalized-text checksum. Failed, exhausted,
 cancelled, pending, leased, completed and absent are separate dispositions.
 Vector presence, content checksum, actual vector equality and per-kind/unified
-parity are independent. Completed jobs with missing vectors remain gaps.
+parity are independent. Completed jobs with missing or unequal vectors remain
+gaps. Terminal causes use coarse categories and leave private diagnostics for
+review through authorized database access.
 Unknown preprocessing, template and normalization metadata are explicit legacy
 buckets; content equality is never reported as proven preprocessing compatibility.
 Exact hashes are not raw-envelope checksums. Output contains only counts,
@@ -105,12 +109,81 @@ Operator budgets include current jobs/sec reserve, queue headroom, scan rows,
 transaction milliseconds, and pause limits for p99, lag, backend errors and memory.
 The collector never derives these thresholds from historical counts.
 
-Drain seconds = pending jobs / (measured total jobs/sec - current reserve jobs/sec).
-No positive reserve remainder, growing queue or exceeded pause threshold produces
-a drain estimate. Even a measured candidate requires review and later recovery
-prerequisites. Database cumulative counters require two timed samples. Pod env
+The backfill ceiling is measured total jobs/sec minus the larger of the current
+reserve and observed current jobs/sec. Divide pending backfill jobs by the
+smaller of measured backfill jobs/sec and that ceiling to estimate drain time.
+A nonpositive drain rate, growing queue or exceeded threshold suppresses the
+estimate. Database cumulative counters require two timed samples. Pod env
 specifications, including consumer-union intent, do not establish actual executed
 processor dependency closure. Missing capacity or runtime evidence blocks recovery.
+
+## Freeze a recovery campaign
+
+Audit the candidate interval against an immutable database snapshot. The operator
+supplies the snapshot SHA-256 to bind the request and report to the same snapshot.
+Each campaign covers up to one day in whole UTC hours and includes both proxy
+document kinds. If a page or hour budget is exhausted, take a smaller slice or
+rerun within the documented audit limits.
+
+```sh
+python3 ops/sql/proxy-rag-measure.py --database --blocked-windows \
+  --window-start "$RECOVERY_WINDOW_START" --window-end "$RECOVERY_WINDOW_END" \
+  --snapshot-sha256 "$RECOVERY_SNAPSHOT_SHA256" --max-pages 10 > baseline.json
+python3 ops/sql/proxy-rag-measure.py --freeze-campaign request.json \
+  --baseline baseline.json > campaign.json
+```
+
+The JSON request contains `window_start`, `window_end`, `snapshot_sha256` and the
+target `input_revision` (`legacy_unknown` or `nomic-prefix-v1:<artifact-sha256>`).
+Supply target Git commits under `revisions` with keys `parent`, `octopus` and
+`integration_console`, and target manifest checksums under
+`schema_manifest_sha256` with keys `octopus_core` and `atheros_search`. Use the
+manifests' embedded `manifest_sha256` values. An optional
+`unrecoverable_sources` object carries `expired` and `missing` counts with a
+`ledger_sha256` pin. The report uses explicit unknowns when no retained ledger
+supports those counts.
+
+The freeze command runs offline and checks the reported slice, snapshot pin, and
+page and hour completeness. It records an exact baseline file hash and the
+audited source and terminal job dispositions. Terminal job counts cover the
+matching current-content jobs of active documents at their audited input
+revisions. Preserve the baseline JSON alongside the campaign so reviewers can
+inspect coverage gaps, revision breakdowns and the M07 capacity assessment.
+Reviewers attest the snapshot and target pins, M07/D07 capacity, V01/V02 backend
+behavior, legacy preparation timezone, and runtime schema readiness before
+activation. The campaign file is a candidate for that review.
+
+## Recovery checkpoints and replay
+
+After release approval, record the current and backfill rates and interactive
+latency over the same observation period at each checkpoint. Run the audit with
+`--capacity` and the same frozen bounds, source snapshot pin, page size and hour
+budget. Stop admitting reviewed recovery batches on `pause` or
+`blocked_unmeasured`. Resume only after a fresh sample meets the reviewed
+limits. The collector reports a gate decision. Live Octopus preparation has a
+shared queue and cursor, so this command cannot independently pause its
+historical lane. Production R04 still requires a verified live admission control
+that preserves fresh work.
+
+Use the [scoped Go repair procedure](../../apps/integration-console/atheros-search/scripts/README.md)
+for reviewed retries. Save the audit at each checkpoint. Reconcile eligible
+event counts against `current_document`, absence, stale-contract and
+multiple-active counts. Reconcile blocked groups against current and missing
+documents and the dirty-window disposition counts. Compare both kinds with
+current-input job dispositions and unified/per-kind vector gaps. Audit
+diagnostics are independent counters and can overlap. Investigate every
+remaining discrepancy before accepting the slice.
+
+After the slice drains, save a complete audit immediately before the final
+replay. Repeat the audit with `--replay-reference completed.json` after replay.
+This compares bounded, ordered fingerprints of retained observations and
+active documents, current jobs and both vector values, as well as hourly
+blocked-window coverage. Use a consistent source snapshot for both reads and
+isolate the target slice from unrelated writes during the comparison. A change
+returns exit status 2. The canonical replay test separately compares ingestion
+evidence counts and current publication pointers. Report the before/after
+coverage counts per kind, retained limits from the campaign, terminal causes
+and unresolved differences, plus the latest measured drain estimate.
 
 ## Verification
 
