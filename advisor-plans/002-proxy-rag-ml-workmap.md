@@ -364,9 +364,14 @@ Scope: Octopus-owned projections in canonical Search-domain surfaces. Additive
 source kinds continue to use the compatible existing `event` embedding kind
 initially. Exact evidence stays structured and accessible through bounded pages.
 
+The [proxy flow lifecycle contract](../docs/proxy-flow-lifecycle.md) defines
+the B01 state machine and has an offline Octopus fixture suite. This local
+validation covers the producer pair and leaves runtime acceptance subject to
+the Stage 5 coverage gate. The horizon requires a reviewed runtime policy.
+
 | Done | ID | Action | Acceptance evidence / gate |
 | --- | --- | --- | --- |
-| [ ] | B01 | Define a validated lifecycle state machine for `proxy_flow`: source identity/correlation scope, open/terminal sequence, pairing horizon, duplicates, conflicting terminals, missing sides and retention truncation. | One supported complete pair is one flow; no sum of open/close counts; incomplete/ambiguous evidence remains visible; G1, G3 |
+| [x] | B01 | Define a validated lifecycle state machine for `proxy_flow`: source identity/correlation scope, open/terminal sequence, pairing horizon, duplicates, conflicting terminals, missing sides and retention truncation. | One supported complete pair is one flow; no sum of open/close counts; incomplete/ambiguous evidence remains visible; G1/G3 local contract checks |
 | [ ] | B02 | Prepare deterministic `proxy_flow` evidence/documents only after B01. Use terminal measured bytes, partial/unknown status and duration scope; keep HTTP observations separate where no validated lifecycle exists. | Golden/source replay cases cannot double count or invent transfer totals; G2, G3 |
 | [ ] | B03 | Add `proxy_host_window` over half-open UTC event-time windows with normalized host/endpoint scope, allowed/blocked observed counts, validated flows, availability and source watermark. | Window size/lookback/rows bounded by config; exact counters reconcile to source fixtures; G3 |
 | [ ] | B04 | Add projection revision, policy/calculation versions, calculated time and deterministic source-event tie-breaks. Correct legacy latest fields using event time. | Late/duplicate/out-of-order sources update the correct historical window; historical correction cannot replace the current-window pointer; G3 |
