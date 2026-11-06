@@ -16,9 +16,11 @@ python3 ops/sql/proxy-rag-measure.py
 python3 ops/sql/proxy-rag-measure.py --live --namespace prod-ssl-proxy
 ```
 
-Database access uses an existing libpq service/environment and a read-only audit
+The collector uses an existing libpq service/environment and a read-only audit
 account, never command-line passwords. It needs private-source SELECT privileges;
 do not give those privileges to the Search runtime. Avoid logging libpq settings.
+For host-local Docker access and observed schema limitations, see
+[the live inspection record](#live-inspection-record-2026-11-06).
 
 ```sh
 python3 ops/sql/proxy-rag-measure.py --database \
@@ -323,3 +325,82 @@ APIs/read-only audits; later schema/producer/runtime changes require their gates
 The historical 175,519 is still unverified. Stage 2's
 [IDNA/PSL and migration policy](../../docs/proxy-authority-v1.md) is implemented
 as pure APIs; later activation must preserve the version and privacy boundaries.
+
+## Live inspection record: 2026-11-06
+
+Read-only inspection from checkout `4d1af9af` on this host at approximately
+16:04 UTC connected to database
+`sync` in the running Docker container `ssl-proxy-platform-postgres`
+(`pgvector/pgvector:0.8.6-pg16-bookworm`). Absence of host libpq environment settings
+does not establish that the database is inaccessible. The existing
+[size-report wrapper](pg-size-report.sh) documents the local authentication path:
+read the mounted credential inside the container without printing it or passing
+it as a command-line password. This inspection used `platform_admin` with session
+default read-only mode and explicit read-only transactions; this is a privileged
+account constrained for the session, not a dedicated read-only audit role.
+The collector's audit-account requirement above still applies.
+
+The following reproduces the connection and schema checks without changing data:
+
+```sh
+docker exec -i ssl-proxy-platform-postgres sh -eu -c '
+  PGPASSWORD=$(tr -d "\r\n" </run/platform-secrets/platform_admin.password)
+  export PGPASSWORD
+  PGOPTIONS="-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=1000"
+  export PGOPTIONS
+  exec psql -X -w -U platform_admin -d sync -v ON_ERROR_STOP=1 -P pager=off -f -
+' <<'SQL'
+BEGIN READ ONLY;
+SET LOCAL TIME ZONE 'UTC';
+SELECT current_database(), current_setting('transaction_read_only') AS read_only;
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'octopus_core' AND table_name = 'proxy_events'
+ORDER BY ordinal_position;
+SELECT to_regclass('octopus_core.proxy_flow') AS proxy_flow_table;
+SELECT event_time AS latest_retained_event_time
+FROM octopus_core.proxy_events
+ORDER BY event_time DESC, event_id LIMIT 1;
+ROLLBACK;
+SQL
+```
+
+Observed results (not synthetic fixtures):
+
+| Check | Evidence |
+| --- | --- |
+| Connection | `current_database() = sync`; `transaction_read_only = on` |
+| Latest retained event | `2026-10-17 19:17:28.795667+00` at inspection time |
+| Live columns | `event_sequence`, `duration_ms`, `payload` and scalar byte counters exist; `evidence` is absent |
+| Materialized flow | `to_regclass('octopus_core.proxy_flow')` returned NULL |
+| Tunnel discovery | Descending `(event_time, event_id)` query returned its 20-row limit in `[2026-10-17 18:17:28+00, 2026-10-17 19:17:29+00)`; this is a sample, not a total |
+| One sampled correlation | Lookup in `[2026-10-17 18:00:00+00, 2026-10-17 21:00:00+00)` returned exactly two rows with `LIMIT 101`: one unblocked open at sequence 1 and one unblocked close at sequence 2; retained hosts match |
+| Sample timestamps | Open `19:17:26.549843+00`, close `19:17:28.795667+00` on 2026-10-17; close follows open |
+| Sample scalar measurements | Open bytes 0/0 and NULL duration; close bytes up/down 3365/6094 and duration 2245 ms |
+| Sample provenance | Both rows have NULL payload measurement version, bytes status, source, unit, directions and duration status; producer event IDs match retained event IDs |
+
+Hosts and event/correlation identifiers are omitted from this record. The sample
+has the expected pair shape within the queried horizon, but deployment scope,
+retained coverage, collection gaps and unresolved source conflicts were not
+attested. Completeness beyond that horizon was not established. Its byte counters are
+reported legacy values, not validated terminal transfer totals: missing
+provenance makes a stored zero unknown as well. Duration scope is also unknown.
+
+Queries referencing `evidence->>'host_normalized'` will fail on this live schema.
+Use `host` only as retained authority for inspection; do not label it normalized.
+The original November 3 example window is newer than the latest retained row
+observed here. No schema upgrade, backfill or workload mutation was performed.
+The full collector was not run against this older schema.
+
+At the original inspection checkout, the
+[workmap](../../advisor-plans/002-proxy-rag-ml-workmap.md) marked B01 unchecked and
+the lifecycle contract document was absent. After rebasing onto `a83fc5ba`, main
+includes the tested [B01 lifecycle contract](../../docs/proxy-flow-lifecycle.md)
+and marks B01 complete; B02 runtime materialization remains unchecked. This
+repository update does not change the observed live database or validate the
+sample under that contract. Producer pairing/measurement tests in
+[the tunnel emitter](../../src/tunnel/audit_event.rs) alone are insufficient.
+The candidate
+[lifecycle audit](proxy-tunnel-completeness.sql) checks counts and time ordering,
+but does not validate blocked status, sequences, host equality or measurement
+provenance. Its single ordered pairs must remain candidates.
