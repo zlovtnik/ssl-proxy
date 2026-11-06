@@ -1,10 +1,10 @@
 engine: postgres
 layer: octopus_core
 database: sync
-schema_version: 2026101901
+schema_version: 2026110501
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: 34fb4670bb9785e4b65461070aa8989461eed1fd5dcb4c6bfe70566340472ce9
+manifest_sha256: 32ac565eb1849ae39ce5095fcbbf1c7b204f2a00cc7552145b42c64a6a614096
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:
@@ -29,6 +29,7 @@ apply_order:
   - 01_tables/019_dq_retention_indexes.sql
   - 01_tables/020_wireless_projection_group_receipts.sql
   - 01_tables/021_proxy_evidence.sql
+  - 01_tables/022_proxy_source_conflicts.sql
 retired:
   - sync_state_pipeline
   - duplicated_wireless_projections

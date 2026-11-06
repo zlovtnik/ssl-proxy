@@ -28,8 +28,19 @@ under their existing source identities, including observations with no pair.
   different versions of the same event ID are visible in a source snapshot,
   every affected correlation is ambiguous until the authoritative version
   is established. The [canonical sink](../services/octopus/src/main/scala/com/sslproxy/coordinator/postgres/sql/BatchSinkSql.scala)
-  keeps the first insert for a repeated ID. A retained canonical snapshot
-  alone cannot detect conflicting payloads already discarded by the sink.
+  keeps the first payload for a repeated ID and records differing payloads in
+  the separate `proxy_events.source_conflicts` column. This unresolved marker
+  maps each payload's SHA-256 over PostgreSQL JSONB text to its correlation ID,
+  including the original payload. Exact replays do not add a conflict. Read
+  these markers as trusted ingestion metadata, separately from payload fields
+  and normalized evidence. Before filtering by correlation or event time,
+  include every correlation referenced by an unresolved marker in the
+  attested deployment scope. Each remains ambiguous, even if its conflicting
+  payload was discarded or its canonical row belongs to another correlation
+  or time window. Replaying a payload or preparing evidence cannot clear the
+  marker; an authoritative reconciliation must establish the accepted version
+  before validation resumes. Conflicts discarded before this marker was
+  deployed remain unknown; a canonical-only snapshot cannot attest their absence.
   Two distinct IDs for the same side are ambiguous even if their values agree.
 
 ## Bounded evaluation
@@ -47,6 +58,18 @@ retained lower bound, the observed upper bound, any collection gaps, and the
 completeness of the bounded lookup. Coverage bounds are half-open UTC
 intervals. For a candidate pair, cover both sides' counterpart intervals,
 from terminal time minus the horizon through open time plus the horizon.
+Write that required closed interval as `[L, U]`. A half-open attested coverage
+interval `[A, B)` contains it exactly when `A <= L` and `U < B`. A lookup must
+include events at both `L` and `U` (for example, `time >= L AND time <= U`);
+coverage ending at `B = U` is coverage limited even when a terminal at `U`
+is present and satisfies the pairing horizon. Require an attested `B > U`
+to establish completeness. Compare the same UTC instants at the source's
+preserved precision; do not round the endpoint or invent a millisecond,
+microsecond or nanosecond increment. This inclusive lookup and strict coverage
+comparison require no endpoint adjustment or assumed timestamp resolution.
+If storage has rounded a timestamp, retrieve a conservative candidate superset
+and evaluate these bounds against retained source times; the rounded value
+cannot prove an event lies inside or outside the inclusive endpoint.
 Use a row limit with an overflow check before
 making any positive claim. Source bounds derived only from the oldest and
 newest row cannot establish coverage.

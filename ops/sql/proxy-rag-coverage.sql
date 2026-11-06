@@ -63,10 +63,8 @@ WITH source_page AS MATERIALIZED (
               ELSE observed_at END AS scope_time
   FROM atheros_search.search_documents
   WHERE source_kind IN ('proxy_event','proxy_blocked_host_window') AND status = 'active'
-    AND ((observed_at >= :'window_start'::timestamptz AND observed_at < :'window_end'::timestamptz)
-      OR (source_kind='proxy_blocked_host_window' AND window_start >= :'window_start'::timestamptz
-        AND window_start < :'window_end'::timestamptz))
 ), document_page AS MATERIALIZED (
+  -- The inlined scope_time expression matches search_documents_proxy_scope_time_idx.
   SELECT * FROM document_slice
   WHERE scope_time >= :'window_start'::timestamptz AND scope_time < :'window_end'::timestamptz
     AND (scope_time, document_id) > (:'document_after_time'::timestamptz, :'document_after_id'::uuid)
@@ -75,7 +73,8 @@ WITH source_page AS MATERIALIZED (
   SELECT d.*, j.job_id, j.status AS job_status, j.attempt_count, j.max_attempts, j.lease_fence,
     u.content_sha256 AS unified_sha, k.content_sha256 AS per_kind_sha,
     u.embedding::text AS unified_vector, k.embedding::text AS per_kind_vector,
-    CASE WHEN j.status NOT IN ('failed','cancelled') OR j.status IS NULL THEN 'not_terminal'
+    CASE WHEN j.status IS NULL OR NOT (j.status IN ('failed','cancelled')
+           OR (j.status = 'pending' AND j.attempt_count >= j.max_attempts)) THEN 'not_terminal'
          WHEN j.last_error LIKE 'embedding lease expired;%' THEN 'lease_expired'
          WHEN j.last_error LIKE 'document missing;%' THEN 'missing_document'
          WHEN j.last_error LIKE 'document status %' THEN 'inactive_document'

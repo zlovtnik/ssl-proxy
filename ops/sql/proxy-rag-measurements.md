@@ -197,8 +197,55 @@ PostgreSQL Testcontainers using the repository-pinned image and dependencies in
 [test requirements](../../scripts/requirements-test.txt). It never connects to a configured
 production database. Missing Docker fails, rather than skipping the suite.
 The optional EXPLAIN artifact records actual scanned/returned rows and buffers.
-Database migrations remain unchanged. Test fixtures use private-source SELECT
+Test fixtures use private-source SELECT
 only on an isolated audit role, not a new runtime grant.
+
+### Dense document pagination: 2026-11-06
+
+The [document-page plans](fixtures/proxy-rag-document-page-explain-20261106.json)
+contain `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` subplans from the full coverage
+audit on the pinned PostgreSQL 16 image. The synthetic workload adds 240,000 event
+documents, 24,000 hourly blocked-host documents (10% with legacy missing window
+bounds), and 100,000 older documents. Events arrive ten at a time every three
+seconds; there are 1,000 window documents per hour. The one-day interval contains
+263,900 documents; 100 legacy windows fall at the next day's exclusive bound.
+Document text is 472 bytes with 256 bytes of metadata padding. Existing small
+job/vector fixtures remain in place. These are local synthetic measurements,
+not production volume, latency or recovery-budget attestations.
+
+With the previous query and indexes, every cursor scanned about 364,000 rows.
+The first page sorted all 263,900 in-range rows across parallel workers, despite
+returning only 500. A partial expression index on the effective `scope_time`
+and `document_id` permits a range scan with the existing keyset ordering. The
+[additive index migration](../../sql/postgres/atheros_search/01_tables/021_proxy_document_scope_index.sql)
+uses the same CASE/COALESCE expression as `document_slice`, including legacy
+fallback. The redundant observed-time/window-start OR filter was removed;
+the half-open scope-time range and UUID cursor remain in `document_page`.
+
+| Cursor | Before, full audit ms | After, full audit ms | After document scan | After page buffers, hit/read |
+| --- | --- | --- | --- | --- |
+| Start of day | 101.234 | 8.860 | 500 rows; no sort | 357 / 147 |
+| Noon | 57.721 | 7.843 | 500 rows; no sort | 301 / 199 |
+| 23:00 | 47.338 | 8.774 | 500 rows; no sort | 302 / 200 |
+
+All measured statements completed under the configured 5,000 ms timeout.
+The indexed document-page nodes took 0.752, 0.768 and 0.921 ms respectively.
+The regression test checks total scan work across loops, bounded sort inputs,
+page size and timeout at all three cursors. A separate keyset test checks
+cross-kind timestamp ties, window-start precedence, legacy fallback, NULL times,
+inactive documents and exclusive end bounds.
+
+```sh
+PROXY_RAG_DOCUMENT_PLAN_OUTPUT=/tmp/proxy-rag-document-explain.json \
+  python3 scripts/tests/proxy_rag_integration.py -v
+```
+
+Apply the index migration through the provisioning executor before relying on
+these plans. Its index build takes a write-blocking table lock; schedule that
+build according to retained volume and the executor's statement timeout. Runtime
+manifest pins and schema-executor content hashes are updated with this migration.
+Live cardinalities, concurrency, I/O and cache conditions still require a measured
+production plan. No production database or cluster was modified.
 
 ## Implementation record: 2026-10-19
 

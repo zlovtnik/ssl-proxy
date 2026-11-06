@@ -263,6 +263,98 @@ ANALYZE octopus_core.proxy_events;""")
         if os.getenv("PROXY_RAG_PLAN_OUTPUT"):
             Path(os.environ["PROXY_RAG_PLAN_OUTPUT"]).write_text(json.dumps(plan, indent=2) + "\n")
 
+    def test_document_page_plan_for_dense_day(self):
+        self.addCleanup(self.sql, "DELETE FROM atheros_search.search_documents WHERE source_key LIKE 'document-plan-%'; "
+                                 "ANALYZE atheros_search.search_documents;")
+        self.sql("""INSERT INTO atheros_search.search_documents(
+          document_id, source_kind, source_id, source_table, source_key, normalized_text,
+          normalized_sha256, observed_at, window_start, window_end, metadata)
+        SELECT md5('document-plan-'||n)::uuid,
+          CASE WHEN n <= 240000 OR n > 264000 THEN 'proxy_event' ELSE 'proxy_blocked_host_window' END,
+          'document-plan-'||n, 'proxy_events', 'document-plan-'||n,
+          repeat('proxy event http_proxied example.com essential_api allowed ', 8), repeat('a',64),
+          CASE WHEN n > 264000 THEN '2026-10-10'::timestamptz + (n-264001)*interval '1 second'
+            WHEN n <= 240000 THEN '2026-10-21'::timestamptz + ((n-1)/10)*interval '3 seconds'
+            ELSE '2026-10-21'::timestamptz + ((n-240001)/1000+1)*interval '1 hour' END,
+          CASE WHEN n BETWEEN 240001 AND 264000 AND n % 10 <> 0
+            THEN '2026-10-21'::timestamptz + ((n-240001)/1000)*interval '1 hour' END,
+          CASE WHEN n BETWEEN 240001 AND 264000 AND n % 10 <> 0
+            THEN '2026-10-21'::timestamptz + ((n-240001)/1000+1)*interval '1 hour' END,
+          jsonb_build_object('fixture',repeat('x',256))
+        FROM generate_series(1,364000) n;
+        ANALYZE atheros_search.search_documents;""")
+        query = (ROOT / "ops/sql/proxy-rag-coverage.sql").read_text().replace(
+            "WITH source_page AS", "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) WITH source_page AS")
+        plans = {}
+        for label, cursor in (("first", "2026-10-21T00:00Z"), ("middle", "2026-10-21T12:00Z"),
+                              ("late", "2026-10-21T23:00Z")):
+            variables = self.variables(500)
+            variables.update(window_start="2026-10-21T00:00Z", window_end="2026-10-22T00:00Z",
+                             after_time="2026-10-21T00:00Z", document_after_time=cursor)
+            plans[label] = json.loads(self.sql(query, "proxy_audit", variables))[0]
+        if os.getenv("PROXY_RAG_DOCUMENT_PLAN_OUTPUT"):
+            Path(os.environ["PROXY_RAG_DOCUMENT_PLAN_OUTPUT"]).write_text(json.dumps({
+                "fixture": {"event_documents": 240000, "window_documents": 24000,
+                            "older_documents": 100000, "page_size": 500, "statement_timeout_ms": 5000},
+                "plans": plans,
+            }, indent=2) + "\n")
+
+        def nodes(node):
+            yield node
+            for child in node.get("Plans", []):
+                yield from nodes(child)
+
+        for label, plan in plans.items():
+            with self.subTest(page=label):
+                page = next(node for node in nodes(plan["Plan"]) if node.get("Subplan Name") == "CTE document_page")
+                scans = [node for node in nodes(page) if node.get("Relation Name") == "search_documents"]
+                self.assertEqual(page["Actual Rows"], 500)
+                self.assertLess(plan["Execution Time"], 5000)
+                self.assertTrue(scans)
+                self.assertTrue(all(node["Node Type"] in ("Index Scan", "Index Only Scan") for node in scans), scans)
+                self.assertLessEqual(sum((node["Actual Rows"] + node.get("Rows Removed by Filter", 0)) *
+                                         node["Actual Loops"] for node in scans), 1000)
+                for node in nodes(page):
+                    if node["Node Type"] in ("Sort", "Incremental Sort"):
+                        self.assertLessEqual(sum(child["Actual Rows"] * child["Actual Loops"]
+                                                 for child in node.get("Plans", [])), 1000)
+
+    def test_document_scope_keyset_preserves_window_and_legacy_boundaries(self):
+        self.addCleanup(self.sql, "DELETE FROM atheros_search.search_documents WHERE source_key LIKE 'document-scope-%';")
+        self.sql("""INSERT INTO atheros_search.search_documents(document_id, source_kind, source_id,
+          source_table, source_key, normalized_text, normalized_sha256, observed_at, window_start, window_end, status)
+        SELECT ('00000000-0000-0000-0000-'||lpad(n::text,12,'0'))::uuid, kind,
+          'document-scope-'||n, 'proxy_events', 'document-scope-'||n, 'fixture',repeat('a',64),
+          observed::timestamptz, first_time::timestamptz, last_time::timestamptz, state
+        FROM (VALUES
+          (11,'proxy_event','2026-10-23T00:00Z',NULL,NULL,'active'),
+          (12,'proxy_blocked_host_window','2026-10-23T02:00Z','2026-10-23T00:00Z','2026-10-23T02:00Z','active'),
+          (13,'proxy_blocked_host_window','2026-10-23T00:00Z',NULL,NULL,'active'),
+          (14,'proxy_event','2026-10-23T00:30Z','2026-10-22T23:00Z','2026-10-23T00:00Z','active'),
+          (15,'proxy_blocked_host_window','2026-10-23T00:00Z','2026-10-22T23:00Z','2026-10-23T00:00Z','active'),
+          (16,'proxy_event',NULL,'2026-10-23T00:00Z','2026-10-23T01:00Z','active'),
+          (17,'proxy_event','2026-10-23T01:00Z',NULL,NULL,'active'),
+          (18,'proxy_blocked_host_window','2026-10-23T00:00Z','2026-10-23T01:00Z','2026-10-23T02:00Z','active'),
+          (19,'proxy_blocked_host_window','2026-10-23T01:00Z',NULL,NULL,'active'),
+          (20,'proxy_blocked_host_window',NULL,NULL,NULL,'active'),
+          (21,'proxy_event','2026-10-23T00:00Z',NULL,NULL,'superseded'),
+          (22,'event','2026-10-23T00:00Z',NULL,NULL,'active')
+        ) AS fixture(n, kind, observed, first_time, last_time, state);""")
+        variables = self.variables(1)
+        variables.update(window_start="2026-10-23T00:00Z", window_end="2026-10-23T01:00Z",
+                         after_time="2026-10-23T00:00Z", document_after_time="2026-10-23T00:00Z")
+        query = (ROOT / "ops/sql/proxy-rag-coverage.sql").read_text()
+        cursors = []
+        for _ in range(5):
+            page = json.loads(self.sql(query, "proxy_audit", variables))
+            if page["document_cursor"]:
+                cursors.append(page["document_cursor"][1])
+                variables["document_after_time"], variables["document_after_id"] = page["document_cursor"]
+            else:
+                self.assertEqual(page["document_rows"], 0)
+                break
+        self.assertEqual(cursors, [f"00000000-0000-0000-0000-{n:012d}" for n in (11,12,13,14)])
+
     def test_terminal_and_checksum_dispositions(self):
         variables = self.variables()
         variables.update(window_start="2026-10-16T00:00Z",window_end="2026-10-17T00:00Z",
@@ -272,9 +364,37 @@ ANALYZE octopus_core.proxy_events;""")
         dispositions = {r["job_disposition"]:r["documents"] for r in result["document_page"]}
         self.assertEqual(dispositions, dict(pending=1,failed=1,cancelled=1,leased=1,
                                            pending_exhausted=1,failed_exhausted=1,completed=2,absent=1))
+        causes = {r["job_disposition"]: r["terminal_cause"] for r in result["document_page"]}
+        self.assertEqual(causes, dict(pending="not_terminal",failed="no_diagnostic",cancelled="no_diagnostic",
+                                     leased="not_terminal",pending_exhausted="no_diagnostic",
+                                     failed_exhausted="no_diagnostic",completed="not_terminal",absent="not_terminal"))
         self.assertEqual(sum(r["stale_checksum_job_present"] for r in result["document_page"]), 1)
         self.assertEqual(sum(r["vector_value_parity_gap"] for r in result["document_page"]), 1)
         self.assertEqual(sum(r["completed_job_vector_gap"] for r in result["document_page"]), 2)
+
+    def test_terminal_cause_classifies_exhausted_pending_diagnostics(self):
+        query = (ROOT / "ops/sql/proxy-rag-coverage.sql").read_text()
+        expression = "CASE WHEN j.status" + query.split("CASE WHEN j.status", 1)[1].split("END AS terminal_cause", 1)[0] + "END"
+        diagnostics = (
+            ("embedding lease expired; retries exhausted", "lease_expired"),
+            ("document missing; no source", "missing_document"),
+            ("document status inactive", "inactive_document"),
+            ("document input checksum or revision changed", "input_changed"),
+            (None, "no_diagnostic"),
+            ("unexpected failure", "other_review_required"),
+        )
+        cases = [dict(status=status, attempt_count=attempts, max_attempts=5, last_error=error,
+                      expected=cause if status in ("failed", "cancelled") or
+                      (status == "pending" and attempts >= 5) else "not_terminal")
+                 for status in (None, "pending", "leased", "completed", "failed", "cancelled")
+                 for attempts in (4, 5, 6) for error, cause in diagnostics]
+        records = json.dumps(cases).replace("'", "''")
+        results = json.loads(self.sql(f"""SELECT jsonb_agg(jsonb_build_object('actual', {expression}, 'expected', j.expected))
+          FROM jsonb_to_recordset('{records}'::jsonb)
+          AS j(status text, attempt_count integer, max_attempts integer, last_error text, expected text);"""))
+        for case, result in zip(cases, results):
+            with self.subTest(case=case):
+                self.assertEqual(result["actual"], result["expected"])
 
     def test_window_input_is_bounded_before_aggregation(self):
         variables = self.variables()
