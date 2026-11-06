@@ -23,9 +23,9 @@ class ProxyRagIntegration(unittest.TestCase):
         return result.stdout.strip()
 
     @classmethod
-    def sql(cls, statement, role="postgres", variables=None):
+    def sql(cls, statement, role="postgres", variables=None, database="sync"):
         command = ["docker", "exec", "-i", cls.container, "psql", "-X", "-qAt", "-U", role,
-                   "-d", "sync", "-v", "ON_ERROR_STOP=1"]
+                   "-d", database, "-v", "ON_ERROR_STOP=1"]
         for key, value in (variables or {}).items():
             command += ["-v", f"{key}={value}"]
         return cls.command(command, statement)
@@ -166,6 +166,138 @@ FROM atheros_search.search_documents WHERE source_key='job-state-9';
         after = json.loads(self.sql(sql, "proxy_audit", variables))
         self.assertEqual(before["document_page"], after["document_page"])
         self.assertNotEqual(before["document_page_sha256"], after["document_page_sha256"])
+
+    def seed_flow_evidence(self, fixture_id, database="sync"):
+        correlation = f"10000000-0000-4000-8000-{fixture_id:012d}"
+        opened = f"00000000-0000-4000-8000-{fixture_id:012d}"
+        closed = f"00000000-0000-4000-8000-{fixture_id + 1:012d}"
+        self.addCleanup(lambda: self.sql(
+            f"DELETE FROM octopus_core.proxy_events WHERE correlation_id='{correlation}'",
+            database=database))
+        self.sql(f"""INSERT INTO octopus_core.proxy_events
+(event_id,event_time,event_type,event_sequence,host,correlation_id,bytes_up,bytes_down,duration_ms,payload)
+VALUES
+('{opened}','2026-10-17T19:17:26Z','tunnel_open',1,'example.com','{correlation}',0,0,NULL,
+ jsonb_build_object('event_id','{opened}')),
+('{closed}','2026-10-17T19:17:28Z','tunnel_close',2,'example.com','{correlation}',3365,6094,2245,
+ jsonb_build_object('event_id','{closed}'));""", database=database)
+        return correlation, opened, closed
+
+    def flow_evidence(self, correlation, variables=None, database="sync", role="proxy_audit"):
+        parameters = dict(correlation_id=correlation, window_start="2026-10-17T18:00:00Z",
+                          window_end="2026-10-17T21:00:00Z")
+        parameters.update(variables or {})
+        report = json.loads(self.sql((ROOT / "ops/sql/proxy-flow-evidence.sql").read_text(),
+                                     role, parameters, database=database))
+        self.assertEqual(report["lifecycle_validation"],
+                         "unavailable_requires_attested_scope_coverage_horizon_and_global_conflict_reconciliation")
+        self.assertIsNone(report["confirmed_transfer_totals"])
+        return report
+
+    def test_flow_evidence_retains_legacy_pair_without_inventing_measurements(self):
+        correlation, opened, closed = self.seed_flow_evidence(100)
+        result = self.flow_evidence(correlation)
+        self.assertEqual(result["candidate_state"], "single_ordered_pair_candidate")
+        self.assertEqual(result["rows_returned"], 2)
+        self.assertFalse(result["lookup_overflow"])
+        self.assertEqual([row["event_id"] for row in result["observations"]], [opened, closed])
+        self.assertEqual(result["observations"][1]["reported_bytes_up"], 3365)
+        self.assertEqual(result["observations"][1]["reported_duration_ms"], 2245)
+        self.assertTrue(all(row["measurement"] is None for row in result["observations"]))
+
+    def test_flow_evidence_requires_supported_sequence_flags_and_source_identity(self):
+        mutations = (
+            "event_sequence=1",
+            "blocked=true",
+            "payload='{}'::jsonb",
+        )
+        for fixture_id, mutation in enumerate(mutations, start=110):
+            with self.subTest(mutation=mutation):
+                correlation, _, closed = self.seed_flow_evidence(fixture_id * 10)
+                self.sql(f"UPDATE octopus_core.proxy_events SET {mutation} WHERE event_id='{closed}'")
+                self.assertEqual(self.flow_evidence(correlation)["candidate_state"], "ineligible_source_fields")
+
+    def test_flow_evidence_rejects_host_and_chronological_inconsistency(self):
+        for fixture_id, mutation in ((120, "host='other.example'"),
+                                     (130, "event_time='2026-10-17T19:17:25Z'")):
+            with self.subTest(mutation=mutation):
+                correlation, _, closed = self.seed_flow_evidence(fixture_id)
+                self.sql(f"UPDATE octopus_core.proxy_events SET {mutation} WHERE event_id='{closed}'")
+                self.assertEqual(self.flow_evidence(correlation)["candidate_state"], "inconsistent_pair")
+
+    def test_flow_evidence_reports_missing_sides_only_within_requested_window(self):
+        correlation, _, _ = self.seed_flow_evidence(140)
+        result = self.flow_evidence(correlation, dict(window_start="2026-10-17T19:17:27Z"))
+        self.assertEqual(result["candidate_state"], "missing_open_in_window")
+        result = self.flow_evidence(correlation, dict(window_end="2026-10-17T19:17:28Z"))
+        self.assertEqual(result["candidate_state"], "missing_terminal_in_window")
+        result = self.flow_evidence(correlation, dict(window_start="2026-10-17T20:00:00Z"))
+        self.assertEqual(result["candidate_state"], "no_retained_observations_in_window")
+
+    def test_flow_evidence_distinct_terminal_ids_are_ambiguous(self):
+        correlation, _, closed = self.seed_flow_evidence(150)
+        other_id = "00000000-0000-4000-8000-000000000152"
+        self.sql(f"""INSERT INTO octopus_core.proxy_events
+(event_id,event_time,event_type,event_sequence,host,correlation_id,payload)
+SELECT '{other_id}',event_time,event_type,event_sequence,host,correlation_id,
+ jsonb_build_object('event_id','{other_id}')
+FROM octopus_core.proxy_events WHERE event_id='{closed}';""")
+        result = self.flow_evidence(correlation)
+        self.assertEqual(result["candidate_state"], "ambiguous")
+        self.assertEqual(result["rows_returned"], 3)
+
+    def test_flow_evidence_surfaces_trusted_conflicts_and_ignores_payload_spoofing(self):
+        correlation, _, closed = self.seed_flow_evidence(160)
+        self.sql(f"UPDATE octopus_core.proxy_events SET "
+                 f"payload=payload || jsonb_build_object('source_conflicts',jsonb_build_object('fake','{correlation}')) "
+                 f"WHERE event_id='{closed}'")
+        self.assertEqual(self.flow_evidence(correlation)["candidate_state"], "single_ordered_pair_candidate")
+        self.sql(f"UPDATE octopus_core.proxy_events SET "
+                 f"source_conflicts=jsonb_build_object(repeat('a',64),'{correlation}') "
+                 f"WHERE event_id='{closed}'")
+        self.assertEqual(self.flow_evidence(correlation)["candidate_state"], "unresolved_source_conflict")
+
+    def test_flow_evidence_reports_101_row_overflow(self):
+        correlation, _, _ = self.seed_flow_evidence(170)
+        self.sql(f"""INSERT INTO octopus_core.proxy_events
+(event_id,event_time,event_type,event_sequence,host,correlation_id,payload)
+SELECT '00000000-0000-4000-8000-'||lpad((2000+n)::text,12,'0'),
+ '2026-10-17T19:18Z'::timestamptz,'tunnel_close',2,'example.com','{correlation}',
+ jsonb_build_object('event_id','00000000-0000-4000-8000-'||lpad((2000+n)::text,12,'0'))
+FROM generate_series(1,100) n;""")
+        result = self.flow_evidence(correlation)
+        self.assertEqual(result["candidate_state"], "lookup_incomplete")
+        self.assertEqual(result["rows_returned"], 101)
+        self.assertTrue(result["lookup_overflow"])
+
+    def test_flow_evidence_invalid_parameters_do_not_select_rows(self):
+        correlation, _, _ = self.seed_flow_evidence(180)
+        for variables in (dict(correlation_id="not-a-uuid"),
+                          dict(window_end="2026-10-17T18:00:00Z"),
+                          dict(window_end="2026-10-17T17:00:00Z"),
+                          dict(window_end="2026-10-25T18:00:00Z"),
+                          dict(window_start="-infinity"),
+                          dict(window_start="infinity", window_end="infinity")):
+            with self.subTest(variables=variables):
+                result = self.flow_evidence(correlation, variables)
+                self.assertFalse(result["parameters_valid"])
+                self.assertEqual(result["candidate_state"], "invalid_parameters")
+                self.assertEqual(result["rows_returned"], 0)
+
+    def test_flow_evidence_runs_on_disposable_legacy_schema(self):
+        database = "proxy_flow_legacy_contract"
+        self.sql(f"CREATE DATABASE {database}")
+        self.addCleanup(lambda: self.sql(f"DROP DATABASE {database}"))
+        self.sql("CREATE SCHEMA octopus_core; "
+                 + (ROOT / "sql/postgres/octopus_core/01_tables/004_proxy_sink.sql").read_text()
+                 + "ALTER TABLE octopus_core.proxy_events ADD COLUMN event_sequence int, "
+                   "ADD COLUMN duration_ms bigint;", database=database)
+        correlation, _, _ = self.seed_flow_evidence(190, database=database)
+        result = self.flow_evidence(correlation, database=database, role="postgres")
+        self.assertEqual(result["candidate_state"], "single_ordered_pair_candidate")
+        self.assertTrue(all(row["measurement"] is None for row in result["observations"]))
+        self.assertTrue(all(row["source_conflicts"] is None for row in result["observations"]))
+        self.assertTrue(all(row["conflict_tracking"] == "unavailable" for row in result["observations"]))
 
     def test_lifecycle_crosses_both_boundaries(self):
         result = json.loads(self.sql((ROOT / "ops/sql/proxy-tunnel-completeness.sql").read_text(), "proxy_audit", self.variables()))

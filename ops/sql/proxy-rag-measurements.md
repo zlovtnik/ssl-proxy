@@ -404,3 +404,49 @@ The candidate
 [lifecycle audit](proxy-tunnel-completeness.sql) checks counts and time ordering,
 but does not validate blocked status, sequences, host equality or measurement
 provenance. Its single ordered pairs must remain candidates.
+
+### Legacy-compatible correlation inspection
+
+Use the [single-correlation evidence audit](proxy-flow-evidence.sql) with an
+existing libpq connection and private-source SELECT privileges. It reads the
+retained host, producer identity, sequence, flags and measurement payload.
+Optional ingestion conflict metadata is read through the row's JSON
+representation, so the audit also runs on the older schema recorded above.
+The output contains private event IDs and retained hosts. Keep it within the
+authorized audit boundary.
+
+```sh
+psql -X -w -qAt -v ON_ERROR_STOP=1 \
+  -v correlation_id="$PROXY_CORRELATION_ID" \
+  -v window_start=2026-10-17T18:00:00Z \
+  -v window_end=2026-10-17T21:00:00Z \
+  -f ops/sql/proxy-flow-evidence.sql
+```
+
+Set `PROXY_CORRELATION_ID` to the retained UUID from your discovery query.
+The audit requires finite increasing UTC bounds spanning at most seven days.
+It returns at most 101 observations, with 101 indicating overflow. It uses a
+repeatable-read, read-only transaction with a five-second statement timeout.
+The limit bounds returned rows. The event-time predicate and timeout bound the
+lookup, which has no dedicated correlation index.
+
+`single_ordered_pair_candidate` describes the rows visible within those
+bounds. Lifecycle validation and confirmed transfer totals remain unavailable.
+A single-correlation lookup cannot establish deployment scope, a reviewed
+pairing horizon, coverage completeness or conflicts attached to another
+correlation outside the filter. Missing optional conflict metadata stays
+unavailable. A present empty marker cannot establish historical conflict
+coverage. Reported scalar byte counts and duration retain their legacy
+semantics.
+
+On 2026-11-06, a follow-up read-only connection attempt found that
+`ssl-proxy-platform-postgres` was absent from the local Docker host.
+The earlier inspection record remains a dated observation. New database
+measurements require the source database to be reachable again.
+
+Local verification passed all 30 tests in
+`scripts/tests/proxy_rag_integration.py`, including nine correlation-audit
+cases. The audit ran with the fixture SELECT-only role on the current
+canonical schema and against a separate disposable legacy database without
+`evidence` or `source_conflicts`. Schema-contract, documentation and diff
+checks passed. These fixture results do not attest retained source coverage.

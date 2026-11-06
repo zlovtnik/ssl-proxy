@@ -369,6 +369,14 @@ the B01 state machine and has an offline Octopus fixture suite. This local
 validation covers the producer pair and leaves runtime acceptance subject to
 the Stage 5 coverage gate. The horizon requires a reviewed runtime policy.
 
+The [November 6 source inspection](../ops/sql/proxy-rag-measurements.md#live-inspection-record-2026-11-06)
+found a legacy pair shape with unavailable measurement provenance and an older
+live schema. The [bounded correlation audit](../ops/sql/proxy-flow-evidence.sql)
+supports that schema and reports source-field inconsistencies and conflict
+availability. B02 still requires attested deployment/coverage, a reviewed
+pairing horizon and global source-conflict reconciliation before validated
+flow documents can be published.
+
 | Done | ID | Action | Acceptance evidence / gate |
 | --- | --- | --- | --- |
 | [x] | B01 | Define a validated lifecycle state machine for `proxy_flow`: source identity/correlation scope, open/terminal sequence, pairing horizon, duplicates, conflicting terminals, missing sides and retention truncation. | One supported complete pair is one flow; no sum of open/close counts; incomplete/ambiguous evidence remains visible; G1/G3 local contract checks |
