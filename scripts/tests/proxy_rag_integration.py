@@ -614,6 +614,161 @@ VALUES ('00000000-0000-0000-0000-000000000010','proxy_blocked_host_window','wind
             _, errors = holder.communicate(timeout=10)
             self.assertEqual(holder.returncode, 0, errors)
 
+    def conflicts_index_upgrade(self, settings="", empty=False):
+        migration = (ROOT / "sql/postgres/octopus_core/01_tables/023_proxy_rollup_event_order.sql").read_text()
+        return self.sql(
+            "BEGIN; DROP INDEX octopus_core.proxy_events_source_conflicts_revision_idx; "
+            + ("TRUNCATE octopus_core.proxy_events; " if empty else "")
+            + settings + migration + migration
+            + "SELECT indisvalid FROM pg_index WHERE indexrelid = "
+              "'octopus_core.proxy_events_source_conflicts_revision_idx'::regclass; ROLLBACK;")
+
+    def conflicts_index_settings(self, ceiling="100000", timeout="5s", window="10 minutes", drained="on"):
+        return (
+            f"SET LOCAL statement_timeout = '{timeout}'; "
+            f"SET LOCAL sslproxy.proxy_conflicts_max_rows = '{ceiling}'; "
+            f"SET LOCAL sslproxy.proxy_conflicts_writes_drained = '{drained}'; "
+            "SELECT set_config('sslproxy.proxy_conflicts_window_end', "
+            f"(clock_timestamp() + interval '{window}')::text, true); ")
+
+    def test_populated_conflicts_index_requires_reviewed_drain_and_budget(self):
+        with self.assertRaisesRegex(RuntimeError, "requires reviewed"):
+            self.conflicts_index_upgrade()
+        with self.assertRaisesRegex(RuntimeError, "requires reviewed"):
+            self.conflicts_index_upgrade(self.conflicts_index_settings(drained="off"))
+        with self.assertRaisesRegex(RuntimeError, "exceed reviewed maintenance budget"):
+            self.conflicts_index_upgrade(self.conflicts_index_settings(ceiling="1"))
+
+    def test_conflicts_index_requires_finite_timeout_and_live_window(self):
+        for timeout, window in (("0", "10 minutes"), ("5s", "-1 minute"), ("5s", "1 second")):
+            with self.subTest(timeout=timeout, window=window):
+                with self.assertRaisesRegex(RuntimeError, "finite statement_timeout"):
+                    self.conflicts_index_upgrade(self.conflicts_index_settings(timeout=timeout, window=window))
+
+    def test_reviewed_conflicts_index_and_empty_install_replay(self):
+        self.assertEqual(self.conflicts_index_upgrade(self.conflicts_index_settings()).splitlines()[-1], "t")
+        self.assertEqual(self.conflicts_index_upgrade(empty=True), "t")
+
+    def test_conflicts_index_rejects_active_writer_and_completed_build_does_not_wait(self):
+        migration = (ROOT / "sql/postgres/octopus_core/01_tables/023_proxy_rollup_event_order.sql").read_text()
+        self.sql("DROP INDEX octopus_core.proxy_events_source_conflicts_revision_idx;")
+        holder = subprocess.Popen(
+            ["docker", "exec", "-i", self.container, "psql", "-X", "-qAt", "-U", "postgres",
+             "-d", "sync", "-v", "ON_ERROR_STOP=1"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            holder.stdin.write("BEGIN; LOCK TABLE octopus_core.proxy_events IN ROW EXCLUSIVE MODE; "
+                               "SELECT 'locked';\n")
+            holder.stdin.flush()
+            self.assertEqual(holder.stdout.readline().strip(), "locked")
+            with self.assertRaisesRegex(RuntimeError, "lock timeout"):
+                self.sql("BEGIN; " + self.conflicts_index_settings() + migration + "COMMIT;")
+        finally:
+            holder.stdin.write("ROLLBACK;\n")
+            holder.stdin.flush()
+            _, errors = holder.communicate(timeout=10)
+            self.assertEqual(holder.returncode, 0, errors)
+            self.sql("BEGIN; " + self.conflicts_index_settings() + migration + "COMMIT;")
+        holder = subprocess.Popen(
+            ["docker", "exec", "-i", self.container, "psql", "-X", "-qAt", "-U", "postgres",
+             "-d", "sync", "-v", "ON_ERROR_STOP=1"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            holder.stdin.write("BEGIN; LOCK TABLE octopus_core.proxy_events IN ROW EXCLUSIVE MODE; "
+                               "SELECT 'locked';\n")
+            holder.stdin.flush()
+            self.assertEqual(holder.stdout.readline().strip(), "locked")
+            self.sql("SET statement_timeout='2s'; " + migration)
+        finally:
+            holder.stdin.write("ROLLBACK;\n")
+            holder.stdin.flush()
+            _, errors = holder.communicate(timeout=10)
+            self.assertEqual(holder.returncode, 0, errors)
+
+    def kind_validation_upgrade(self, settings=""):
+        addition = (ROOT / "sql/postgres/atheros_search/01_tables/022_proxy_behavior.sql").read_text()
+        validation = (ROOT / "sql/postgres/atheros_search/01_tables/024_proxy_document_kind_validation.sql").read_text()
+        return self.sql("BEGIN; " + addition + settings + validation + validation
+                        + "SELECT convalidated FROM pg_constraint WHERE "
+                          "conrelid='atheros_search.search_documents'::regclass "
+                          "AND conname='search_documents_kind_ck'; ROLLBACK;")
+
+    def kind_validation_settings(self, ceiling="100000", timeout="5s", window="10 minutes"):
+        return (
+            f"SET LOCAL statement_timeout = '{timeout}'; "
+            f"SET LOCAL sslproxy.proxy_kind_validation_max_rows = '{ceiling}'; "
+            "SELECT set_config('sslproxy.proxy_kind_validation_window_end', "
+            f"(clock_timestamp() + interval '{window}')::text, true); ")
+
+    def test_kind_addition_skips_retained_scan_and_still_enforces_new_writes(self):
+        addition = (ROOT / "sql/postgres/atheros_search/01_tables/022_proxy_behavior.sql").read_text()
+        prefix = ("BEGIN; ALTER TABLE atheros_search.search_documents DROP CONSTRAINT search_documents_kind_ck; "
+                  "UPDATE atheros_search.search_documents SET source_kind='invalid-retained-kind'; "
+                  "ALTER TABLE atheros_search.search_documents ADD CONSTRAINT search_documents_kind_ck CHECK (true); ")
+        self.assertEqual(self.sql(prefix + addition + "SELECT NOT convalidated FROM pg_constraint "
+                         "WHERE conrelid='atheros_search.search_documents'::regclass "
+                         "AND conname='search_documents_kind_ck'; ROLLBACK;"), "t")
+        with self.assertRaisesRegex(RuntimeError, "search_documents_kind_ck"):
+            self.sql("BEGIN; " + addition
+                     + "UPDATE atheros_search.search_documents SET source_kind='invalid-new-kind'; ROLLBACK;")
+
+    def test_kind_validation_has_separate_reviewed_budget(self):
+        with self.assertRaisesRegex(RuntimeError, "requires reviewed"):
+            self.kind_validation_upgrade()
+        with self.assertRaisesRegex(RuntimeError, "exceed reviewed maintenance budget"):
+            self.kind_validation_upgrade(self.kind_validation_settings(ceiling="1"))
+        for timeout, window in (("0", "10 minutes"), ("5s", "-1 minute"), ("5s", "1 second")):
+            with self.subTest(timeout=timeout, window=window):
+                with self.assertRaisesRegex(RuntimeError, "finite statement_timeout"):
+                    self.kind_validation_upgrade(self.kind_validation_settings(timeout=timeout, window=window))
+        self.assertEqual(self.kind_validation_upgrade(self.kind_validation_settings()).splitlines()[-1], "t")
+
+    def test_kind_replacement_exclusive_lock_times_out_without_changing_constraint(self):
+        addition = (ROOT / "sql/postgres/atheros_search/01_tables/022_proxy_behavior.sql").read_text()
+        holder = subprocess.Popen(
+            ["docker", "exec", "-i", self.container, "psql", "-X", "-qAt", "-U", "postgres",
+             "-d", "sync", "-v", "ON_ERROR_STOP=1"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        original = self.sql("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                            "WHERE conrelid='atheros_search.search_documents'::regclass "
+                            "AND conname='search_documents_kind_ck'")
+        try:
+            holder.stdin.write("BEGIN; LOCK TABLE atheros_search.search_documents IN ROW EXCLUSIVE MODE; "
+                               "SELECT 'locked';\n")
+            holder.stdin.flush()
+            self.assertEqual(holder.stdout.readline().strip(), "locked")
+            with self.assertRaisesRegex(RuntimeError, "lock timeout"):
+                self.sql("BEGIN; SET LOCAL statement_timeout='5s'; " + addition + "COMMIT;")
+        finally:
+            holder.stdin.write("ROLLBACK;\n")
+            holder.stdin.flush()
+            _, errors = holder.communicate(timeout=10)
+            self.assertEqual(holder.returncode, 0, errors)
+        self.assertEqual(self.sql("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                                  "WHERE conrelid='atheros_search.search_documents'::regclass "
+                                  "AND conname='search_documents_kind_ck'"), original)
+
+    def test_separate_kind_validation_allows_an_active_writer(self):
+        addition = (ROOT / "sql/postgres/atheros_search/01_tables/022_proxy_behavior.sql").read_text()
+        validation = (ROOT / "sql/postgres/atheros_search/01_tables/024_proxy_document_kind_validation.sql").read_text()
+        # Commit the no-scan addition before validating, just as the executor does.
+        self.sql(addition)
+        holder = subprocess.Popen(
+            ["docker", "exec", "-i", self.container, "psql", "-X", "-qAt", "-U", "postgres",
+             "-d", "sync", "-v", "ON_ERROR_STOP=1"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            holder.stdin.write("BEGIN; LOCK TABLE atheros_search.search_documents IN ROW EXCLUSIVE MODE; "
+                               "SELECT 'locked';\n")
+            holder.stdin.flush()
+            self.assertEqual(holder.stdout.readline().strip(), "locked")
+            self.sql("BEGIN; " + self.kind_validation_settings() + validation + "COMMIT;")
+        finally:
+            holder.stdin.write("ROLLBACK;\n")
+            holder.stdin.flush()
+            _, errors = holder.communicate(timeout=10)
+            self.assertEqual(holder.returncode, 0, errors)
+
 
 if __name__ == "__main__":
     unittest.main()

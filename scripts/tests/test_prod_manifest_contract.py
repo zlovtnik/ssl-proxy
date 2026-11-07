@@ -709,6 +709,21 @@ class OperationsDeliveryContractTest(unittest.TestCase):
                 rendered.extend(documents(result.stdout))
             cls.environments[environment] = rendered
 
+    def test_schema_promotion_holds_production_and_keeps_staging_current(self) -> None:
+        for environment, rendered in self.environments.items():
+            with self.subTest(environment=environment):
+                if environment == "prod":
+                    expected = check_gitops.PRODUCTION_SCHEMA_CONTRACT
+                else:
+                    expected = {
+                        "octopus_core": check_gitops._octopus_contract_checksum(ROOT, []),
+                        "atheros_search": check_gitops._atheros_contract_checksum(ROOT, []),
+                        "executor_marker": check_gitops._schema_migrator_contract_marker(ROOT, []),
+                    }
+                self.assertEqual([], check_gitops._check_octopus_schema_contract(rendered, environment, expected["octopus_core"]))
+                self.assertEqual([], check_gitops._check_atheros_schema_contract(rendered, environment, expected["atheros_search"]))
+                self.assertEqual([], check_gitops._check_schema_executor_contract(rendered, f"cyber-stack/matrix/{environment}/data-plane", expected["executor_marker"]))
+
     def test_operational_upstreams_use_internal_services(self) -> None:
         for environment, rendered in self.environments.items():
             with self.subTest(environment=environment):

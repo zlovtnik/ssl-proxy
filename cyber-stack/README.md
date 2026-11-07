@@ -49,8 +49,10 @@ annotation is the only Reloader field excluded from Argo CD reconciliation.
 
 [`applicationset-workloads.yaml`](argocd/applicationset-workloads.yaml) creates
 the three production slice Applications. RollingSync orders bootstrap,
-data-plane, then app-stack. They track `main`, use automated sync with pruning and
-self-healing, and refuse empty desired state. The data-plane entry retains the
+data-plane, then app-stack. They track `main`, disable Application autosync and
+set each RollingSync step's `maxUpdate` to zero. Production sync requires manual
+approval through the `prod-deployer` platform-admin role after review of the
+maintenance budgets. Empty desired state remains prohibited. The data-plane entry retains the
 StatefulSet PVC-template ignore rule. Namespace deletion requires explicit
 confirmation. Dev Applications and dev controllers are prohibited on the
 production server.
@@ -64,10 +66,15 @@ and platform-input changes; the production deployer RBAC stays production-only.
 
 The single-node topology intentionally has no PodDisruptionBudgets: a PDB
 cannot create redundancy on one node and can block voluntary maintenance. The
-Redpanda, MinIO and Alertmanager StatefulSets remain under automated Argo CD
-sync rather than a manual-sync carve-out; readiness checks, immutable images
-and Git revert are the rollout controls. Revisit both decisions before adding a
-second schedulable node.
+Redpanda, MinIO and Alertmanager follow the same manual production sync gate;
+readiness checks, immutable images and Git revert remain rollout controls.
+The production schema-executor content hash and runtime manifest checksums
+remain pinned to the approved contract while populated-upgrade maintenance
+budgets are unreviewed. Promote those pins together only after the
+[maintenance gate](../docs/proxy-rag-evidence-preparation.md#populated-table-maintenance-gate)
+and the [behavioral upgrade budgets](../docs/proxy-flow-lifecycle.md#populated-upgrade-budgets)
+are satisfied. Staging continues to check the current canonical schema contract.
+Revisit the single-node availability decision before adding a second schedulable node.
 
 The control-plane Kustomization also declares the
 `ssl-proxy-production-gate` ServiceAccount and its name-scoped Role. That

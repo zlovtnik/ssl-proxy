@@ -54,6 +54,7 @@ images:
   name: delip-queve-worker
   newName: 192.168.1.242:5000/delip-queve-worker
 patches:
+- path: ../patches/schema-contract-hold.yaml
 - path: ../patches/identity-hostname.yaml
 - path: ../patches/schema-migrator-identity.yaml
 - path: ../patches/cloudflare-edge.yaml

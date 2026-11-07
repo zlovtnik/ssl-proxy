@@ -110,3 +110,80 @@ and boundary cases. The existing
 [completeness audit](../ops/sql/proxy-tunnel-completeness.sql) measures
 candidate correlations. Stage 6 runtime work depends on
 [Stage 5 coverage acceptance](../advisor-plans/002-proxy-rag-ml-workmap.md#stage-5-recover-retained-eligible-data).
+
+## Runtime preparation
+
+B02-B04 are implemented by the existing Octopus proxy search preparer.
+The additive [Search schema](../sql/postgres/atheros_search/01_tables/022_proxy_behavior.sql)
+provides the singleton `proxy_behavior_policy` configuration. Provisioning
+installs no row. Its reviewed configuration supplies deployment scope,
+coverage bounds, coverage/conflict attestations, expiry, pairing horizon,
+window size, lookback and source/output limits. Octopus has SELECT permission
+on this configuration. An expired or absent policy stops publication and
+retires bounded pages of previous projections.
+
+The preparer reads a bounded event-time context and a bounded global conflict
+page in one statement snapshot. The current processor lease and shared proxy
+queue lock protect projection revisions, document supersession, embedding
+jobs and the durable output cursor in the same transaction. Input or output
+overflow records unavailable status and starts bounded retirement.
+`proxy_behavior_status` exposes readiness and incomplete recomputation.
+
+`atheros_search.proxy_flow` retains deterministic dispositions and source
+references. Its Search documents use source kind `proxy_flow`, disjoint
+source table/key identities and the existing `event` embedding kind.
+Partial byte values stay separate from confirmed values. Unavailable totals
+are null. Exact counters, identifiers and duration values stay in structured
+evidence. Semantic text contains the host, disposition and transfer status.
+HTTP observations retain their existing independent document identity.
+
+`atheros_search.proxy_host_window` groups normalized host and explicitly
+observed port scope into half-open UTC windows. An unknown port has its own
+endpoint identity. Counts describe observations, while each validated flow
+belongs to its terminal event-time window. Measured totals identify when
+they cover a subset of validated flows. Empty replacement windows clear
+previous counters after corrections. `proxy_host_current` advances by
+window start, so a historical correction cannot replace a newer pointer.
+Queries must check behavioral status before treating a recomputing projection
+set as complete.
+
+Projection fingerprints exclude calculation time. Replays retain revisions
+and document identities. Evidence corrections receive a monotonic projection
+revision, policy/calculation versions and source watermark. A durable output
+cursor rotates flow and window work across small batches. Removed source
+groups retire obsolete documents, jobs, windows and pointers.
+
+The additive [legacy rollup migration](../sql/postgres/octopus_core/01_tables/023_proxy_rollup_event_order.sql)
+adds the event-ID tie-break for latest fields. Latest metadata comes from the
+maximum `(event_time,event_id)` observation, including null fields.
+Cumulative counters retain their existing meanings. Existing rollups have an
+empty tie-break until a newly ingested observation establishes the winner.
+
+Production schema rollout, policy admission and Stage 5 acceptance remain
+deployment gates. The legacy database inspection cannot supply absent
+measurement provenance or attest source coverage.
+
+### Populated upgrade budgets
+
+Migration 022 installs `search_documents_kind_ck` as `NOT VALID`, enforcing new
+writes without scanning retained documents under its exclusive lock. The
+separate [validation migration](../sql/postgres/atheros_search/01_tables/024_proxy_document_kind_validation.sql)
+runs in its own provisioning transaction. For populated Search tables, the
+executor requires measured `sslproxy.proxy_kind_validation_max_rows` and an
+approved `sslproxy.proxy_kind_validation_window_end` supplied through `PGOPTIONS`.
+Validation uses `SHARE UPDATE EXCLUSIVE`, allowing ordinary writes, with a
+one-second lock timeout and a finite `statement_timeout` greater than one second
+that fits inside the approved window. It fails closed if the row budget is
+exceeded or approval is missing or expired. Empty installs need no approval.
+
+The [conflict index migration](../sql/postgres/octopus_core/01_tables/023_proxy_rollup_event_order.sql)
+is transactional and therefore uses a standard index build. Before a populated
+build, drain writes through reviewed GitOps changes, measure the retained row
+count and build duration, and supply `sslproxy.proxy_conflicts_max_rows`,
+`sslproxy.proxy_conflicts_window_end` and `sslproxy.proxy_conflicts_writes_drained=on`
+through executor `PGOPTIONS`. The same finite timeout/window and one-second lock
+budget apply. A table `SHARE` lock rejects an active writer before the scan and
+keeps the row ceiling stable during the build. Existing indexes return before
+acquiring that lock. Only the provisioning schema executor applies either DDL
+step; runtimes do not create indexes or validate constraints. These controls do
+not establish production row counts, duration, or permission to roll out.

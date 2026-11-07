@@ -974,9 +974,9 @@ spec:
     type: RollingSync
     rollingSync:
       steps:
-        - {matchExpressions: [{key: app.kubernetes.io/component, operator: In, values: [bootstrap]}]}
-        - {matchExpressions: [{key: app.kubernetes.io/component, operator: In, values: [data-plane]}]}
-        - {matchExpressions: [{key: app.kubernetes.io/component, operator: In, values: [app-stack]}]}
+        - {maxUpdate: 0, matchExpressions: [{key: app.kubernetes.io/component, operator: In, values: [bootstrap]}]}
+        - {maxUpdate: 0, matchExpressions: [{key: app.kubernetes.io/component, operator: In, values: [data-plane]}]}
+        - {maxUpdate: 0, matchExpressions: [{key: app.kubernetes.io/component, operator: In, values: [app-stack]}]}
   template:
     metadata:
       name: '{{name}}'
@@ -992,7 +992,7 @@ spec:
         kustomize: {}
       destination: {server: '{{server}}', namespace: '{{namespace}}'}
       syncPolicy:
-        automated: {prune: true, selfHeal: true, allowEmpty: false}
+        automated: {enabled: false, prune: true, selfHeal: true, allowEmpty: false}
         syncOptions: [PrunePropagationPolicy=foreground, ApplyOutOfSyncOnly=true, ServerSideApply=true, RespectIgnoreDifferences=true]
       ignoreDifferences:
         - {group: apps, kind: StatefulSet, jsonPointers: [/spec/volumeClaimTemplates]}
@@ -1008,6 +1008,20 @@ data: {applicationsetcontroller.enable.progressive.syncs: "true"}
         errors: list[str] = []
         check_gitops._check_application_set(self.application_set(), errors)
         self.assertEqual([], errors)
+
+    def test_rejects_production_autosync_and_rolling_sync_bypasses(self) -> None:
+        for enabled in (None, True):
+            fixture = self.application_set()
+            fixture[0]["spec"]["template"]["spec"]["syncPolicy"]["automated"]["enabled"] = enabled
+            errors: list[str] = []
+            check_gitops._check_application_set(fixture, errors)
+            self.assertTrue(any("automated.enabled: false" in error for error in errors))
+        for max_update in (None, 1, "100%"):
+            fixture = self.application_set()
+            fixture[0]["spec"]["strategy"]["rollingSync"]["steps"][1]["maxUpdate"] = max_update
+            errors = []
+            check_gitops._check_application_set(fixture, errors)
+            self.assertTrue(any("maxUpdate: 0" in error for error in errors))
 
     def test_rejects_missing_duplicate_misrouted_and_dev_entries(self) -> None:
         documents = self.application_set()
@@ -1110,11 +1124,24 @@ spec:
   destinations:
     - {namespace: prod-ssl-proxy, server: https://kubernetes.default.svc}
     - {namespace: staging-ssl-proxy, server: https://staging-kubernetes.default.svc}
+  roles:
+    - name: prod-deployer
+      groups: [ssl-proxy:platform-admins]
+      policies:
+        - p, proj:ssl-proxy:prod-deployer, applications, sync, ssl-proxy/ssl-proxy-prod-*, allow
+        - p, proj:ssl-proxy:prod-deployer, applications, get, ssl-proxy/*, allow
 """
         )
         errors: list[str] = []
         check_gitops._check_prod_project(project, errors)
         self.assertEqual([], errors)
+
+    def test_rejects_widened_production_approval_group(self) -> None:
+        project = documents((REPOSITORY_ROOT / "cyber-stack/argocd/appproject-ssl-proxy.yaml").read_text())
+        project[0]["spec"]["roles"][0]["groups"].append("all-users")
+        errors: list[str] = []
+        check_gitops._check_prod_project(project, errors)
+        self.assertTrue(any("approval role" in error for error in errors))
 
     def test_rejects_dev_destination_and_controller(self) -> None:
         project = documents(

@@ -95,6 +95,23 @@ proxy_grants="$(docker exec "${database_container}" psql --username postgres --d
      AND NOT has_any_column_privilege('atheros_search_runtime', 'atheros_search.proxy_document_state', 'SELECT,INSERT,UPDATE')
      AND NOT has_any_column_privilege('atheros_search_runtime', 'atheros_search.proxy_event_evidence', 'INSERT,UPDATE')
      AND NOT has_table_privilege('atheros_search_runtime', 'atheros_search.proxy_event_evidence', 'DELETE,TRUNCATE')
+     AND has_table_privilege('octopus_runtime', 'atheros_search.proxy_behavior_policy', 'SELECT')
+     AND NOT has_table_privilege('octopus_runtime', 'atheros_search.proxy_behavior_policy', 'INSERT,UPDATE,DELETE')
+     AND NOT has_any_column_privilege('atheros_search_runtime', 'atheros_search.proxy_behavior_policy', 'SELECT,INSERT,UPDATE')
+     AND (SELECT bool_and(has_table_privilege('octopus_runtime', relation, privilege))
+          FROM unnest(ARRAY['atheros_search.proxy_flow','atheros_search.proxy_host_window',
+                            'atheros_search.proxy_host_current','atheros_search.proxy_behavior_status',
+                            'atheros_search.proxy_destination_history','atheros_search.proxy_device_window',
+                            'atheros_search.proxy_attribution_window']) relation
+          CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) privilege)
+     AND (SELECT bool_and(has_table_privilege('atheros_search_runtime', relation, 'SELECT')
+                          AND NOT has_table_privilege('atheros_search_runtime', relation, 'INSERT,UPDATE,DELETE,TRUNCATE'))
+          FROM unnest(ARRAY['atheros_search.proxy_flow','atheros_search.proxy_host_window',
+                            'atheros_search.proxy_host_current','atheros_search.proxy_behavior_status',
+                            'atheros_search.proxy_destination_history','atheros_search.proxy_device_window',
+                            'atheros_search.proxy_attribution_window']) relation)
+     AND has_sequence_privilege('octopus_runtime', 'atheros_search.proxy_behavior_revision_seq', 'USAGE')
+     AND NOT has_sequence_privilege('atheros_search_runtime', 'atheros_search.proxy_behavior_revision_seq', 'USAGE')
      AND NOT has_any_column_privilege('atheros_search_runtime', 'atheros_search.schema_readiness', 'INSERT,UPDATE')")"
 [ "${proxy_grants}" = t ] || { echo "proxy evidence grants did not match the fixture" >&2; exit 1; }
 
@@ -125,6 +142,31 @@ printf '%s\n' "${second_output}" | grep -q "migration already applied: runtime/a
 second_count="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align \
   --command="SELECT count(*) FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/%'")"
 [ "${second_count}" = "${first_count}" ]
+
+# Upgrade the last released Search schema without replaying historical DDL.
+readonly previous_search_checksum="e363f2c5ed94c93905b95084e0378a00c04752e2dc30611ea8c472e60df241e7"
+docker exec --interactive "${database_container}" psql \
+  --username postgres --dbname sync --set=ON_ERROR_STOP=1 <<SQL
+DROP TABLE atheros_search.proxy_destination_history;
+DROP TABLE atheros_search.proxy_device_window;
+DROP TABLE atheros_search.proxy_attribution_window;
+DELETE FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/atheros_search/%';
+UPDATE atheros_search.schema_readiness
+SET required_checksum = '${previous_search_checksum}', applied_checksum = '${previous_search_checksum}'
+WHERE domain = 'atheros_search';
+SQL
+search_upgrade_output="$(run_executor 2>&1)" || {
+  printf '%s\n' "${search_upgrade_output}" >&2
+  exit 1
+}
+printf '%s\n' "${search_upgrade_output}" | grep -q "adopting trusted pre-ledger migrations: atheros_search (${previous_search_checksum})"
+printf '%s\n' "${search_upgrade_output}" | grep -q "migration already applied: runtime/atheros_search/01_tables/021_proxy_document_scope_index.sql"
+printf '%s\n' "${search_upgrade_output}" | grep -q "migration applied: runtime/atheros_search/01_tables/022_proxy_behavior.sql"
+printf '%s\n' "${search_upgrade_output}" | grep -q "migration applied: runtime/atheros_search/01_tables/023_proxy_behavior_scopes.sql"
+printf '%s\n' "${search_upgrade_output}" | grep -q "migration applied: runtime/atheros_search/01_tables/024_proxy_document_kind_validation.sql"
+search_adopted_count="$(docker exec "${database_container}" psql --username postgres --dbname sync --tuples-only --no-align \
+  --command="SELECT count(*) FROM schema_migrator.state_schema_migrations WHERE version LIKE 'runtime/atheros_search/%' AND applied_by = 'legacy-manifest-attestation'")"
+[ "${search_adopted_count}" -eq 21 ]
 
 # Reproduce the Octopus attestation from before migration 015, without a
 # per-file ledger. Historical migrations must be adopted, not replayed.
@@ -193,4 +235,4 @@ if ownership_output="$(run_executor 2>&1)"; then
 fi
 printf '%s\n' "${ownership_output}" | grep -q "table atheros_search.merge_candidates is owned by octopus_runtime, expected schema_owner"
 
-echo "PostgreSQL schema executor ledger, Octopus upgrade, replay, checksum, and ownership checks passed"
+echo "PostgreSQL schema executor ledger, Search/Octopus upgrades, replay, checksum, and ownership checks passed"

@@ -1,0 +1,29 @@
+# Preserve approved production checksums until the populated-upgrade maintenance
+# budgets are reviewed. Promote this pair with the schema executor contract.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-java-coordinator
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: java-coordinator
+          env:
+            - name: POSTGRES_SCHEMA_MANIFEST_SHA256
+              value: "32ac565eb1849ae39ce5095fcbbf1c7b204f2a00cc7552145b42c64a6a614096"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-atheros-search
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: atheros-search
+          env:
+            - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
+              value: "e363f2c5ed94c93905b95084e0378a00c04752e2dc30611ea8c472e60df241e7"

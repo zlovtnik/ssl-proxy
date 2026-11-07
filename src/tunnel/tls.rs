@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+#[path = "ja4.rs"]
+mod ja4;
+
 /// Hold parsed TLS fingerprint details for a prospective tunnel.
 ///
 /// Future work: a fragmented-ClientHello parser can replace this bounded peek
@@ -24,6 +27,7 @@ pub(crate) struct TlsInfo {
     pub(crate) offered_version: Option<String>,
     pub(crate) cipher_suites_count: Option<u8>,
     pub(crate) ja3_lite: Option<String>,
+    pub(crate) ja4: Option<String>,
 }
 
 impl Default for TlsInfo {
@@ -36,6 +40,7 @@ impl Default for TlsInfo {
             offered_version: None,
             cipher_suites_count: None,
             ja3_lite: None,
+            ja4: None,
         }
     }
 }
@@ -47,6 +52,13 @@ impl TlsInfo {
             "parse_status": self.parse_status, "semantics": "offered_not_negotiated",
             "offered_version": self.offered_version, "offered_alpn": self.alpn,
             "ja3_lite": self.ja3_lite,
+            "ja4_evidence": {
+                "version": "proxy-ja4-v1", "algorithm": "JA4", "transport": "tcp",
+                "source": "complete_client_hello", "specification_revision": ja4::SPECIFICATION_REVISION,
+                "status": if self.ja4.is_some() { "available" } else { "unavailable" },
+                "fingerprint": self.ja4,
+                "unavailable_reason": if self.ja4.is_none() { Some("required_handshake_inputs_unavailable_or_invalid") } else { None },
+            },
         })
     }
 }
@@ -384,6 +396,9 @@ fn parse_client_hello(hs: &[u8], mut info: TlsInfo) -> ParseTlsInfoStatus {
     ja3.push(',');
     append_joined_u8(&mut ja3, &point_fmts);
     info.ja3_lite = Some(ja3);
+    // Independently validate and consume the complete handshake. Never derive
+    // JA4 from the legacy fingerprint or its compatibility-version semantics.
+    info.ja4 = ja4::fingerprint(hs);
     ParseTlsInfoStatus::Complete(info)
 }
 

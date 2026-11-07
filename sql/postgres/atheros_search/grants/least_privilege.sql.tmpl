@@ -19,6 +19,20 @@ GRANT SELECT, INSERT ON atheros_search.embedding_repair_receipts TO {{OCTOPUS_AC
 GRANT SELECT, INSERT, UPDATE ON atheros_search.embedding_repair_progress TO {{ATHEROS_SEARCH_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE ON atheros_search.proxy_preparation_policy TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT ON atheros_search.proxy_preparation_policy TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT ON atheros_search.proxy_behavior_policy TO {{OCTOPUS_ACCOUNT}};
+GRANT USAGE, SELECT ON SEQUENCE atheros_search.proxy_behavior_revision_seq TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.proxy_flow,
+  atheros_search.proxy_host_window, atheros_search.proxy_host_current,
+  atheros_search.proxy_behavior_status TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT ON atheros_search.proxy_flow, atheros_search.proxy_host_window,
+  atheros_search.proxy_host_current, atheros_search.proxy_behavior_status TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.proxy_destination_history,
+  atheros_search.proxy_device_window, atheros_search.proxy_attribution_window TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT ON atheros_search.proxy_destination_history,
+  atheros_search.proxy_device_window, atheros_search.proxy_attribution_window TO {{ATHEROS_SEARCH_ACCOUNT}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.proxy_signal_state TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT, INSERT ON atheros_search.proxy_feed_snapshot_binding TO {{OCTOPUS_ACCOUNT}};
+GRANT SELECT ON atheros_search.proxy_signal TO {{ATHEROS_SEARCH_ACCOUNT}};
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.search_documents TO {{OCTOPUS_ACCOUNT}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.embedding_jobs TO {{OCTOPUS_ACCOUNT}};

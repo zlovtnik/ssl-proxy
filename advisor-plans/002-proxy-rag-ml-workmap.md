@@ -373,24 +373,74 @@ The [November 6 source inspection](../ops/sql/proxy-rag-measurements.md#live-ins
 found a legacy pair shape with unavailable measurement provenance and an older
 live schema. The [bounded correlation audit](../ops/sql/proxy-flow-evidence.sql)
 supports that schema and reports source-field inconsistencies and conflict
-availability. B02 still requires attested deployment/coverage, a reviewed
-pairing horizon and global source-conflict reconciliation before validated
-flow documents can be published.
+availability. Runtime preparation now requires an expiring policy carrying
+attested deployment/coverage, a reviewed pairing horizon and global
+source-conflict reconciliation before validated flow documents can be
+published. No activation policy is installed by the schema.
 
 | Done | ID | Action | Acceptance evidence / gate |
 | --- | --- | --- | --- |
 | [x] | B01 | Define a validated lifecycle state machine for `proxy_flow`: source identity/correlation scope, open/terminal sequence, pairing horizon, duplicates, conflicting terminals, missing sides and retention truncation. | One supported complete pair is one flow; no sum of open/close counts; incomplete/ambiguous evidence remains visible; G1/G3 local contract checks |
-| [ ] | B02 | Prepare deterministic `proxy_flow` evidence/documents only after B01. Use terminal measured bytes, partial/unknown status and duration scope; keep HTTP observations separate where no validated lifecycle exists. | Golden/source replay cases cannot double count or invent transfer totals; G2, G3 |
-| [ ] | B03 | Add `proxy_host_window` over half-open UTC event-time windows with normalized host/endpoint scope, allowed/blocked observed counts, validated flows, availability and source watermark. | Window size/lookback/rows bounded by config; exact counters reconcile to source fixtures; G3 |
-| [ ] | B04 | Add projection revision, policy/calculation versions, calculated time and deterministic source-event tie-breaks. Correct legacy latest fields using event time. | Late/duplicate/out-of-order sources update the correct historical window; historical correction cannot replace the current-window pointer; G3 |
-| [ ] | B05 | Maintain first-observed destination and rarity per deployment and supported device/peer scope, with retained history bounds and left-censoring. | New-to-scope differs from newly registered domain; replay and late earlier events update first-seen correctly; G3 |
-| [ ] | B06 | Add polling candidates using unique observation/flow times, sample size, median inter-arrival, robust dispersion and active time bins; report coalescing/collection censoring and minimum-sample disposition. | Irregular and ordinary telemetry/update fixtures calibrate candidate precision; periodicity alone never produces a confirmed-threat label; G2, G3, G8 |
-| [ ] | B07 | Add attribution coverage by window: supported registration, scoped unattributed peer, unknown, method/interval validity and mapping changes. Add `proxy_device_window` only for validated attribution scope. | Shared addresses and key rotation cannot fabricate physical ownership; all denominators and unavailable rates reconcile; G1, G3 |
-| [ ] | B08 | Add outbound transfer baselines and anomalies from validated terminal measurements only: upload, ratio, duration, novelty and robust historical deviation; explicitly handle zero downloads and insufficient history. | Partial/unavailable/estimated bytes are excluded from confirmed totals; baseline uses earlier data only; anomaly output does not claim exfiltration; G3, G8 |
-| [ ] | B09 | Add policy-friction evidence: repeated blocks/errors, retry/coalescing limitations and related allowed observations in a bounded timeline. | Temporal association is displayed with supporting IDs/windows, without claiming the block caused application failure; G3, G8 |
+| [x] | B02 | Prepare deterministic `proxy_flow` evidence/documents only after B01. Use terminal measured bytes, partial/unknown status and duration scope; keep HTTP observations separate where no validated lifecycle exists. | Golden/source replay cases cannot double count or invent transfer totals; G2/G3 local |
+| [x] | B03 | Add `proxy_host_window` over half-open UTC event-time windows with normalized host/endpoint scope, allowed/blocked observed counts, validated flows, availability and source watermark. | Window size/lookback/rows bounded by config; exact counters reconcile to source fixtures; G3 local |
+| [x] | B04 | Add projection revision, policy/calculation versions, calculated time and deterministic source-event tie-breaks. Correct legacy latest fields using event time. | Late/duplicate/out-of-order sources update the correct historical window; historical correction cannot replace the current-window pointer; G3 local |
+| [x] | B05 | Maintain first-observed destination and rarity per deployment and supported device/peer scope, with retained history bounds and left-censoring. | Retained-history first sightings and rarity persist per deployment, registration epoch and process peer. Replay and late-earlier correction pass canonical PostgreSQL checks; domain registration age remains unavailable; G3 local |
+| [ ] | B06 | Add polling candidates using unique observation/flow times, sample size, median inter-arrival, robust dispersion and active time bins; report coalescing/collection censoring and minimum-sample disposition. | Separate observation and flow-start series have benign, irregular and censoring fixtures. Flow-start candidates require coverage across the pairing horizon. Candidate-only output passes local G2/G3. Reviewed precision calibration remains open at G8. |
+| [x] | B07 | Add attribution coverage by window: supported registration, scoped unattributed peer, unknown, method/interval validity and mapping changes. Add `proxy_device_window` only for validated attribution scope. | Versioned producer-claim semantics, interval boundaries, overlapping claims, shared-address exclusions and rotation have local fixtures. Canonical persistence and denominator reconciliation pass; physical ownership remains unavailable; G1/G3 local |
+| [ ] | B08 | Add outbound transfer baselines and anomalies from validated terminal measurements only: upload, ratio, duration, novelty and robust historical deviation; explicitly handle zero downloads and insufficient history. | Implemented validated-terminal-only totals and earlier-window robust profiles. Zero downloads, exclusions and leakage fixtures pass local G3; reviewed anomaly calibration remains open at G8. |
+| [ ] | B09 | Add policy-friction evidence: repeated blocks/errors, retry/coalescing limitations and related allowed observations in a bounded timeline. | Implemented bounded supporting timelines and unknown retry/causality labels; local G3 fixtures pass. Measured acceptance remains open at G8. |
 | [ ] | B10 | Separate blocking intensity, transfer anomaly, statistical confidence and confirmed threat evidence. Define deterministic expiration/recompute rules so scores decrease and aged findings become inactive. | Age-out and below-threshold fixtures clear stale active state; legacy fields retain documented compatibility rather than silently changing meaning; G2, G3 |
 | [ ] | B11 | Maintain scoped proxy similarity pairs with compatible model/preprocessing, deterministic pairs, corrected/expired document invalidation and bounded scan checkpoints. | No cross-wireless pairs; restart/correction/supersession preserves pair consistency; filtered recall benchmark passes; G3, G8 |
 | [ ] | B12 | Add deterministic `proxy_signal` summaries with window bounds, sample size, baseline provenance, uncertainty, source references and versions; connect calibrated alert derivation in Octopus only. | Same evidence/policy replays identically; structured exact values match reports; no threshold promoted to threat confidence without reviewed labels; G2, G3, G8 |
+
+### B02-B04 local implementation
+
+The [runtime lifecycle preparation](../docs/proxy-flow-lifecycle.md#runtime-preparation)
+publishes scoped flow documents and exact host-window evidence under the
+existing Octopus lease. Terminal provenance, partial/unavailable bytes and
+duration scopes stay explicit. HTTP observations retain their identities.
+The window pointer advances by event time, while a durable output cursor
+rotates work across one-item ticks. Structured corrections preserve semantic
+document identity and resume eligible deferred jobs.
+
+Canonical additive manifests include bounded policy configuration, projection
+versions and table-specific grants. Schema executor fresh/upgrade/replay and
+actual grants passed. The coordinator-wide Docker-enabled suite passed 612
+tests with one explicitly opt-in live probe skipped, including retirement of
+published evidence and unfinished jobs on policy expiry or input overflow.
+Go quality, all 46
+canonical database consumer checks and 174 UI tests passed. Schema-contract,
+production/staging GitOps render and documentation checks passed.
+
+These complete development acceptance for B02-B04. Stage 5 production
+coverage, reviewed policy admission and schema/image rollout remain open.
+Legacy rollups acquire a source event-ID tie-break as new observations arrive.
+Their latest metadata follows the winning event, including null values.
+Validation populated build caches and regenerated ignored UI `dist/` output.
+
+### B05-B09 local implementation
+
+The [behavior evidence contract](../docs/proxy-behavior-evidence.md) documents
+retained-history first sightings, scoped rarity, attribution denominators,
+registration epochs, polling, terminal-only transfer profiles and bounded
+friction timelines. All outputs use the existing fenced Octopus preparation
+path and bounded retirement. Search receives read-only structured evidence;
+no new API, dependency or production policy was introduced.
+
+Local deterministic and canonical PostgreSQL checks cover replay, late earlier
+events, invalid/overlapping claim intervals, shared addresses, key rotation,
+censoring, benign telemetry, measurement exclusions, earlier-only history and
+policy expiry. B05 and B07 have local development acceptance. B06, B08 and B09
+remain unchecked for G8: synthetic controls do not establish detector precision
+or production resource budgets. Candidate thresholds are explicitly provisional.
+
+The two migration review findings were valid. The kind constraint is added
+without scanning retained documents and validated by a separate provisioning
+migration with reviewed row/time budgets. Populated conflict-index creation
+requires an attested write drain, row ceiling, finite timeout and maintenance
+window. The [upgrade safeguards](../docs/proxy-flow-lifecycle.md#populated-upgrade-budgets)
+keep DDL under the provisioning executor. Fresh/upgrade/replay/grant checks and
+37 migration regressions passed, including lock-contention cases.
 
 ### Follow-on intelligence backlog
 
@@ -398,12 +448,44 @@ These remain gated development tasks, not release-one requirements.
 
 | Done | ID | Capability and prerequisite | Evidence / acceptance |
 | --- | --- | --- | --- |
-| [ ] | F01 | ClientHello fingerprint drift after E08/B07 | Versioned `ja3_lite`/offered ALPN changes with sample/coverage context; benign software-update controls; no ownership inference |
-| [ ] | F02 | Destination infrastructure changes after E02/B05 | Use observed selected/resolved destination IP, never client `peer_ip`; cached ASN enrichment needs provenance, refresh/expiry and outage tests |
-| [ ] | F03 | Domain lexical anomalies after N02/B03 | Label length/entropy/digits/subdomain churn and optional protected-domain similarity; hold out CDN/telemetry controls and report false positives |
+| [x] | F01 | ClientHello fingerprint drift after E08/B07 | Local versioned, parser-partitioned `ja3_lite`/first-offered ALPN profiles include samples and coverage; registration-scoped candidates have benign software-update controls and no ownership inference. Deployment calibration remains open. |
+| [x] | F02 | Destination infrastructure changes after E02/B05 | Local selected socket/resolver-candidate IP profiles never read client `peer_ip`; replay, IPv6, censoring and benign CDN rotation pass. ASN is explicitly unavailable without an enrichment source; any future cache still requires provenance, refresh/expiry and outage tests. |
+| [ ] | F03 | Domain lexical anomalies after N02/B03 | Label length/entropy/digits and scoped retained subdomain novelty implemented with CDN/telemetry controls. Anomaly thresholds, protected-domain list and reviewed false-positive measurements remain unavailable; no detector is activated. |
 | [ ] | F04 | Behavioral cohorts after B07/B11 | Scope-compatible destination/window similarity; cohort membership never establishes physical identity |
 | [ ] | F05 | Versioned local threat-feed correlation after B12 | Feed provenance, specificity, snapshot version, license, expiry and shared-infrastructure caveats; alerts retract on expiry |
-| [ ] | F06 | Optional JA4 producer enhancement | Separate additive contract and required handshake inputs; do not relabel or reconstruct JA4 from `ja3_lite` |
+| [x] | F06 | Optional JA4 producer enhancement | Separate `proxy-ja4-v1` TCP evidence uses complete handshake inputs and a pinned upstream specification. Conformance, GREASE, signature order, malformed inputs and audit propagation pass; `ja3_lite` is unchanged. QUIC/DTLS remain unavailable. |
+
+### F01-F03 and F06 local implementation
+
+The [follow-on evidence contract](../docs/proxy-behavior-evidence.md#follow-on-intelligence-evidence)
+describes structured host/registration-window publication under calculation
+`proxy-behavior-v3`. The existing policy, source fence, deterministic revision
+and expiry retirement paths are reused. No schema, dependency, production
+policy or semantic embedding text change is required. Baselines exclude current
+and future windows, cross-epoch claims and conflicting source observations.
+Lexical churn includes only the same deployment or registration epoch's domain
+context, with pinned IDNA/PSL semantics and capped references plus exact counts.
+
+F01/F02 have local development acceptance. F03 publishes descriptive features;
+it remains unchecked because neither a reviewed anomaly rule nor detector
+false-positive measurements exist. Synthetic benign controls cannot supply that
+acceptance. F04 still requires B11 compatible similarity and recall acceptance;
+F05 still requires B12 signal/alert derivation and a versioned licensed feed
+snapshot with expiry/retraction semantics. Neither gate is bypassed.
+
+The [additive TCP JA4 contract](../docs/proxy-behavior-evidence.md#additive-tcp-ja4-evidence)
+records F06 inputs, pinned specification/license and unavailable dispositions.
+It changes no legacy fingerprint meaning and adds no downstream JA4 detector.
+
+Local verification on 2026-11-07 passed the Docker-enabled Octopus suite
+(667 passed, one opt-in live probe skipped, all 74 persistence cases executed),
+then 39 focused evidence/integration/documentation/feature tests after final
+test assertions. Rust passed 227 library tests and four final audit propagation
+checks. Documentation, dependency boundaries and whitespace passed. Strict
+Clippy has an existing unrelated `type_complexity` diagnostic in
+`src/state_sections/models.rs`; allowing only that lint passed. Validation
+populated ignored build caches. Production activation and reviewed detector
+calibration remain open.
 
 ## Stage 7: Extend retrieval, reporting and health
 

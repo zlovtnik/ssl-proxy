@@ -70,6 +70,13 @@ WORKLOAD_APPLICATIONS = {
 }
 
 ENVIRONMENTS = ("prod", "staging")
+# Reviewed production pins advance only with the maintenance-budget approval,
+# executor image/content hash, and both runtime checksums in the same promotion.
+PRODUCTION_SCHEMA_CONTRACT = {
+    "octopus_core": "32ac565eb1849ae39ce5095fcbbf1c7b204f2a00cc7552145b42c64a6a614096",
+    "atheros_search": "e363f2c5ed94c93905b95084e0378a00c04752e2dc30611ea8c472e60df241e7",
+    "executor_marker": "schema-migrator-001-c728bb26dce5f13ec782e924fa61d4f3fe7a981c4611fed0c7c5291d55c621df-runtime-147010df13e3f085",
+}
 PRODUCTION_WORKLOAD_APPLICATIONS = tuple(
     name for name, value in WORKLOAD_APPLICATIONS.items()
     if value["environment"] == "prod"
@@ -2570,6 +2577,8 @@ def _validate_workload_application(application: Mapping[str, Any], relative: str
         "selfHeal: true": automated.get("selfHeal") is True,
         "allowEmpty: false": automated.get("allowEmpty") is False,
     }
+    if expected["environment"] == "prod":
+        required["automated.enabled: false (manual production approval)"] = automated.get("enabled") is False
     for message, valid in required.items():
         if not valid:
             errors.append(f"{relative}: missing {message!r}")
@@ -2615,13 +2624,13 @@ def _check_application_set(documents: Documents, errors: list[str]) -> None:
         "type": "RollingSync",
         "rollingSync": {
             "steps": [
-                {"matchExpressions": [{"key": "app.kubernetes.io/component", "operator": "In", "values": [component]}]}
+                {"maxUpdate": 0, "matchExpressions": [{"key": "app.kubernetes.io/component", "operator": "In", "values": [component]}]}
                 for component in ("bootstrap", "data-plane", "app-stack")
             ]
         },
     }
     if _path(application_set, "spec", "strategy") != expected_strategy:
-        errors.append(f"{relative}: ApplicationSet must roll bootstrap, data-plane, then app-stack")
+        errors.append(f"{relative}: ApplicationSet must order bootstrap, data-plane, then app-stack with maxUpdate: 0 for manual production approval")
     parameters = _find(documents, "ConfigMap", "argocd-cmd-params-cm")
     if len(parameters) != 1 or _mapping(parameters[0].get("data")).get(
         "applicationsetcontroller.enable.progressive.syncs"
@@ -2729,6 +2738,16 @@ def _check_prod_project(documents: Documents, errors: list[str]) -> None:
     if len(projects) != 1:
         errors.append(f"{relative}: expected one ssl-proxy AppProject")
         return
+    deployers = [role for role in _list(_path(projects[0], "spec", "roles"))
+                 if _mapping(role).get("name") == "prod-deployer"]
+    expected_policies = {
+        "p, proj:ssl-proxy:prod-deployer, applications, sync, ssl-proxy/ssl-proxy-prod-*, allow",
+        "p, proj:ssl-proxy:prod-deployer, applications, get, ssl-proxy/*, allow",
+    }
+    if (len(deployers) != 1
+            or _mapping(deployers[0]).get("groups") != ["ssl-proxy:platform-admins"]
+            or set(_list(_mapping(deployers[0]).get("policies"))) != expected_policies):
+        errors.append(f"{relative}: manual production sync must retain the platform-admin approval role")
     destinations = _list(_path(projects[0], "spec", "destinations"))
     expected = {
         ("prod-ssl-proxy", "https://kubernetes.default.svc"),
@@ -2938,7 +2957,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
                     _check_octopus_schema_contract(
                         rendered,
                         relative,
-                        expected_octopus_checksum,
+                        PRODUCTION_SCHEMA_CONTRACT["octopus_core"] if relative.startswith("cyber-stack/matrix/prod/") else expected_octopus_checksum,
                     )
                 )
             if expected_atheros_checksum is not None:
@@ -2946,7 +2965,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
                     _check_atheros_schema_contract(
                         rendered,
                         relative,
-                        expected_atheros_checksum,
+                        PRODUCTION_SCHEMA_CONTRACT["atheros_search"] if relative.startswith("cyber-stack/matrix/prod/") else expected_atheros_checksum,
                     )
                 )
     prod_data_plane = "cyber-stack/matrix/prod/data-plane"
@@ -2973,7 +2992,8 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for environment in ENVIRONMENTS:
             relative = f"cyber-stack/matrix/{environment}/data-plane"
             if relative in rendered_kustomizations:
-                errors.extend(_check_schema_executor_contract(rendered_kustomizations[relative], relative, expected_schema_marker))
+                marker = PRODUCTION_SCHEMA_CONTRACT["executor_marker"] if environment == "prod" else expected_schema_marker
+                errors.extend(_check_schema_executor_contract(rendered_kustomizations[relative], relative, marker))
     prod_documents = [document for component in ("bootstrap", "data-plane", "app-stack") for document in rendered_kustomizations.get(f"cyber-stack/matrix/prod/{component}", [])]
     errors.extend(_check_redpanda_topic_replication(prod_documents, "cyber-stack/matrix/prod"))
     prod_bootstrap = rendered_kustomizations.get("cyber-stack/matrix/prod/bootstrap")

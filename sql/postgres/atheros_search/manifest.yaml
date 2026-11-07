@@ -1,10 +1,10 @@
 engine: postgres
 layer: atheros_search
 database: sync
-schema_version: 013
+schema_version: 016
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: e363f2c5ed94c93905b95084e0378a00c04752e2dc30611ea8c472e60df241e7
+manifest_sha256: c154e97e3702fd817389df072745e42c9f79a8aa3f3126c9c80b59651ed0ba3a
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:
@@ -29,5 +29,9 @@ apply_order:
   - 01_tables/019_wireless_stream_projection.sql
   - 01_tables/020_proxy_preparation.sql
   - 01_tables/021_proxy_document_scope_index.sql
+  - 01_tables/022_proxy_behavior.sql
+  - 01_tables/023_proxy_behavior_scopes.sql
+  - 01_tables/024_proxy_document_kind_validation.sql
+  - 01_tables/025_proxy_intelligence.sql
 retired:
   - graph_inventory_identity

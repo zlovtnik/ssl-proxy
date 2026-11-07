@@ -98,6 +98,161 @@ fn parses_crafted_client_hello() {
     assert_eq!(info.tls_ver, Some("TLS1.2".to_string()));
     assert_eq!(info.cipher_suites_count, Some(2));
     assert!(info.ja3_lite.is_some());
+    assert!(info.ja4.is_some());
+    assert_eq!(info.evidence()["ja4_evidence"]["status"], "available");
+}
+
+fn ja4_client_hello(ciphers: &[u16], extensions: &[(u16, Vec<u8>)]) -> Vec<u8> {
+    let mut body = vec![0x03, 0x03];
+    body.extend_from_slice(&[0; 32]);
+    body.push(0);
+    body.extend_from_slice(&((ciphers.len() * 2) as u16).to_be_bytes());
+    for cipher in ciphers {
+        body.extend_from_slice(&cipher.to_be_bytes());
+    }
+    body.extend_from_slice(&[1, 0]);
+    let mut extension_bytes = Vec::new();
+    for (kind, data) in extensions {
+        extension_bytes.extend_from_slice(&kind.to_be_bytes());
+        extension_bytes.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        extension_bytes.extend_from_slice(data);
+    }
+    body.extend_from_slice(&(extension_bytes.len() as u16).to_be_bytes());
+    body.extend_from_slice(&extension_bytes);
+    let mut handshake = vec![1, 0, (body.len() >> 8) as u8, body.len() as u8];
+    handshake.extend_from_slice(&body);
+    let mut record = vec![22, 3, 3];
+    record.extend_from_slice(&(handshake.len() as u16).to_be_bytes());
+    record.extend_from_slice(&handshake);
+    record
+}
+
+#[test]
+fn ja4_matches_pinned_foxio_specification_vector() {
+    // FoxIO-LLC/ja4@c6469a7b, technical_details/JA4.md example.
+    let ciphers = [
+        0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014,
+        0x009c, 0x009d, 0x002f, 0x0035,
+    ];
+    let mut extensions: Vec<(u16, Vec<u8>)> = [
+        0x001b, 0x0000, 0x0033, 0x0010, 0x4469, 0x0017, 0x002d, 0x000d, 0x0005, 0x0023, 0x0012,
+        0x002b, 0xff01, 0x000b, 0x000a, 0x0015,
+    ]
+    .into_iter()
+    .map(|kind| (kind, Vec::new()))
+    .collect();
+    for (kind, data) in &mut extensions {
+        *data = match kind {
+            0 => vec![0, 4, 0, 0, 1, b'a'],
+            16 => vec![0, 3, 2, b'h', b'2'],
+            43 => vec![2, 3, 4],
+            13 => vec![0, 16, 4, 3, 8, 4, 4, 1, 5, 3, 8, 5, 5, 1, 8, 6, 6, 1],
+            _ => Vec::new(),
+        };
+    }
+    let expected = "t13d1516h2_8daaf6152771_e5627efa2ab1";
+    let record = ja4_client_hello(&ciphers, &extensions);
+    let info = parse_tls_info(&record);
+    assert_eq!(info.ja4.as_deref(), Some(expected));
+    let legacy = info.ja3_lite.clone();
+    extensions.reverse();
+    let mut reordered_ciphers = ciphers.to_vec();
+    reordered_ciphers.reverse();
+    let reordered = parse_tls_info(&ja4_client_hello(&reordered_ciphers, &extensions));
+    assert_eq!(reordered.ja4.as_deref(), Some(expected));
+    assert_ne!(reordered.ja3_lite, legacy);
+
+    extensions.push((0x2a2a, vec![0, 1]));
+    reordered_ciphers.push(0x1a1a);
+    assert_eq!(
+        parse_tls_info(&ja4_client_hello(&reordered_ciphers, &extensions)).ja4,
+        info.ja4
+    );
+    let (_, signatures) = extensions.iter_mut().find(|(kind, _)| *kind == 13).unwrap();
+    // Change algorithm order while preserving each algorithm's two bytes.
+    signatures.swap(2, 4);
+    signatures.swap(3, 5);
+    assert_ne!(
+        parse_tls_info(&ja4_client_hello(&ciphers, &extensions)).ja4,
+        info.ja4
+    );
+}
+
+#[test]
+fn ja4_absent_sni_and_alpn_and_binary_alpn_follow_specification() {
+    let ciphers = [0x1301];
+    let plain = parse_tls_info(&ja4_client_hello(&ciphers, &[]));
+    assert!(plain.ja4.as_deref().unwrap().starts_with("t12i010000_"));
+    assert!(plain.ja4.as_deref().unwrap().ends_with("_000000000000"));
+    for (value, code) in [
+        (vec![b'h', b'2'], "h2"),
+        (b"http/1.1".to_vec(), "h1"),
+        (vec![b'x'], "xx"),
+        (vec![0xab], "ab"),
+        (vec![0x20, 0x61], "21"),
+        (vec![0x30, 0xab, 0xcd, 0x31], "01"),
+        (vec![], "00"),
+    ] {
+        let mut data = vec![0, (value.len() + 1) as u8, value.len() as u8];
+        data.extend_from_slice(&value);
+        let result = parse_tls_info(&ja4_client_hello(&ciphers, &[(16, data)]));
+        assert!(result
+            .ja4
+            .as_deref()
+            .unwrap()
+            .starts_with(&format!("t12i0101{code}_")));
+    }
+}
+
+#[test]
+fn ja4_rejects_invalid_required_inputs_without_relabeling_legacy_values() {
+    let ciphers = [0x1301];
+    let unsupported = [
+        vec![(43, vec![3, 3, 4, 3])],          // odd supported-version vector
+        vec![(43, vec![2, 0x2a, 0x2a])],       // GREASE-only versions
+        vec![(13, vec![0, 3, 4, 3, 4])],       // odd signature vector
+        vec![(16, vec![0, 3, 5, b'h', b'2'])], // truncated ALPN value
+        vec![(0, vec![0, 4, 0, 0, 5, b'a'])],  // truncated SNI
+        vec![(43, vec![2, 3, 4]), (43, vec![2, 3, 3])],
+    ];
+    for extensions in unsupported {
+        let result = parse_tls_info(&ja4_client_hello(&ciphers, &extensions));
+        assert!(result.ja4.is_none());
+        assert_eq!(result.evidence()["ja4_evidence"]["status"], "unavailable");
+        assert!(result.evidence()["ja4_evidence"]["fingerprint"].is_null());
+    }
+    let record = crafted_client_hello();
+    for end in 0..record.len() {
+        assert!(parse_tls_info(&record[..end]).ja4.is_none());
+    }
+    let legacy = super::TlsInfo {
+        parse_status: "parsed",
+        ja3_lite: Some("771,4865-4866,0-16,29-23,0".to_string()),
+        ..Default::default()
+    };
+    assert!(legacy.evidence()["ja4_evidence"]["fingerprint"].is_null());
+}
+
+#[test]
+fn ja4_ignores_grease_in_version_and_signature_lists_and_retains_scsv() {
+    let baseline = ja4_client_hello(
+        &[0x1301, 0x00ff, 0x5600, 0xfe00],
+        &[(43, vec![2, 3, 4]), (13, vec![0, 4, 4, 3, 8, 4])],
+    );
+    let greased = ja4_client_hello(
+        &[0x1301, 0x00ff, 0x5600, 0xfe00, 0x0a0a],
+        &[
+            (43, vec![4, 0x2a, 0x2a, 3, 4]),
+            (13, vec![0, 6, 4, 3, 0x3a, 0x3a, 8, 4]),
+            (0x4a4a, vec![]),
+        ],
+    );
+    let original = parse_tls_info(&baseline);
+    assert!(original.ja4.as_deref().unwrap().starts_with("t13i040200_"));
+    assert_eq!(original.ja4, parse_tls_info(&greased).ja4);
+    // 0x1a2a is not a GREASE value despite sharing GREASE low nibbles.
+    let reserved = parse_tls_info(&ja4_client_hello(&[0x1301, 0x1a2a], &[]));
+    assert!(reserved.ja4.as_deref().unwrap().starts_with("t12i020000_"));
 }
 
 #[test]

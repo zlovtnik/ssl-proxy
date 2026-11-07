@@ -437,6 +437,7 @@ async fn blocked_non_tarpit_transparent_sessions_do_not_fall_through() {
         offered_version: Some("TLS1.2".to_string()),
         cipher_suites_count: None,
         ja3_lite: None,
+        ja4: None,
     };
 
     handle_transparent_inner(stream, state, orig_dst, tls).await;

@@ -10,6 +10,15 @@ ENTRYPOINT = ROOT / "k8s/postgres-schema-executor/entrypoint.sh"
 
 
 class PostgresSchemaExecutorTest(unittest.TestCase):
+    def test_proxy_kind_replacement_bounds_both_exclusive_locks(self) -> None:
+        migration = (ROOT / "sql/postgres/atheros_search/01_tables/022_proxy_behavior.sql").read_text()
+        timeout = migration.index("SET LOCAL lock_timeout = '1s';")
+        drop = migration.index("ALTER TABLE atheros_search.search_documents DROP CONSTRAINT")
+        add = migration.index("ALTER TABLE atheros_search.search_documents ADD CONSTRAINT")
+        self.assertLess(timeout, drop)
+        self.assertLess(drop, add)
+        self.assertIn(") NOT VALID;", migration[add:])
+
     def test_octopus_previous_manifest_baseline_matches_attested_sql(self) -> None:
         domain = ROOT / "sql/postgres/octopus_core"
         checksum = "b522676cce9fc385a935bd52fc50867d655fe6b34ae0088a11b4c51ec595755e"

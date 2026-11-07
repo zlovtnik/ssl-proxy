@@ -32,15 +32,20 @@ spec:
     type: RollingSync
     rollingSync:
       steps:
-        - matchExpressions:
+        # Production sync is manual after reviewed maintenance approval.
+        # Disabling Application autosync alone does not stop RollingSync.
+        - maxUpdate: 0
+          matchExpressions:
             - key: app.kubernetes.io/component
               operator: In
               values: [bootstrap]
-        - matchExpressions:
+        - maxUpdate: 0
+          matchExpressions:
             - key: app.kubernetes.io/component
               operator: In
               values: [data-plane]
-        - matchExpressions:
+        - maxUpdate: 0
+          matchExpressions:
             - key: app.kubernetes.io/component
               operator: In
               values: [app-stack]
@@ -211,6 +216,7 @@ spec:
             - .spec.volumeClaimTemplates[].spec.volumeMode
       syncPolicy:
         automated:
+          enabled: false
           prune: true
           selfHeal: true
           allowEmpty: false

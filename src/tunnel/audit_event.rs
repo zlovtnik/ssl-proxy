@@ -260,6 +260,7 @@ mod tests {
             offered_version: Some("TLS1.3".to_string()),
             cipher_suites_count: Some(4),
             ja3_lite: Some("ja3-lite".to_string()),
+            ja4: Some("t13d1516h2_8daaf6152771_e5627efa2ab1".to_string()),
         });
 
         context.emit_open(&state, "example.com", &identity());
@@ -286,6 +287,14 @@ mod tests {
         assert_eq!(close["alpn"], "h2");
         assert_eq!(close["cipher_suites_count"], 4);
         assert_eq!(close["ja3_lite"], "ja3-lite");
+        assert_eq!(
+            close["tls_evidence"]["ja4_evidence"]["version"],
+            "proxy-ja4-v1"
+        );
+        assert_eq!(
+            close["tls_evidence"]["ja4_evidence"]["fingerprint"],
+            "t13d1516h2_8daaf6152771_e5627efa2ab1"
+        );
         assert_eq!(close["selected_ip"], "192.0.2.10");
         assert_eq!(close["resolved_ips"][0], "192.0.2.10");
     }
