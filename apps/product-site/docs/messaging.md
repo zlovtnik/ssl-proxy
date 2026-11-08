@@ -2,9 +2,10 @@
 
 RCLabs is Rafael Cardoso's independently maintained backend and
 data-platform engineering portfolio. Recruiters, engineering managers, and
-technical interviewers are the primary portfolio audience. The homepage leads
-with professional positioning, Synchro experience, independent engineering
-contributions, and source/test evidence before product walkthroughs. Atheros
+technical interviewers are the primary portfolio audience. The professional
+headline is Senior Software Engineer | Backend Systems & Enterprise Integration.
+The homepage introduces ingestion, recovery, and search, followed by Synchro
+experience, independent projects, and source and test links. Atheros
 Search documentation retains RAG builders and operators as its audience:
 the proxy and sensor publish observations, Octopus coordinates ingestion, and
 Search provides retrieval, evidence, fenced embedding workers and authenticated
@@ -54,8 +55,9 @@ offset replay, durable deduplication, fenced leases, and partial-failure recover
 Source links establish that implementation and tests exist, not that a current
 backend suite passed or a production crash campaign was performed.
 
-Keep Synchro employment (2011-2024), independent projects, and synthetic examples
-explicitly attributed. The owner's current supplied resume reports approximately
+Keep Synchro employment, independent projects, and synthetic examples explicitly
+attributed. Show individual role dates on About and the resume. The owner's
+current supplied resume reports approximately
 20 million weekly fiscal transactions for a Synchro invoicing integration.
 It supersedes the older August resume's 2 million figure. It is historical employer-system
 workload, not Octopus activity, unique ledger events, or measured capacity.
@@ -109,6 +111,8 @@ subject `General inquiry`. It does not request a role, employer, or location.
 The existing `/demo/#employment` anchor remains compatible and now contains the
 general inquiry block. Resume links retain the static, printable `/resume/`
 page. Product discussion emails retain `Use-case discussion: [product]`.
+The contact page asks for the systems involved, the data flow, and an example
+failure when discussing backend or integration work.
 The public resume includes the phone, email, location, work authorization,
 LinkedIn profile, and website supplied in the owner's current resume. General
 site and hiring inquiry links keep the existing `rafael@rclabs.uk` address.

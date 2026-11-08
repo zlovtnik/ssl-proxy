@@ -25,6 +25,12 @@ test('the homepage summaries and guide destinations work without JavaScript', as
     const experience = page.locator('#experience');
     await expect(experience).toContainText('Synchro');
     await expect(experience).toContainText(/historical|employer/i);
+    await expect(experience).toContainText(
+      '20 million fiscal transactions per week',
+    );
+    await expect(
+      experience.getByRole('link', { name: 'Read about my work' }),
+    ).toHaveAttribute('href', '/about/#experience');
 
     const projects = [
       ['octopus', '/octopus/', /delivery may repeat/i],
@@ -77,6 +83,21 @@ test('the about page retains attributed experience and full engineering evidence
     await expect(experience).toContainText(/weekly|per week/);
     await expect(experience).not.toContainText(/2 million|~2M/);
     await expect(experience).toContainText(/historical|employer/i);
+    const roles = [
+      ['Senior Staff Software Engineer', 'May 2022 - September 2024'],
+      ['Senior Software Engineer', 'September 2018 - May 2022'],
+      ['Software Analyst', 'February 2011 - September 2018'],
+    ];
+    for (const [title, period] of roles) {
+      await expect(
+        experience.getByRole('region', { name: title, exact: true }),
+      ).toContainText(period);
+    }
+    await expect(
+      experience.getByRole('region', {
+        name: 'Senior Staff Software Engineer',
+      }),
+    ).toContainText(/2024 customer project.*electronic invoice recognition/);
 
     const studies = page.locator('#selected-work .about-case-study');
     await expect(studies).toHaveCount(4);
@@ -178,8 +199,12 @@ test('the public resume is readable without an account or JavaScript', async ({
     await expect(main).toContainText(/professional experience/i);
     await expect(main).toContainText('Synchro');
     await expect(main).toContainText(/Senior Staff Software Engineer/);
-    await expect(main).toContainText(
-      'Staff Platform and Distributed Systems Engineer',
+    await expect(main.locator('header .lead')).toHaveText(
+      'Senior Software Engineer | Backend Systems & Enterprise Integration',
+    );
+    await expect(main.getByRole('link', { name: 'rclabs.uk' })).toHaveAttribute(
+      'href',
+      'https://rclabs.uk/',
     );
     await expect(main).toContainText('No sponsorship required');
     await expect(main).toContainText('Open to Remote / Hybrid');

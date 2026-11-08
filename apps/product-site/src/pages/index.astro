@@ -79,14 +79,16 @@ const structuredData = {
     aria-labelledby="experience-title"
   >
     <div>
-      <p class="eyebrow">{home.experience.eyebrow}</p>
+      <p class="eyebrow">{home.experience.label}</p>
       <h2 id="experience-title">{home.experience.employer}</h2>
-      <p class="eyebrow">{home.experience.period}</p>
     </div>
     <div class="home-experience-copy">
-      <h3>{home.experience.title}</h3>
       <p>{home.experience.summary}</p>
       <p class="fine-print">{home.experience.attribution}</p>
+      <a class="text-link" href={home.experience.aboutLink.href}>
+        {home.experience.aboutLink.label}{' '}
+        <ArrowUpRight size={14} aria-hidden="true" />
+      </a>
     </div>
   </section>
   <section

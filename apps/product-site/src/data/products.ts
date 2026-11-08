@@ -6,6 +6,9 @@ export const author = {
   privacyEmail: 'racasantos@icloud.com',
 } as const;
 
+const professionalHeadline =
+  'Senior Software Engineer | Backend Systems & Enterprise Integration';
+
 export const accessibility = {
   title: 'Accessibility',
   summary:
@@ -20,6 +23,8 @@ export const hiring = {
   projectsTitle: 'Project questions',
   projectsSummary:
     'Choose a project to start an email. Hosted product access is not provisioned here.',
+  projectPrompt:
+    'For a backend or integration problem, describe the systems involved, how data flows between them, and an example of what fails.',
   addressTitle: 'Email address',
   addressSummary: 'You can also write to me directly.',
   cta: 'Contact',
@@ -36,15 +41,13 @@ export const portfolio = {
   audience:
     'For recruiters, engineering managers, and technical interviewers evaluating my engineering work. Atheros product documentation is for RAG builders and operators.',
   experience: {
-    title: 'Professional experience: Synchro',
+    label: 'Professional experience',
     employer: 'Synchro',
-    period: 'February 2011 - September 2024',
     summary:
-      'I progressed from Software Analyst to Senior Staff Software Engineer, designing fiscal integrations and guiding teams of 3 to 8 engineers through architecture decisions and code reviews. I turned recurring production failures into reusable validation checks and integration design rules.',
-    scale:
-      'Approximately 20 million fiscal transactions per week in the Synchro integration I designed and supported between Oracle ERP Cloud, electronic invoicing, and tax systems, using Java / Spring Boot and Apache Camel.',
+      'I designed and supported a Java, Spring Boot, and Apache Camel integration between Oracle ERP Cloud, electronic invoicing, and tax systems. It processed approximately 20 million fiscal transactions per week. I later led architecture and code reviews for teams of 3 to 8 engineers.',
     attribution:
-      'Historical employer-system workload, reported in my resume. This is not Octopus throughput, an independent-project benchmark, or a synthetic demo result. Employer code and operational measurements are not public.',
+      'Historical workload from the Synchro integration, as reported in my resume. The RCLabs projects were built independently.',
+    aboutLink: { label: 'Read about my work', href: '/about/#experience' },
   },
   workTitle: 'Selected engineering work',
   workSummary:
@@ -206,21 +209,21 @@ export const portfolio = {
 
 export const resume = {
   title: 'Rafael Cardoso - Resume',
-  role: 'Staff Platform and Distributed Systems Engineer',
+  role: professionalHeadline,
   location: 'Portland, ME | Open to Remote / Hybrid',
   authorization: 'Authorized to work in the U.S. | No sponsorship required',
   email: 'racasantos@icloud.com',
   phone: { label: '(207) 804-6704', href: 'tel:+12078046704' },
   website: {
-    label: 'rclabs-awb.pages.dev',
-    href: 'https://rclabs-awb.pages.dev',
+    label: 'rclabs.uk',
+    href: 'https://rclabs.uk/',
   },
   linkedin: {
     label: 'linkedin.com/in/racasantos',
     href: 'https://linkedin.com/in/racasantos',
   },
   summary:
-    'Software Engineer with 15+ years of experience in backend platforms and enterprise integrations, progressing to Senior Staff Engineer at Synchro. Led architecture and code reviews for teams of 3 to 8 engineers. Designed and supported a pipeline processing approximately 20 million fiscal transactions per week, with hands-on experience in Kubernetes delivery, observability, and production recovery.',
+    'Senior Software Engineer with 15+ years in software and enterprise integrations. Designed and supported Java, Spring Boot, and Apache Camel fiscal integrations at Synchro. Builds independent Scala and Go systems for event ingestion, recovery, and hybrid search.',
   skills: [
     [
       'Backend',
@@ -257,6 +260,7 @@ export const resume = {
       period: 'May 2022 - September 2024',
       points: [
         'Led architecture and code reviews for teams of 3 to 8 engineers delivering fiscal and enterprise integrations.',
+        'Built Go retrieval-augmented generation and Python machine learning components for a 2024 customer project involving electronic invoice recognition and fiscal data consolidation. Used Oracle Integration Cloud and OCI AI capabilities for fiscal data preparation.',
         'Turned recurring production failures into reusable validation checks and integration design rules across client projects.',
         'Standardized CI/CD scripts and expanded automated tests across several services to make release verification repeatable and simplify failure diagnosis.',
       ],
@@ -320,10 +324,10 @@ export const resume = {
 export const about = {
   title: 'About Rafael',
   description:
-    'Rafael Cardoso: backend engineering, enterprise integrations, and independent data-platform projects.',
-  eyebrow: 'STAFF PLATFORM AND DISTRIBUTED SYSTEMS ENGINEER',
+    'Rafael Cardoso, Senior Software Engineer in Portland, Maine. Java and Oracle ERP Cloud integrations at Synchro and independent Scala ingestion and Go search projects.',
+  eyebrow: professionalHeadline.toUpperCase(),
   introduction:
-    'I have spent 15+ years building backend platforms and enterprise integrations. At Synchro I progressed from Software Analyst to Senior Staff Software Engineer. This site documents my independent projects alongside that professional experience.',
+    'I’m a senior software engineer in Portland, Maine, with 15+ years in software and enterprise integrations. At Synchro, my work covered fiscal requirements, Oracle ERP integrations, data reconciliation, release validation, and production recovery. Since September 2024, I’ve built backend services, event ingestion, and operational search independently through RCLabs.',
   primaryCta: hiring.resume,
   secondaryCta: { label: 'GitHub profile', href: author.profile },
   scope: {
@@ -362,7 +366,7 @@ export const about = {
     signals: [
       [
         'Role scope',
-        'Staff or principal engineering, engineering lead, or early technical leadership.',
+        'Senior software engineering roles in backend systems, enterprise integration, or data pipelines.',
       ],
       [
         'Best environment',
@@ -454,14 +458,14 @@ export const octopusContact = {
 export const home = {
   // Google rewrites and truncates titles; this is an editorial target, not a
   // ranking rule. The homepage shares one title and description with Layout.
-  title: 'Rafael Cardoso | Backend & Data Platforms',
+  title: 'Backend Engineering, Event Ingestion & Search',
   description:
-    'Backend and distributed-systems engineer Rafael Cardoso: Synchro experience, independent project contributions, source and failure tests, resume, and full-time engineering contact.',
-  headline: ['Backend engineering.', 'Distributed systems.'],
+    'Backend systems and enterprise integrations by Rafael Cardoso. Explore durable Scala ingestion, Go hybrid search, and PostgreSQL migration tooling.',
+  headline: ['Backend systems for', 'data ingestion, recovery, and search'],
   subheadline:
-    'I build backend services and data pipelines. At Synchro (2011-2024), I designed fiscal integrations and guided engineering teams. Below are my independent projects.',
+    'I’m Rafael Cardoso, a senior software engineer in Portland, Maine. I build backend services and enterprise integrations. These independent projects show how I handle replayed events, interrupted jobs, and search results that need an explanation.',
   primaryCta: {
-    label: 'Selected work',
+    label: 'Explore the work',
     href: '#selected-work',
   },
   secondaryCta: hiring.resume,
@@ -470,16 +474,7 @@ export const home = {
   eyebrow: 'RAFAEL CARDOSO / RCLABS',
   reviewTitle: 'A closer look',
   navigationContact: 'Contact',
-  experience: {
-    eyebrow: 'Professional experience',
-    employer: 'Synchro',
-    period: 'Feb 2011 - Sep 2024',
-    title: 'Software Analyst → Senior Staff Software Engineer',
-    summary:
-      'I designed fiscal integrations and guided teams of 3 to 8 engineers through architecture decisions and code reviews.',
-    attribution:
-      'Historical employer work. The projects below were built independently.',
-  },
+  experience: portfolio.experience,
   workEyebrow: 'Independent projects',
   workSummary:
     'Search, ingestion, network observations, and SQL change review. Implementation details and evidence live with each project.',
@@ -488,9 +483,9 @@ export const home = {
       id: 'octopus',
       title: 'Octopus',
       category: 'Durable ingestion',
-      stack: 'Scala / Cats Effect / PostgreSQL',
+      stack: 'Scala / Redpanda / PostgreSQL',
       summary:
-        'Persisted ingestion, deduplication, leases, and outbox dispatch for event pipelines.',
+        'I built a Scala coordinator that persists event and job state before committing broker offsets. Deduplication handles replay, and fenced leases let it reclaim interrupted work and reject stale completion.',
       caveat:
         'Delivery may repeat. Saved progress and deduplication support replay across configured streams.',
       link: { label: 'Workflow and live readings', href: '/octopus/' },
@@ -499,9 +494,9 @@ export const home = {
       id: 'search',
       title: 'Atheros Search',
       category: 'Retrieval & investigation',
-      stack: 'Go / PostgreSQL / SolidJS',
+      stack: 'Go / PostgreSQL / pgvector',
       summary:
-        'Semantic, keyword, and fused retrieval across source observations, with leased embedding workers.',
+        'I built a Go service that combines keyword and vector search. The workbench shows source records and ranking evidence. Leased embedding jobs can recover after interruption.',
       caveat:
         'Synthetic public sample. An observation does not confirm a current connection or device identity. Identity suggestions are review candidates.',
       link: { label: 'Search documentation', href: '/atheros-search/' },
@@ -590,7 +585,7 @@ export const home = {
     },
     {
       title: 'Selected engineering work',
-      text: 'Implementation, failure modes, and regression coverage.',
+      text: 'Independent projects and technical walkthroughs.',
       href: '#selected-work',
     },
     {
@@ -628,7 +623,7 @@ export const home = {
 export const catalogue = {
   title: 'Projects',
   description:
-    'Explore Atheros Search, its proxy and Octopus ingestion components, and companion Schema Migrator tooling by input, responsibility, and output.',
+    'Explore independent engineering projects for event ingestion, hybrid search, network observations, and SQL change review.',
   headline: ['Projects and', 'documentation'],
   summary:
     'Atheros Search retrieves observations produced by the proxy and sensor and processed by Octopus. Schema Migrator is separate tooling for SQL change review.',
@@ -734,9 +729,9 @@ export const products = [
     homeTitle: 'Atheros Search',
     headline: ['Search over', 'source observations.'],
     cardSummary:
-      'Go service and console for keyword and vector search over proxy and wireless observations.',
+      'Go service for keyword and vector search with PostgreSQL and pgvector, source records, and ranking explanations.',
     summary:
-      'Atheros Search combines keyword and vector retrieval over configured proxy and wireless observations. RAG builders and operators can inspect source records, embedding jobs, and ingestion state in one workbench.',
+      'Atheros Search combines keyword and vector retrieval over configured proxy and wireless observations. In the authenticated workbench, inspect source records, ranking evidence, ingestion state, and embedding jobs. When semantic retrieval is unavailable, the service can return a labeled keyword fallback.',
     problem:
       'RAG builders and operators who need retrievable evidence, visible processing gaps, and source context for human review.',
     primaryCta: { label: 'Explore a sample site review', href: '#demo' },
@@ -837,6 +832,10 @@ export const products = [
       [
         'See processing progress',
         'The ingestion and sources views expose allowlisted processing and coverage measurements. Inspect embedding jobs, worker heartbeats, failures, and timestamps without treating unavailable data as zero.',
+      ],
+      [
+        'Recover interrupted embedding jobs',
+        'Workers check the job lease and document revision before writing the vector and completing the job in one transaction.',
       ],
     ],
     glossary: [
@@ -1123,9 +1122,9 @@ export const products = [
     label: 'ATHEROS SEARCH COMPONENT / INGESTION COORDINATOR',
     headline: ['Durable event', 'ingestion.'],
     cardSummary:
-      'Scala coordinator for durable ingestion, deduplication, job leases, and PostgreSQL projections.',
+      'Scala coordinator for durable Redpanda ingestion, PostgreSQL deduplication, and recovery with fenced work leases.',
     summary:
-      'Octopus coordinates ingestion, document preparation, and PostgreSQL projections for Atheros Search. It persists events, jobs, and load results so processing can resume after a restart. This page includes current metrics and recorded history.',
+      'Octopus coordinates event ingestion, document preparation, and PostgreSQL projections. It records durable state before advancing consumer offsets. Deduplication handles repeated deliveries, stable dispatch keys identify repeat sends, and fenced leases reject stale completion.',
     problem:
       'For platform and data teams running event pipelines that need to recover from failures and account for repeated delivery.',
     primaryCta: {

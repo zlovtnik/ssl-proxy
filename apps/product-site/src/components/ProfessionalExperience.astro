@@ -1,15 +1,27 @@
 ---
 import { ArrowRight } from '@lucide/astro';
-import { hiring, portfolio } from '../data/products';
+import { hiring, portfolio, resume } from '../data/products';
 const { experience } = portfolio;
+const roles = resume.positions.filter(
+  (position) => position.company === experience.employer,
+);
 ---
 
 <section id="experience" class="section" aria-labelledby="experience-title">
   <div class="section-heading">
-    <p class="eyebrow">EMPLOYMENT / {experience.period}</p>
-    <h2 id="experience-title">{experience.title}</h2>
-    <p>{experience.summary}</p>
-    <p>{experience.scale}</p>
+    <p class="eyebrow">{experience.label}</p>
+    <h2 id="experience-title">{experience.employer}</h2>
+  </div>
+  {roles.map((role) => (
+    <section aria-label={role.title}>
+      <h3>{role.title}</h3>
+      <p class="eyebrow">{role.period}</p>
+      {role.points.slice(0, 2).map((point) => (
+        <p>{point}</p>
+      ))}
+    </section>
+  ))}
+  <div class="section-heading">
     <p class="fine-print">{experience.attribution}</p>
     <a class="text-link" href={hiring.resume.href}>
       Roles and dates in my resume <ArrowRight size={18} aria-hidden="true" />

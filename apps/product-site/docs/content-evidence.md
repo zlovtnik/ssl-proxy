@@ -36,14 +36,18 @@ source and tests. Homepage production readings are linked through Octopus and
 are never replaced by sample values.
 
 The homepage, About page, and printable [resume](../src/pages/resume/index.astro)
-attribute career context to the resume supplied directly by the owner on
-2026-10-27:
-15+ years of experience, Synchro roles from February 2011 to September 2024,
-teams of 3 to 8 engineers, and approximately 20 million weekly fiscal transactions
-in a Synchro integration between Oracle ERP Cloud, invoicing, and tax systems.
-The current source also describes 1-2 GB XML documents, the Staff Platform and
-Distributed Systems Engineer positioning, U.S. work authorization without
-sponsorship, and remote/hybrid availability. It supersedes the older
+use the November 8, 2026 career facts and portfolio draft from the owner's CV
+workspace. The public headline targets Senior Software Engineer roles in backend
+systems and enterprise integration. About and the resume show the individual
+Synchro titles and dates. Career evidence includes 15+ years in software and
+enterprise integrations, architecture and code reviews for teams of 3 to 8, and
+approximately 20 million weekly fiscal transactions in the Synchro integration
+between Oracle ERP Cloud, invoicing, and tax systems. The resume retains the
+1-2 GB source XML document size, U.S. work authorization without sponsorship,
+and remote/hybrid availability. The 2024 Synchro customer project covered invoice
+recognition and fiscal data preparation using Go retrieval-augmented generation,
+Python machine learning, Oracle Integration Cloud, and OCI AI capabilities.
+The workload figure supersedes the older
 [August resume](https://docs.google.com/document/d/1eRrKPRxudXWgvVlowoMQ5De4Khgj-ynJy7FWw8UbEZ4/edit),
 which used 2 million. The phone, personal email, profile links, and location on
 the public resume are the details supplied by the owner in that current text.

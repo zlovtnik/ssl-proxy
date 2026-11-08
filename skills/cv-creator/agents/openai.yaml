@@ -1,0 +1,4 @@
+interface:
+  display_name: "CV Creator"
+  short_description: "Create, tailor, and check resumes and CVs"
+  default_prompt: "Use $cv-creator to tailor my resume to this job description and check the exported file."
