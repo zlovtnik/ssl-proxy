@@ -52,6 +52,12 @@ VPN. Client profiles and transport examples are in [`config/client/`](config/cli
 [`config/peer1/`](config/peer1/), [`config/peer2/`](config/peer2/) and
 [`config/frontdoor/`](config/frontdoor/).
 
+## Local development
+
+Run the proxy/VPN, PostgreSQL, Redpanda and Octopus together with the
+[local Docker Compose guide](docs/local-docker.md). The stack builds from this
+checkout and initializes credentials, VPN peers, topics and canonical schemas.
+
 ## Configuration
 
 The proxy reads and validates environment variables at startup. Supply an admin

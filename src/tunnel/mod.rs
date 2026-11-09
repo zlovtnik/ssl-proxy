@@ -12,6 +12,7 @@ pub(crate) mod socket_tuning;
 mod tarpit;
 pub(crate) mod tls;
 mod transparent;
+mod upstream;
 
 #[cfg(feature = "quic")]
 pub(crate) use classify::classify;

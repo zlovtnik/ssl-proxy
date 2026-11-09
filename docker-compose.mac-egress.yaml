@@ -1,0 +1,33 @@
+# Local development: use with docker-compose.yaml when this Mac is also the
+# full-tunnel VPN client. The Mac connects into the published reverse relay.
+services:
+  proxy-init:
+    extra_hosts:
+      - "host.docker.internal:127.0.0.1"
+    environment:
+      LOCAL_MAC_EGRESS_ENABLED: "true"
+      LOCAL_MAC_DNS_PORT: "1853"
+
+  ssl-proxy:
+    environment:
+      UPSTREAM_PROXY: http://127.0.0.1:18080
+      HTTPS_PROXY: http://127.0.0.1:18080
+      NO_PROXY: localhost,127.0.0.1,redpanda,postgres,host.docker.internal,10.13.13.1
+    # Docker keeps service-name resolution; public queries go to tunnel DNS.
+    dns:
+      - 10.13.13.1
+    ports:
+      - "127.0.0.1:18081:18081"
+
+  mac-egress-bridge:
+    build:
+      context: .
+      dockerfile: docker/local/Dockerfile.mac-egress-bridge
+    image: ssl-proxy-local-mac-egress:dev
+    network_mode: service:ssl-proxy
+    depends_on:
+      ssl-proxy:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - proxy-secrets:/run/local-secrets:ro

@@ -39,7 +39,7 @@ pub(crate) async fn run_transparent(
 
     match tokio::time::timeout(
         tokio::time::Duration::from_secs(10),
-        tokio::net::TcpStream::connect(orig_dst),
+        super::upstream::connect(orig_dst, state.config.proxy.upstream_proxy.as_deref()),
     )
     .await
     {

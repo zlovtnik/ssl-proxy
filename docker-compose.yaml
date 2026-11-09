@@ -1,0 +1,263 @@
+# Local development only. Production desired state remains in cyber-stack/.
+name: ssl-proxy-local
+
+x-proxy-build: &proxy-build
+  context: .
+  dockerfile: Dockerfile
+  target: ssl-proxy
+
+services:
+  local-init:
+    build:
+      context: .
+      dockerfile: docker/local/Dockerfile
+    restart: "no"
+    volumes:
+      - local-secrets:/local-secrets
+      - postgres-tls:/postgres-tls
+      - octopus-secrets:/octopus-secrets
+
+  postgres:
+    build:
+      context: .
+      dockerfile: docker/local/Dockerfile.postgres
+    restart: unless-stopped
+    depends_on:
+      local-init:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_DB: sync
+      POSTGRES_USER: platform_admin
+      POSTGRES_PASSWORD_FILE: /run/platform-secrets/platform_admin.password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/postgres-tls/server.crt
+      - -c
+      - ssl_key_file=/run/postgres-tls/server.key
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+    ports:
+      - "127.0.0.1:${LOCAL_POSTGRES_PORT:-5432}:5432"
+    shm_size: 256m
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - local-secrets:/run/platform-secrets:ro
+      - postgres-tls:/run/postgres-tls:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U platform_admin -d sync && test -f /var/lib/postgresql/data/local-bootstrap-complete"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  postgres-schema:
+    build:
+      context: .
+      dockerfile: k8s/postgres-schema-executor/Dockerfile
+    user: "0:0"
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        export POSTGRES_SCHEMA_OWNER_PASSWORD="$$(cat /run/platform-secrets/schema_owner.password)"
+        exec /usr/local/bin/postgres-runtime-schema
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DATABASE: sync
+      POSTGRES_SCHEMA_OWNER_USER: schema_owner
+      POSTGRES_OCTOPUS_ACCOUNT: octopus_runtime
+      POSTGRES_OCTOPUS_METRICS_ACCOUNT: octopus_metrics
+      POSTGRES_ATHEROS_SEARCH_ACCOUNT: atheros_search_runtime
+      POSTGRES_SCHEMA_MIGRATOR_ACCOUNT: schema_migrator_runtime
+      POSTGRES_KEYCLOAK_ACCOUNT: keycloak_runtime
+      PGSSLMODE: verify-full
+      POSTGRES_SSL_SERVER_NAME: postgres
+      PGSSLROOTCERT: /run/platform-secrets/ca.crt
+    volumes:
+      - local-secrets:/run/platform-secrets:ro
+
+  redpanda:
+    image: &redpanda-image redpandadata/redpanda:v24.2.7@sha256:82a69763bef8d8b55ea5a520fa1b38f993908ef68946819ca1aed43541824c48
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:${LOCAL_KAFKA_PORT:-19092}
+      - --rpc-addr=0.0.0.0:33145
+      - --advertise-rpc-addr=redpanda:33145
+    ports:
+      - "127.0.0.1:${LOCAL_KAFKA_PORT:-19092}:19092"
+      - "127.0.0.1:${LOCAL_REDPANDA_ADMIN_PORT:-9644}:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: [CMD, rpk, cluster, info, --brokers, "127.0.0.1:9092"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  redpanda-init:
+    image: *redpanda-image
+    restart: "no"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: [/bin/sh, /bootstrap/bootstrap.sh]
+    environment:
+      SYNC_REDPANDA_BOOTSTRAP_SERVERS: redpanda:9092
+      PUSHGATEWAY_URL: http://127.0.0.1:9091
+    volumes:
+      - ./docker/redpanda:/config:ro
+      - ./docker/redpanda/bootstrap.sh:/bootstrap/bootstrap.sh:ro
+
+  proxy-init:
+    build: *proxy-build
+    image: ssl-proxy-local-proxy:dev
+    user: "0:0"
+    # ssl-proxy key commands use the same NET_ADMIN file-capability binary.
+    cap_add: [NET_ADMIN]
+    restart: "no"
+    entrypoint: [/bin/bash, /bootstrap/init-proxy.sh]
+    environment:
+      LOCAL_VPN_ENDPOINT: ${LOCAL_VPN_ENDPOINT:-127.0.0.1}
+      LOCAL_VPN_PORT: ${LOCAL_VPN_PORT:-51820}
+    volumes:
+      - wireguard-config:/config
+      - proxy-secrets:/run/local-secrets
+      - ./config/templates/server.conf:/bootstrap/server.conf:ro
+      - ./config/coredns/Corefile:/bootstrap/Corefile:ro
+      - ./docker/local/init-proxy.sh:/bootstrap/init-proxy.sh:ro
+
+  ssl-proxy:
+    build: *proxy-build
+    image: ssl-proxy-local-proxy:dev
+    # The existing VPN entrypoint manages routes, iptables and the root UAPI socket.
+    user: "0:0"
+    restart: unless-stopped
+    depends_on:
+      proxy-init:
+        condition: service_completed_successfully
+      redpanda-init:
+        condition: service_completed_successfully
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+      net.ipv4.conf.default.rp_filter: "0"
+    environment:
+      WG_INTERFACE_NAME: wg0
+      WG_INTERFACE: wg0
+      WG_PEERS: peer1,peer2
+      WG_SERVER_ADDRESS: 10.13.13.1/24
+      WG_PORT: "51820"
+      WG_INTERNAL_PORT: "51820"
+      WG_OBFUSCATION_ENABLED: "false"
+      WG_RUNTIME_SYSCTLS: "0"
+      WG_DROP_UDP_443: "1"
+      EXPLICIT_PROXY_ENABLED: "false"
+      ADMIN_API_KEY_FILE: /run/local-secrets/admin_api_key
+      ADMIN_BIND_ADDR: 127.0.0.1
+      SYNC_REDPANDA_BOOTSTRAP_SERVERS: redpanda:9092
+      SYNC_REDPANDA_SECURITY_PROTOCOL: plaintext
+      SYNC_OUTBOX_DIR: /var/lib/sync/outbox
+      RUST_LOG: ssl_proxy=info,sync_plane=info
+    ports:
+      - "${LOCAL_VPN_BIND_ADDRESS:-127.0.0.1}:${LOCAL_VPN_PORT:-51820}:51820/udp"
+      - "127.0.0.1:${LOCAL_PROXY_METRICS_PORT:-9098}:9098"
+    volumes:
+      - wireguard-config:/config
+      - proxy-secrets:/run/local-secrets:ro
+      - proxy-outbox:/var/lib/sync/outbox
+    healthcheck:
+      test: [CMD-SHELL, "ip link show wg0 >/dev/null && curl -fsS http://127.0.0.1:9098/ready >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 30s
+
+  octopus:
+    image: ssl-proxy-local-octopus:dev
+    build:
+      context: .
+      dockerfile: services/octopus/Dockerfile
+      args:
+        PARENT_COMMIT: ${LOCAL_PARENT_COMMIT:-local}
+        OCTOPUS_COMMIT: ${LOCAL_OCTOPUS_COMMIT:-local}
+    restart: unless-stopped
+    # Proxy outbox payloads are deliberately owner-only; match its local UID.
+    user: "0:0"
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        export POSTGRES_SCHEMA_MANIFEST_SHA256="$$(awk '/^manifest_sha256:/ {print $$2}' /schema/manifest.yaml)"
+        test "$${#POSTGRES_SCHEMA_MANIFEST_SHA256}" -eq 64
+        exec java -jar /app/octopus.jar
+    depends_on:
+      postgres-schema:
+        condition: service_completed_successfully
+      redpanda-init:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_ENABLED: "true"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DATABASE: sync
+      POSTGRES_USER: octopus_runtime
+      POSTGRES_PASSWORD_FILE: /run/octopus-secrets/octopus_runtime.password
+      POSTGRES_SSL_MODE: verify-full
+      POSTGRES_SSL_CA_PATH: /run/octopus-secrets/ca.crt
+      POSTGRES_SSL_SERVER_NAME: postgres
+      OCTOPUS_ENVIRONMENT: development
+      SYNC_REDPANDA_BOOTSTRAP_SERVERS: redpanda:9092
+      SYNC_REDPANDA_TOPIC_PARTITIONS: "3"
+      SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR: "1"
+      OCTOPUS_PROCESSORS_ENABLED: "true"
+      OCTOPUS_CONSUMERS_ENABLED: "true"
+      OCTOPUS_ENABLED_PROCESSORS: sync-scan-ingestion,sync-job-planner,sync-backlog-recovery,sync-load-dispatch,sync-load-consumer,sync-result-consumer,sync-outbox-publisher
+      OCTOPUS_ARCHIVE_ENABLED: "false"
+      OCTOPUS_DQ_ENABLED: "false"
+      OCTOPUS_PUBLIC_STATS_ENABLED: "false"
+      OTEL_SDK_DISABLED: "true"
+      SYNC_OUTBOX_DIR: /var/lib/sync/outbox
+    ports:
+      - "127.0.0.1:${LOCAL_OCTOPUS_PORT:-8081}:8081"
+    volumes:
+      - octopus-secrets:/run/octopus-secrets:ro
+      - proxy-outbox:/var/lib/sync/outbox:ro
+      - ./sql/postgres/octopus_core/manifest.yaml:/schema/manifest.yaml:ro
+    healthcheck:
+      test: [CMD, wget, -qO-, "http://127.0.0.1:8081/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 40s
+    stop_grace_period: 30s
+
+volumes:
+  local-secrets:
+  postgres-tls:
+  octopus-secrets:
+  postgres-data:
+  redpanda-data:
+  wireguard-config:
+  proxy-secrets:
+  proxy-outbox:

@@ -79,6 +79,7 @@ while IFS='|' read -r topic partitions replicas retention_ms retention_bytes; do
   topic_retention_ms="${retention_ms:-2592000000}"
   topic_retention_bytes="${retention_bytes:--1}"
 
+  current_partitions=0
   if topic_description="$(rpk topic describe "${topic}" --brokers "${BOOTSTRAP_SERVERS}" --print-summary 2>/dev/null)"; then
     current_partitions="$(printf '%s\n' "${topic_description}" | awk '
       $1 == "PARTITIONS" { print $2; exit }
@@ -90,6 +91,17 @@ while IFS='|' read -r topic partitions replicas retention_ms retention_bytes; do
         exit 1
         ;;
     esac
+  fi
+
+  # rpk 24.2 can successfully describe an absent topic with PARTITIONS 0.
+  # A real Kafka topic always has at least one partition.
+  if [ "${current_partitions}" -eq 0 ]; then
+    log_line "info" "topic_create" "Creating topic ${topic}"
+    rpk topic create "${topic}" \
+      --brokers "${BOOTSTRAP_SERVERS}" \
+      --partitions "${topic_partitions}" \
+      --replicas "${topic_replicas}"
+  else
     if [ "${current_partitions}" -lt "${topic_partitions}" ]; then
       additional_partitions="$((topic_partitions - current_partitions))"
       log_line "info" "topic_expand" "Adding ${additional_partitions} partitions to ${topic}"
@@ -103,12 +115,6 @@ while IFS='|' read -r topic partitions replicas retention_ms retention_bytes; do
     else
       log_line "info" "topic_exists" "Topic already has ${topic_partitions} partitions: ${topic}"
     fi
-  else
-    log_line "info" "topic_create" "Creating topic ${topic}"
-    rpk topic create "${topic}" \
-      --brokers "${BOOTSTRAP_SERVERS}" \
-      --partitions "${topic_partitions}" \
-      --replicas "${topic_replicas}"
   fi
 
   rpk topic alter-config "${topic}" \

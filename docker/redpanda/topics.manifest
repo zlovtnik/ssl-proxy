@@ -10,6 +10,8 @@ sync.oracle.result.dlq|3|1|2592000000|268435456
 proxy.payload_audit|3|1|2592000000|536870912
 proxy.payload_audit.dlq|3|1|2592000000|268435456
 wireless.audit|3|1|604800000|5368709120
+wireless.sensor.heartbeat|3|1|604800000|268435456
+wireless.sensor.heartbeat.dlq|3|1|2592000000|134217728
 wireless.mac.seen|3|1|2592000000|536870912
 wireless.audit.enriched|3|1|2592000000|536870912
 wireless.audit.config|1|1|2592000000|134217728

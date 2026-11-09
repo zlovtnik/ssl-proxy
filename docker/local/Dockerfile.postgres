@@ -1,0 +1,7 @@
+FROM pgvector/pgvector:0.8.6-pg16-bookworm@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+
+# Copy init scripts into the image: host bind mounts can be noexec on Desktop.
+COPY sql/postgres/00_extensions/001_runtime_extensions.sql /docker-entrypoint-initdb.d/001_runtime_extensions.sql
+COPY docker/local/init-postgres.sh /docker-entrypoint-initdb.d/010-local-roles.sh
+COPY docker/postgres/init/010-runtime-roles.sh /usr/local/share/local-init/010-runtime-roles.sh
+RUN chmod 0555 /docker-entrypoint-initdb.d/010-local-roles.sh

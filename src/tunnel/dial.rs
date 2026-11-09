@@ -215,10 +215,15 @@ pub(crate) async fn dial_upstream_with_resolver(
     let connect = async {
         let mut last_err = io::Error::new(io::ErrorKind::NotFound, "No connect candidates");
         for ip in &ips {
-            match tokio::net::TcpStream::connect((*ip, port)).await {
+            match super::upstream::connect(
+                (*ip, port).into(),
+                state.config.proxy.upstream_proxy.as_deref(),
+            )
+            .await
+            {
                 Ok(stream) => {
                     super::socket_tuning::configure_tunnel_tcp(&stream);
-                    return Ok(stream);
+                    return Ok((stream, ip.to_string()));
                 }
                 Err(e) => {
                     debug!(%ip, port, %e, "upstream connect attempt failed");
@@ -229,18 +234,13 @@ pub(crate) async fn dial_upstream_with_resolver(
         Err(last_err)
     };
 
-    let upstream = tokio::time::timeout(
+    let (upstream, selected_ip) = tokio::time::timeout(
         tokio::time::Duration::from_secs(CONNECT_TIMEOUT_SECS),
         connect,
     )
     .await
     .map_err(|_| UpstreamDialError::ConnectTimeout)?
     .map_err(UpstreamDialError::ConnectFailed)?;
-
-    let selected_ip = upstream
-        .peer_addr()
-        .map(|a| a.ip().to_string())
-        .unwrap_or_else(|_| "-".to_string());
 
     Ok((upstream, resolved_ips, selected_ip))
 }
