@@ -2,11 +2,9 @@
   <rect width="1200" height="630" fill="#090909" />
   <path d="M80 95h1040M80 535h1040" stroke="#343632" />
   <g font-family="sans-serif" fill="#F5F5F2">
-    <text x="80" y="155" font-size="26" fill="#BEC2B9">RCLABS / INFRASTRUCTURE TOOLS</text>
-    <text x="80" y="280" font-size="64">Understand the evidence.</text>
-    <text x="80" y="360" font-size="64" fill="#A3E6A3">Control the next step.</text>
-    <text x="80" y="465" font-size="26">Atheros Search</text>
-    <text x="400" y="465" font-size="26">Schema Migrator</text>
-    <text x="745" y="465" font-size="26">RCLabs VPN / Proxy</text>
+    <text x="80" y="155" font-size="26" fill="#BEC2B9">RAFAEL CARDOSO / RCLABS</text>
+    <text x="80" y="280" font-size="64">Backend engineering.</text>
+    <text x="80" y="360" font-size="64" fill="#A3E6A3">Distributed systems.</text>
+    <text x="80" y="465" font-size="26">Durable ingestion · Recovery · Auditable search</text>
   </g>
 </svg>

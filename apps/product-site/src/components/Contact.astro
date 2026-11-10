@@ -1,5 +1,5 @@
 ---
-import { allProducts, contact, demoLink, email } from '../data/products';
+import { allProducts, contact, discussionLink, email } from '../data/products';
 import { ArrowUpRight } from '@lucide/astro';
 interface Props {
   product?: string;
@@ -18,12 +18,12 @@ const { product = allProducts, intro = contact } = Astro.props;
   <p class="eyebrow">{intro.eyebrow ?? contact.eyebrow}</p>
   <h2 id="contact-title">{intro.headline.join(' ')}</h2>
   <p>{intro.supporting}</p>
-  <a class="button primary" href={demoLink(product)}>
+  <a class="button primary" href={discussionLink(product)}>
     {intro.link ?? contact.link} <ArrowUpRight size={18} aria-hidden="true" />
   </a>
   <p class="fine-print">
-    {contact.emailHint} <a href={`mailto:${email}`}>{email}</a>.
-    {' '}{contact.nextStep}
+    {contact.emailHint} <a href={`mailto:${email}`}>{email}</a>.{' '}
+    {contact.nextStep}
   </p>
 </section>
 <!--/email_off-->

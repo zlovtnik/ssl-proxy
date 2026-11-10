@@ -11,9 +11,8 @@ execution. Octopus separately reads the public metrics endpoint.
 
 Recruiters, engineering managers, and technical interviewers are the primary
 portfolio audience. The homepage separates Synchro experience from independent
-project contributions and evidence, then presents product walkthroughs for RAG
-builders and operators. The printable `/resume/` page and `/demo/#employment`
-provide hiring paths alongside the existing project discussion emails.
+project contributions and evidence, followed by technical walkthroughs.
+The printable `/resume/` page and `/contact/` provide hiring paths.
 
 ## Local development
 
@@ -27,9 +26,10 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:4321`. Routes are `/`, `/products/`,
-`/atheros-search/`, `/schema-migrator/`, `/vpn-proxy/`, `/octopus/`, `/demo/`,
+`/atheros-search/`, `/schema-migrator/`, `/vpn-proxy/`, `/octopus/`, `/contact/`,
 `/about/`, `/resume/`, `/accessibility/`, `/privacy/`, `/guides/`, and the six technical guide
 routes generated from [the content model](src/data/products.ts).
+The legacy `/demo/` route redirects permanently to `/contact/`.
 
 ```sh
 npm run build

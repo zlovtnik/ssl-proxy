@@ -8,6 +8,7 @@ import {
   guidePath,
   hiring,
   portfolio,
+  delivery,
 } from '../data/products';
 import '../styles/landing.css';
 
@@ -131,6 +132,19 @@ const structuredData = {
         {home.evidence.link}
         <ArrowUpRight size={14} aria-hidden="true" />
       </a>
+    </div>
+  </section>
+  <section id="delivery" class="section" aria-labelledby="delivery-title">
+    <div class="section-heading">
+      <h2 id="delivery-title">{delivery.title}</h2>
+      <p>{delivery.summary}</p>
+    </div>
+    <div class="actions">
+      {delivery.links.map((link) => (
+        <a class="text-link" href={link.href}>
+          {link.label}
+        </a>
+      ))}
     </div>
   </section>
   <section

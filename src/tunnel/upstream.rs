@@ -11,6 +11,9 @@ const MAX_CONNECT_HEADERS: usize = 8192;
 
 /// Connect without falling back to direct egress when a proxy is configured.
 /// Callers retain their existing timeout around the complete dial and handshake.
+/// URL validation is syntactic: this helper has no listener configuration or
+/// knowledge of local DNS/routing aliases. Operators must ensure UPSTREAM_PROXY
+/// cannot route back to this service's explicit or transparent listener.
 pub(super) async fn connect(target: SocketAddr, proxy: Option<&str>) -> io::Result<TcpStream> {
     let Some(proxy) = proxy else {
         return TcpStream::connect(target).await;

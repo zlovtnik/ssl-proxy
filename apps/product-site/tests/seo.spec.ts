@@ -77,6 +77,27 @@ test('unmatched retired paths are errors rather than successful homepage copies'
   expect(sitemap).not.toContain('/404');
 });
 
+test('contact is canonical and the legacy demo route permanently redirects', async ({
+  page,
+  request,
+}) => {
+  await page.goto('/contact/');
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    'href',
+    /\/contact\/$/,
+  );
+  const sitemap = await (await request.get('/sitemap.xml')).text();
+  expect(sitemap).toContain('/contact/');
+  expect(sitemap).not.toContain('/demo/');
+  const redirects = readFileSync('public/_redirects', 'utf8');
+  expect(redirects).toMatch(/^\/demo\s+\/contact\/\s+301$/m);
+  expect(redirects).toMatch(/^\/demo\/\s+\/contact\/\s+301$/m);
+  expect(redirects).not.toMatch(/^\/contact\/?\s+\/demo\//m);
+  // The static preview implements Astro redirects with a refresh document.
+  await page.goto('/demo/');
+  await expect(page).toHaveURL(/\/contact\/$/);
+});
+
 test('each guide has distinct crawlable content and matching breadcrumb markup', async ({
   browser,
 }) => {

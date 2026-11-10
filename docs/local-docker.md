@@ -95,6 +95,14 @@ connections through Docker's published loopback port 18081; Docker never needs
 to connect back to the Mac. Proxy policy still applies, and CoreDNS retains
 end-to-end verified DNS-over-TLS.
 
+`UPSTREAM_PROXY` must point to a separate HTTP CONNECT proxy. Operators must
+ensure its host and port cannot route back to this service's `PROXY_PORT` or
+`TPROXY_PORT`, including through loopback addresses, local interface addresses,
+DNS aliases, or published Docker ports. Both service listeners bind `0.0.0.0`.
+The upstream dial helper validates URL syntax but has no listener configuration
+or deployment routing information, so it does not detect these loops at startup.
+The Mac egress override uses the separate relay on port 18080.
+
 Apply the [Mac egress override](../docker-compose.mac-egress.yaml) to an
 **already running base stack** with:
 

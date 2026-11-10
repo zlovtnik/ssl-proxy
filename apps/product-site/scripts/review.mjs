@@ -19,7 +19,7 @@ const routes = [
   '/atheros-search/',
   '/schema-migrator/',
   '/octopus/',
-  '/demo/',
+  '/contact/',
   '/accessibility/',
   '/privacy/',
   '/guides/',

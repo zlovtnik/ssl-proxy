@@ -17,6 +17,7 @@ test('the homepage summaries and guide destinations work without JavaScript', as
       'experience',
       'selected-work',
       'technical-evidence',
+      'delivery',
       'guides',
       'faq',
       'contact',
@@ -114,7 +115,9 @@ test('the about page retains attributed experience and full engineering evidence
         await study.locator('summary').click();
       await expect(study).toHaveAttribute('open', '');
       await expect(study).toContainText(/independent/i);
-      await expect(study.locator('dt')).toHaveText(fields);
+      await expect(study.locator('.about-case-detail > dl dt')).toHaveText(
+        fields,
+      );
       for (const definition of await study.locator('dd').all())
         expect((await definition.innerText()).trim().length).toBeGreaterThan(
           30,
@@ -162,8 +165,8 @@ test('general contact has a direct email path distinct from project inquiries', 
     navigation.getByRole('link', { name: /resume/i }),
   ).toHaveAttribute('href', '/resume/');
   await navigation.getByRole('link', { name: 'Contact', exact: true }).click();
-  await expect(page).toHaveURL(/\/#contact$/);
-  const employment = page.locator('#contact');
+  await expect(page).toHaveURL(/\/contact\/$/);
+  const employment = page.locator('#employment');
   const request = new URL(
     (await employment
       .getByRole('link', { name: 'Contact', exact: true })
@@ -175,11 +178,11 @@ test('general contact has a direct email path distinct from project inquiries', 
     'Hello Rafael,\n\nI would like to get in touch about:\n\nThank you.',
   );
 
-  await page.goto('/demo/');
+  await page.goto('/contact/');
   for (const id of ['search', 'migrator', 'vpn', 'octopus', 'all']) {
     const href = await page.locator(`#${id} a`).getAttribute('href');
     expect(new URL(href!).searchParams.get('subject')).toMatch(
-      /^Use-case discussion: /,
+      /^Engineering discussion: /,
     );
   }
 });
@@ -202,10 +205,9 @@ test('the public resume is readable without an account or JavaScript', async ({
     await expect(main.locator('header .lead')).toHaveText(
       'Senior Software Engineer | Backend Systems & Enterprise Integration',
     );
-    await expect(main.getByRole('link', { name: 'rclabs.uk' })).toHaveAttribute(
-      'href',
-      'https://rclabs.uk/',
-    );
+    await expect(
+      main.getByRole('link', { name: 'rclabs.uk', exact: true }),
+    ).toHaveAttribute('href', 'https://rclabs.uk/');
     await expect(main).toContainText('No sponsorship required');
     await expect(main).toContainText('Open to Remote / Hybrid');
     await expect(main).toContainText('20 million fiscal transactions per week');
@@ -215,12 +217,9 @@ test('the public resume is readable without an account or JavaScript', async ({
     await expect(main).toContainText('Octopus');
     await expect(main.locator('a[href^="mailto:"]').first()).toHaveAttribute(
       'href',
-      /^mailto:racasantos@icloud\.com/,
+      /^mailto:rafael@rclabs\.uk/,
     );
-    await expect(main.locator('a[href^="tel:"]')).toHaveAttribute(
-      'href',
-      'tel:+12078046704',
-    );
+    await expect(main.locator('a[href^="tel:"]')).toHaveCount(0);
     await expect(main.locator('a[href*="docs.google.com"]')).toHaveCount(0);
   } finally {
     await context.close();

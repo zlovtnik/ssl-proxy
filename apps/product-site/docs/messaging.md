@@ -6,7 +6,7 @@ technical interviewers are the primary portfolio audience. The professional
 headline is Senior Software Engineer | Backend Systems & Enterprise Integration.
 The homepage introduces ingestion, recovery, and search, followed by Synchro
 experience, independent projects, and source and test links. Atheros
-Search documentation retains RAG builders and operators as its audience:
+Search documentation explains the technical workflow:
 the proxy and sensor publish observations, Octopus coordinates ingestion, and
 Search provides retrieval, evidence, fenced embedding workers and authenticated
 operational reads through one pipeline workbench. Schema Migrator
@@ -106,27 +106,16 @@ Keep these statements in the model, product page, and relevant sample:
 
 ## Contact
 
-The shared action is labelled `Contact` and opens a general inquiry with the
-subject `General inquiry`. It does not request a role, employer, or location.
-The existing `/demo/#employment` anchor remains compatible and now contains the
-general inquiry block. Resume links retain the static, printable `/resume/`
-page. Product discussion emails retain `Use-case discussion: [product]`.
-The contact page asks for the systems involved, the data flow, and an example
-failure when discussing backend or integration work.
-The public resume includes the phone, email, location, work authorization,
-LinkedIn profile, and website supplied in the owner's current resume. General
-site and hiring inquiry links keep the existing `rafael@rclabs.uk` address.
-
-General calls to action use `mailto:` links for `rafael@rclabs.uk`. The privacy
-notice identifies Rafael Cardoso as the individual controller and
-uses his confirmed privacy contact, `racasantos@icloud.com`. Subjects are
-`Use-case discussion: [product]`. The contact page keeps the address visible
-with a copy fallback. Email begins a discussion; it does not schedule a meeting.
-The Octopus contact invites a pipeline setup discussion with an engineer about
-stream topology, state bottlenecks, and recovery. Do not promise instant booking,
-zero-loss recovery, or an uptime guarantee. Engineering copy focuses on source
-lineage, replay, and persistent job state; Operations copy focuses on processing,
-backlog, intake control, throughput, and measurement freshness.
+The shared navigation links to `/contact/` on every route. `/demo/` redirects
+permanently to that page, preserving existing section fragments. Hiring is the
+primary call to action. Project email links invite questions about the published
+engineering work. The `discussionLink` helper uses subjects in the format
+`Engineering discussion: [project]`. Resume links retain the static, printable
+`/resume/` page.
+Use `rafael@rclabs.uk` consistently, including the privacy notice. Keep the email
+visible with a copy fallback, and omit phone details from the public resume.
+Email begins a discussion and does not schedule a meeting. Do not promise
+instant booking, zero-loss recovery, or an uptime guarantee.
 
 ## Adding or changing copy
 

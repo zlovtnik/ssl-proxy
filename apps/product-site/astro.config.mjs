@@ -24,6 +24,7 @@ export default defineConfig({
   site: origin.origin,
   output: 'static',
   trailingSlash: 'always',
+  redirects: { '/demo/': { status: 301, destination: '/contact/' } },
   integrations: [solid()],
   devToolbar: { enabled: false },
 });

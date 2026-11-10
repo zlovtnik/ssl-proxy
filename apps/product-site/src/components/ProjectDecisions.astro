@@ -1,0 +1,23 @@
+---
+import { portfolio } from '../data/products';
+interface Props {
+  id: string;
+  nested?: boolean;
+}
+const project = portfolio.projects.find((item) => item.id === Astro.props.id);
+const Heading = Astro.props.nested ? 'h4' : 'h2';
+---
+
+{project && 'decisions' in project && (
+  <section aria-label={`${project.title} decisions and alternatives`}>
+    <Heading>Decisions and alternatives</Heading>
+    <dl class="about-case-fields">
+      {project.decisions.map(([decision, reason]) => (
+        <div>
+          <dt>{decision}</dt>
+          <dd>{reason}</dd>
+        </div>
+      ))}
+    </dl>
+  </section>
+)}

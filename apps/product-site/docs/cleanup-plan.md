@@ -54,7 +54,7 @@ Changed files:
 - [Content model](../src/data/products.ts): shorter copy, factual card summaries,
   FAQ/contact copy, and removal of unused homepage chapter data.
 - [Homepage](../src/pages/index.astro), [About](../src/pages/about/index.astro),
-  [contact](../src/pages/demo/index.astro), [accessibility](../src/pages/accessibility/index.astro),
+  [contact](../src/pages/contact/index.astro), [accessibility](../src/pages/accessibility/index.astro),
   and [guide index](../src/pages/guides/index.astro): reduced repetition and
   retained navigation, including legacy homepage fragments.
 - [ProductCards](../src/components/ProductCards.astro),

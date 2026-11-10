@@ -3,7 +3,7 @@ export const email = 'rafael@rclabs.uk';
 export const author = {
   name: 'Rafael Cardoso',
   profile: 'https://github.com/zlovtnik',
-  privacyEmail: 'racasantos@icloud.com',
+  privacyEmail: email,
 } as const;
 
 const professionalHeadline =
@@ -18,40 +18,40 @@ export const accessibility = {
 export const hiring = {
   pageTitle: 'Contact Rafael.',
   pageSummary:
-    'Email me with a question, an idea, or a project you would like to discuss.',
+    'Hiring for a senior backend, integration, or data-pipeline role? Email me about the role and the engineering team.',
   eyebrow: 'CONTACT',
   projectsTitle: 'Project questions',
   projectsSummary:
-    'Choose a project to start an email. Hosted product access is not provisioned here.',
+    'Source and regression tests are linked from each project writeup.',
   projectPrompt:
-    'For a backend or integration problem, describe the systems involved, how data flows between them, and an example of what fails.',
+    'For a technical interview, mention the project or failure mode you would like to discuss.',
   addressTitle: 'Email address',
   addressSummary: 'You can also write to me directly.',
   cta: 'Contact',
   href: `mailto:${email}?subject=${encodeURIComponent('General inquiry')}&body=${encodeURIComponent('Hello Rafael,\n\nI would like to get in touch about:\n\nThank you.')}`,
   resume: { label: 'Read my resume', href: '/resume/' },
-  title: 'General inquiries',
+  title: 'Backend engineering roles',
   summary:
-    'Get in touch with a question, an idea, or something you would like to discuss.',
+    'I’m in Portland, Maine, open to remote or hybrid work, and authorized to work in the U.S. without sponsorship.',
 } as const;
 
 const octopusTests = 'services/octopus/src/test/scala/com/sslproxy/coordinator';
 
 export const portfolio = {
   audience:
-    'For recruiters, engineering managers, and technical interviewers evaluating my engineering work. Atheros product documentation is for RAG builders and operators.',
+    'Independent backend systems, with source code, failure cases, and regression tests.',
   experience: {
     label: 'Professional experience',
     employer: 'Synchro',
     summary:
       'I designed and supported a Java, Spring Boot, and Apache Camel integration between Oracle ERP Cloud, electronic invoicing, and tax systems. It processed approximately 20 million fiscal transactions per week. I later led architecture and code reviews for teams of 3 to 8 engineers.',
     attribution:
-      'Historical workload from the Synchro integration, as reported in my resume. The RCLabs projects were built independently.',
+      'Approximate historical Synchro workload, separate from the independent RCLabs projects.',
     aboutLink: { label: 'Read about my work', href: '/about/#experience' },
   },
   workTitle: 'Selected engineering work',
   workSummary:
-    'Projects I built independently of my Synchro employment. Each includes a failure case, the implementation, and links to regression tests. Source links do not certify a current passing run.',
+    'Projects I built independently of my Synchro employment. Each includes a failure case, implementation details, and regression tests.',
   projects: [
     {
       id: 'octopus',
@@ -67,6 +67,20 @@ export const portfolio = {
         'Repository tests cover persisted processor state, duplicate replay, changed-payload rejection, concurrent outbox claims, healthy peers surviving a permanent result failure, and completion waiting for every batch. PostgreSQL integration tests require Docker and can skip when it is absent.',
       unverified:
         'These tests do not establish recovery time or a complete broker/database/process-crash campaign. At-least-once delivery can repeat. There is no exactly-once or zero-loss guarantee. Live ledger counts do not establish capacity.',
+      decisions: [
+        [
+          'PostgreSQL ledger with manual offset commits',
+          'Kafka transactions alone cannot atomically commit the PostgreSQL sink. Persisting state before the offset commit leaves a replay window, which durable deduplication must handle.',
+        ],
+        [
+          'Expiring leases with fencing',
+          'A lease can expire while its worker still runs. The fence rejects that worker’s completion after replacement, rather than relying on expiry alone.',
+        ],
+        [
+          'Reject changed payloads for an existing identity',
+          'Last-write-wins would conceal conflicting input behind a successful replay. Rejection preserves the original identity and makes the conflict visible.',
+        ],
+      ],
       links: [
         {
           label: 'Persistence implementation',
@@ -87,9 +101,27 @@ export const portfolio = {
           ),
         },
         {
+          label: 'Result dead-letter handling tests',
+          href: repositorySource(
+            `${octopusTests}/kafka/PostgresResultStreamSuite.scala`,
+          ),
+        },
+        {
           label: 'Processor persistence tests',
           href: repositorySource(
             `${octopusTests}/processor/ProcessorSupervisorSuite.scala`,
+          ),
+        },
+        {
+          label: 'OpenTelemetry instrumentation',
+          href: repositorySource(
+            'services/octopus/src/main/scala/com/sslproxy/coordinator/observability/CoordinatorTracing.scala',
+          ),
+        },
+        {
+          label: 'Payload archive verification',
+          href: repositorySource(
+            'services/octopus/src/main/scala/com/sslproxy/coordinator/archive/PayloadArchive.scala',
           ),
         },
         { label: 'Octopus workflow and live readings', href: '/octopus/' },
@@ -109,6 +141,20 @@ export const portfolio = {
         'Repository tests cover weighted reciprocal-rank fusion and deduplication, explicit fallback codes, lost-lease rollback, vector-write failure rollback, and stale-fence rejection against PostgreSQL.',
       unverified:
         'No published relevance benchmark or latency result. Wireless observations and identity candidates do not confirm a current connection or physical device identity. The public sample is synthetic.',
+      decisions: [
+        [
+          'Fuse ranks rather than raw scores',
+          'Keyword and vector scores have different scales. Weighted reciprocal-rank fusion combines their positions, with configurable weights. Its relevance still needs a labelled benchmark.',
+        ],
+        [
+          'Label sparse fallback',
+          'When embeddings are unavailable, keyword evidence remains useful. The response identifies the degraded mode so a caller can distinguish it from a complete hybrid result.',
+        ],
+        [
+          'Complete vectors and jobs in one transaction',
+          'Separate commits could publish a vector without completing its job, or complete the job without its vector. Lease and revision checks keep stale workers from committing either.',
+        ],
+      ],
       links: [
         {
           label: 'Retrieval fusion implementation',
@@ -122,7 +168,13 @@ export const portfolio = {
             'apps/integration-console/atheros-search/internal/worker/worker_transaction_test.go',
           ),
         },
-        { label: 'Atheros product documentation', href: '/atheros-search/' },
+        {
+          label: 'Embedding circuit-breaker tests',
+          href: repositorySource(
+            'apps/integration-console/atheros-search/internal/embed/circuit_test.go',
+          ),
+        },
+        { label: 'Atheros Search case study', href: '/atheros-search/' },
       ],
     },
     {
@@ -212,8 +264,7 @@ export const resume = {
   role: professionalHeadline,
   location: 'Portland, ME | Open to Remote / Hybrid',
   authorization: 'Authorized to work in the U.S. | No sponsorship required',
-  email: 'racasantos@icloud.com',
-  phone: { label: '(207) 804-6704', href: 'tel:+12078046704' },
+  email,
   website: {
     label: 'rclabs.uk',
     href: 'https://rclabs.uk/',
@@ -231,7 +282,7 @@ export const resume = {
     ],
     [
       'Distributed Systems',
-      'Kafka, Redpanda, idempotency, backpressure, retries, recovery',
+      'Scala 3, Cats Effect, FS2, Kafka API via Redpanda, idempotency, backpressure, retries, recovery',
     ],
     [
       'Platform',
@@ -245,13 +296,12 @@ export const resume = {
   ],
   positions: [
     {
-      title: 'Senior Software Engineer',
-      company: 'Independent Engineering / RCLabs',
+      title: 'Independent engineering (self-directed)',
+      company: 'RCLabs',
       period: 'September 2024 - Present',
       points: [
         'Built Go and Scala backend services with PostgreSQL and Redpanda, using durable processing and recovery to handle interrupted work.',
-        'Established Kubernetes GitOps delivery with Kustomize, Argo CD, release and rollback gates, and OpenTelemetry observability.',
-        'Designed controlled MCP interfaces and retrieval workflows with authorization boundaries, input validation, and audit evidence.',
+        'Configured Kubernetes GitOps delivery with Kustomize, digest-pinned images, and Argo CD. Rollback follows a Git revert. Instrumented Octopus with OpenTelemetry.',
       ],
     },
     {
@@ -287,10 +337,10 @@ export const resume = {
     },
   ],
   independent: {
-    title: 'Independent engineering',
+    title: 'Independent engineering (self-directed)',
     period: 'September 2024 onward',
     summary:
-      'My independent platform work includes Octopus durable ingestion, Atheros Search retrieval and embedding workers, the Rust VPN / Proxy, and Schema Migrator. These projects are separate from Synchro employment. Project activity is not employer workload or evidence of client adoption.',
+      'Since September 2024 I have built Octopus durable ingestion, Atheros Search retrieval and embedding workers, the Rust VPN / Proxy, and Schema Migrator independently through RCLabs.',
   },
   projects: [
     {
@@ -300,7 +350,7 @@ export const resume = {
       points: [
         'Built an event ingestion coordinator with PostgreSQL-backed deduplication and durable offset tracking for at-least-once Kafka/Redpanda processing.',
         'Added backpressure, bounded retries, and dead-letter handling to recover failed work and control processing load.',
-        'Instrumented processing with OpenTelemetry and archived large payloads in MinIO with hash verification.',
+        'Instrumented processing with OpenTelemetry and archived large payloads in MinIO with hash and size metadata checks.',
       ],
     },
     {
@@ -310,7 +360,7 @@ export const resume = {
       points: [
         'Built a Go service for hybrid semantic and keyword retrieval over operational records using PostgreSQL and pgvector.',
         'Implemented recoverable embedding jobs with configurable backends, retries, caching, and circuit breaking.',
-        'Developed a console that explains search rankings and domain risk scores so users can inspect why results were returned.',
+        'Developed a console that explains search rankings and displays access-point risk scores derived by Octopus.',
       ],
     },
   ],
@@ -319,6 +369,22 @@ export const resume = {
     'B.S., Computer Science - Faculdades Metropolitanas Unidas, 2011',
   ],
   print: 'Print or save as PDF',
+} as const;
+
+export const delivery = {
+  title: 'How I ship',
+  summary:
+    'Production configuration lives in Kustomize, with first-party images pinned by digest. The repository provides make gitops-check to validate the desired state. Argo CD reconciles reviewed Git changes, and the documented rollback path is a Git revert. These are solo projects, with automated review tools and my own review.',
+  links: [
+    {
+      label: 'GitOps delivery and rollback procedure',
+      href: repositorySource('cyber-stack/README.md'),
+    },
+    {
+      label: 'Repository validation targets',
+      href: repositorySource('Makefile'),
+    },
+  ],
 } as const;
 
 export const about = {
@@ -337,25 +403,32 @@ export const about = {
         title: 'Distributed systems',
         description:
           'Message pipelines, offset-based deduplication, and recovery after interrupted processing. Octopus is my current independent implementation.',
-        tags: ['Kafka', 'Kubernetes', 'Go', 'Java'],
+        tags: ['Scala 3', 'Cats Effect', 'FS2', 'Redpanda', 'PostgreSQL'],
       },
       {
         title: 'Enterprise integration',
         description:
           'Fiscal integrations between Oracle ERP Cloud, electronic invoicing, and tax systems, including data validation and recovery from failed transactions.',
-        tags: ['Java', 'Scala', 'Oracle', 'PostgreSQL'],
+        tags: [
+          'Java',
+          'Spring Boot',
+          'Apache Camel',
+          'Oracle ERP Cloud',
+          'PL/SQL',
+          'XSLT',
+        ],
       },
       {
-        title: 'Data platforms',
+        title: 'Retrieval',
         description:
           'Ingestion, embedding workers, and keyword and vector search. Atheros Search exposes processing state and the records behind each result.',
-        tags: ['PostgreSQL', 'Rust', 'Go'],
+        tags: ['Go', 'PostgreSQL', 'pgvector', 'SolidJS'],
       },
       {
         title: 'Security and observability',
         description:
           'Service authentication, role separation, deployment threat models, image digest pinning, and telemetry for diagnosing production failures.',
-        tags: ['MCP', 'Kubernetes', 'Cloud infrastructure'],
+        tags: ['Rust', 'WireGuard', 'Kubernetes', 'Kustomize', 'Argo CD'],
       },
     ],
   },
@@ -416,7 +489,7 @@ export const octopusMetrics = {
   recordedMessage:
     'Recorded totals and hourly history remain available while live collection starts or recovers.',
   label: 'PIPELINE OBSERVABILITY',
-  title: 'Spot backlog. Investigate stalled work.',
+  title: 'Backlog and stalled work',
   summary:
     'Check processing, queued work, and recorded production history to see where investigation should begin.',
   noScript:
@@ -449,9 +522,9 @@ export const octopusMetrics = {
 
 export const octopusContact = {
   eyebrow: 'CONTACT',
-  headline: ['Questions about', 'your pipeline?'],
+  headline: ['Discuss the', 'engineering decisions.'],
   supporting:
-    'Email me about your streams, processing bottlenecks, or recovery problems. Include the failure you are trying to understand.',
+    'Hiring for backend or data-pipeline work? I can walk through replay, fencing, and recovery in Octopus.',
   link: 'Email Rafael',
 } as const;
 
@@ -463,16 +536,16 @@ export const home = {
     'Backend systems and enterprise integrations by Rafael Cardoso. Explore durable Scala ingestion, Go hybrid search, and PostgreSQL migration tooling.',
   headline: ['Backend systems for', 'data ingestion, recovery, and search'],
   subheadline:
-    'I’m Rafael Cardoso, a senior software engineer in Portland, Maine. I build backend services and enterprise integrations. These independent projects show how I handle replayed events, interrupted jobs, and search results that need an explanation.',
+    'I’m Rafael Cardoso, a senior software engineer in Portland, Maine. I build backend services and enterprise integrations. These independent projects handle replayed events, interrupted jobs, and search results where a reviewer can inspect which records matched and why.',
   primaryCta: {
     label: 'Explore the work',
     href: '#selected-work',
   },
   secondaryCta: hiring.resume,
   supporting:
-    'For recruiters, engineering managers, and technical interviewers evaluating my engineering work.',
+    'Open to senior backend, integration, and data-pipeline roles. Remote or hybrid, U.S.-authorized, no sponsorship required.',
   eyebrow: 'RAFAEL CARDOSO / RCLABS',
-  reviewTitle: 'A closer look',
+  reviewTitle: 'Start here',
   navigationContact: 'Contact',
   experience: portfolio.experience,
   workEyebrow: 'Independent projects',
@@ -527,9 +600,9 @@ export const home = {
     'Public Search, Migrator, and VPN / Proxy samples use synthetic data. Octopus operational readings come from its runtime feed.',
   evidence: {
     eyebrow: 'Source & tests',
-    title: 'The implementation stays visible.',
+    title: 'Source, tests, and known gaps',
     summary:
-      'Review failure handling, regression coverage, and known gaps beside the source. Source links do not certify a current passing test run.',
+      'Follow each project’s failure handling into its implementation and regression tests.',
     link: 'View source on GitHub',
   },
   guidesEyebrow: 'Worked examples',
@@ -572,10 +645,10 @@ export const home = {
   ],
   contact: {
     eyebrow: 'Contact',
-    title: 'Let’s talk engineering.',
+    title: 'Hiring for backend engineering?',
     summary:
-      'Questions, ideas, and conversations about backend engineering, distributed systems, or one of these projects.',
-    projects: { label: 'Project questions', href: '/demo/#options-title' },
+      'Email me about a senior backend, integration, or data-pipeline role.',
+    projects: { label: 'Contact Rafael', href: '/contact/' },
   },
   reviewPath: [
     {
@@ -597,9 +670,9 @@ export const home = {
   productsEyebrow: 'PROJECT DOCUMENTATION',
   productsTitle: 'The projects',
   productsSummary:
-    'Search, ingestion, network observations, and SQL change review. The documentation is for RAG builders and operators.',
+    'Search, ingestion, network observations, and SQL change review, with implementation details and synthetic examples.',
   relationship:
-    'Atheros Search brings retrieval, ingestion visibility, and source readiness into one authenticated console. Octopus coordinates durable ingestion. The proxy and sensor produce observations. Schema Migrator is companion tooling. Public samples run independently in your browser.',
+    'Atheros Search brings retrieval, ingestion visibility, and source readiness into one authenticated console. Octopus coordinates durable ingestion. The proxy and Atheros Sensor, a monitor-mode wireless capture service, produce observations. Schema Migrator is companion tooling. Public samples run independently in your browser.',
   faqTitle: 'Before you start',
   faq: [
     {
@@ -610,12 +683,12 @@ export const home = {
     {
       question: 'How do the projects fit together?',
       answer:
-        'The proxy and sensor produce observations. Octopus records and processes them. Atheros Search indexes and retrieves them. Schema Migrator is companion tooling for reviewing SQL changes.',
+        'The proxy records network observations. Atheros Sensor captures wireless observations on configured Wi-Fi channels. Octopus records and processes them, and Atheros Search indexes and retrieves them. Schema Migrator is companion tooling for reviewing SQL changes.',
     },
     {
-      question: 'Can I discuss my own data or deployment?',
+      question: 'What roles am I looking for?',
       answer:
-        'Email me with the project, environment, and constraints you want to discuss. The contact page has project-specific email links.',
+        'Senior backend, enterprise integration, and data-pipeline roles where I can own design, delivery, and production support. Contact me with the role and team context.',
     },
   ],
 } as const;
@@ -732,10 +805,18 @@ export const products = [
       'Go service for keyword and vector search with PostgreSQL and pgvector, source records, and ranking explanations.',
     summary:
       'Atheros Search combines keyword and vector retrieval over configured proxy and wireless observations. In the authenticated workbench, inspect source records, ranking evidence, ingestion state, and embedding jobs. When semantic retrieval is unavailable, the service can return a labeled keyword fallback.',
+    hostedConsoleNotice: {
+      text: 'The hosted console is temporarily unavailable:',
+      link: { label: 'search.rclabs.uk', href: 'https://search.rclabs.uk/' },
+      followup: '. The synthetic sample below remains available.',
+    },
     problem:
       'RAG builders and operators who need retrievable evidence, visible processing gaps, and source context for human review.',
     primaryCta: { label: 'Explore a sample site review', href: '#demo' },
-    secondaryCta: { label: 'Discuss your use case', href: '/demo/#search' },
+    secondaryCta: {
+      label: 'Source and regression tests',
+      href: '/about/#case-search',
+    },
     sections: {
       workflow: {
         ...workflowSection,
@@ -757,7 +838,7 @@ export const products = [
     audiences: [
       {
         id: 'technical',
-        title: 'For RAG builders',
+        title: 'Retrieval interfaces',
         proposition: 'Retrieve records and their source context.',
         points: [
           'Search dense, sparse, or hybrid records through existing HTTP and gRPC interfaces, with supported filters and ranking explanations.',
@@ -766,7 +847,7 @@ export const products = [
       },
       {
         id: 'buyers',
-        title: 'For operators and reviewers',
+        title: 'Ingestion and indexing state',
         proposition: 'Check ingestion and indexing failures.',
         points: [
           'Inspect stages, backlog, failures, workers, and measurement freshness alongside retrieval, using the existing login and role permissions.',
@@ -874,10 +955,21 @@ export const products = [
       'Scala tooling for SQL-file validation, execution planning, catalog drift checks, and run history.',
     summary:
       'Discover ordered SQL and validate it offline. Dry-run output is shortened. Review the full source files alongside it. Catalog drift checks compare selected object definitions and table presence, but do not compare column definitions or nullability.',
+    hostedConsoleNotice: {
+      text: 'The hosted console is temporarily unavailable:',
+      link: {
+        label: 'migrator.rclabs.uk',
+        href: 'https://migrator.rclabs.uk/',
+      },
+      followup: '. The synthetic sample below remains available.',
+    },
     problem:
       'Platform and database engineers reviewing SQL execution order, target drift, and evidence of previous changes.',
     primaryCta: { label: 'Explore a sample migration review', href: '#demo' },
-    secondaryCta: { label: 'Discuss your use case', href: '/demo/#migrator' },
+    secondaryCta: {
+      label: 'Source and regression tests',
+      href: '/about/#case-migrator',
+    },
     sections: {
       workflow: {
         ...workflowSection,
@@ -899,7 +991,7 @@ export const products = [
     audiences: [
       {
         id: 'technical',
-        title: 'For technical users',
+        title: 'SQL planning and target state',
         proposition: 'Check SQL order and target state.',
         points: [
           'Discover ordered SQL and run offline validation before reviewing a dry-run plan.',
@@ -908,7 +1000,7 @@ export const products = [
       },
       {
         id: 'buyers',
-        title: 'For operators and reviewers',
+        title: 'Run records and configuration',
         proposition: 'Keep run records and target configuration.',
         points: [
           'Use stored run and audit records to support change reviews and operational handoffs.',
@@ -1026,7 +1118,7 @@ export const products = [
     audiences: [
       {
         id: 'technical',
-        title: 'For technical users',
+        title: 'Traffic handling and classification',
         proposition: 'Inspect traffic handling and classification.',
         points: [
           'Review WireGuard ingress and transparent proxy handling as distinct stages of the traffic path.',
@@ -1035,7 +1127,7 @@ export const products = [
       },
       {
         id: 'buyers',
-        title: 'For operators and reviewers',
+        title: 'Peers and audit publishing',
         proposition: 'Configure peers and audit publishing.',
         points: [
           'Evaluate the proxy, administrative readiness surfaces, and the separate staged WireGuard key rotator.',
@@ -1119,7 +1211,7 @@ export const products = [
     name: 'Octopus',
     path: '/octopus/',
     homeTitle: 'Octopus',
-    label: 'ATHEROS SEARCH COMPONENT / INGESTION COORDINATOR',
+    label: 'INDEPENDENT PROJECT / INGESTION COORDINATOR',
     headline: ['Durable event', 'ingestion.'],
     cardSummary:
       'Scala coordinator for durable Redpanda ingestion, PostgreSQL deduplication, and recovery with fenced work leases.',
@@ -1143,9 +1235,9 @@ export const products = [
       },
       value: {
         ...audienceSection,
-        label: 'ENGINEERING AND OPERATIONS',
-        title: 'Investigating pipeline state',
-        note: 'Engineering traces delivery and recovery state. Operations checks throughput, backlog, and the freshness of reported activity.',
+        label: 'DEBUGGING',
+        title: 'How I debug it',
+        note: 'Start with the consumer group, topic, partition, and offset. Follow persisted state and compare it with backlog and measurement freshness.',
       },
       evidence: {
         ...evidenceSection,
@@ -1164,7 +1256,7 @@ export const products = [
     audiences: [
       {
         id: 'technical',
-        title: 'For engineers',
+        title: 'Trace delivery and recovery',
         proposition: 'Trace source records and recovery state.',
         points: [
           'Start incident triage at the source: find the consumer group, topic, partition, and offset behind an ingestion record.',
@@ -1174,7 +1266,7 @@ export const products = [
       },
       {
         id: 'buyers',
-        title: 'For operators',
+        title: 'Check backlog and freshness',
         proposition: 'Check processing and backlog.',
         points: [
           'Check processing rate and queued records to identify a growing backlog.',
@@ -1262,10 +1354,10 @@ export const sampleProducts = products.filter(
 
 export const contact = {
   eyebrow: 'CONTACT',
-  headline: ['Questions about', 'a project?'],
+  headline: ['Hiring for', 'backend engineering?'],
   supporting:
-    'Email me with the project, environment, and constraints you want to discuss. We can arrange a walkthrough or technical call by email.',
-  cta: 'Discuss your use case',
+    'Email me about a senior backend, integration, or data-pipeline role. I can walk through the implementation and tradeoffs behind these projects.',
+  cta: 'Contact Rafael',
   // Short form for a mailto link that already sits under the headline, so the
   // same words never appear twice in one block.
   link: 'Email Rafael',
@@ -1308,9 +1400,9 @@ export const contactOptions = [
   },
 ] as const;
 
-export function demoLink(product: string) {
-  const subject = `Use-case discussion: ${product}`;
-  const body = `Hello Rafael,\n\nI'd like to discuss our use case for ${product}.\n\nMy use case:\n\nEnvironment and constraints:\n\nPreferred times and time zone:\n\nThank you.`;
+export function discussionLink(product: string) {
+  const subject = `Engineering discussion: ${product}`;
+  const body = `Hello Rafael,\n\nI'd like to discuss the engineering behind ${product}.\n\nRole or project context:\n\nQuestions:\n\nThank you.`;
   return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 

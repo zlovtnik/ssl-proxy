@@ -6,6 +6,7 @@ import MigratorDemo from './MigratorDemo';
 import VpnDemo from './VpnDemo';
 import Diagram from './Diagram.astro';
 import Contact from './Contact.astro';
+import ProjectDecisions from './ProjectDecisions.astro';
 import {
   getProduct,
   guides,
@@ -44,6 +45,15 @@ const product = getProduct(Astro.props.id);
         {product.headline[0]} <span class="accent">{product.headline[1]}</span>
       </h1>
       <p class="lead">{product.summary}</p>
+      {'hostedConsoleNotice' in product && (
+        <p class="fine-print">
+          {product.hostedConsoleNotice.text}{' '}
+          <a href={product.hostedConsoleNotice.link.href}>
+            {product.hostedConsoleNotice.link.label}
+          </a>
+          {product.hostedConsoleNotice.followup}
+        </p>
+      )}
       <div class="actions">
         <a class="button primary" href={product.primaryCta.href}>
           {product.primaryCta.label}
@@ -64,6 +74,11 @@ const product = getProduct(Astro.props.id);
       ))}
     </div>
   </section>
+  {product.id === 'search' && (
+    <div class="section">
+      <ProjectDecisions id="search" />
+    </div>
+  )}
   <section
     class="product-demo"
     id="demo"

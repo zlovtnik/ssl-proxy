@@ -26,7 +26,7 @@ const trackedPaths = new Set([
   '/atheros-search/',
   '/schema-migrator/',
   '/octopus/',
-  '/demo/',
+  '/contact/',
   '/accessibility/',
   '/privacy/',
 ]);

@@ -17,6 +17,44 @@ SPEC.loader.exec_module(egress)
 
 
 class LocalMacEgressTests(unittest.TestCase):
+    def test_reverse_workers_reconnect_without_backoff_after_serving(self):
+        stopped = Mock()
+        stopped.is_set.side_effect = [False, False, False, False, True]
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        workers = egress.ReverseWorkers(18081, b"a" * 64, 15, stopped, 0)
+        with patch.object(egress.socket, "socket", return_value=connection), \
+                patch.object(egress, "receive_exact", return_value=b"P"), \
+                patch.object(egress, "EgressHandler") as handle:
+            workers.run()
+        self.assertEqual(handle.call_count, 2)
+        self.assertEqual(connection.connect.call_count, 2)
+        stopped.wait.assert_not_called()
+        self.assertFalse(workers.connections)
+
+    def test_reverse_workers_back_off_after_failed_connection_or_assignment(self):
+        for failure in ("connect", "assignment"):
+            with self.subTest(failure=failure):
+                stopped = Mock()
+                stopped.is_set.side_effect = [False, False, True]
+                connection = MagicMock()
+                connection.__enter__.return_value = connection
+                if failure == "connect":
+                    connection.connect.side_effect = OSError("unavailable")
+                workers = egress.ReverseWorkers(18081, b"a" * 64, 15, stopped, 0)
+
+                def wait_after_cleanup(seconds):
+                    self.assertFalse(workers.connections)
+                    connection.__exit__.assert_called_once()
+
+                stopped.wait.side_effect = wait_after_cleanup
+                with patch.object(egress.socket, "socket", return_value=connection), \
+                        patch.object(egress, "receive_exact", return_value=b"X"), \
+                        patch.object(egress, "EgressHandler") as handle:
+                    workers.run()
+                stopped.wait.assert_called_once_with(1)
+                handle.assert_not_called()
+
     def test_reverse_token_requires_complete_hex_key(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "token"
@@ -228,6 +266,28 @@ class LocalMacEgressTests(unittest.TestCase):
             self.assertEqual(errors, [])
         finally:
             for connection in sockets:
+                connection.close()
+            thread.join(2)
+
+    def test_relay_delivers_response_while_upload_is_blocked(self):
+        client, left = socket.socketpair()
+        right, server = socket.socketpair()
+        right.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+        client.setblocking(False)
+        server.settimeout(2)
+        thread = threading.Thread(target=egress.relay, args=(left, right, 1))
+        thread.start()
+        try:
+            while True:
+                try:
+                    client.send(b'x' * 65536)
+                except BlockingIOError:
+                    break
+            server.sendall(b'early response')
+            client.settimeout(2)
+            self.assertEqual(client.recv(1024), b'early response')
+        finally:
+            for connection in (client, left, right, server):
                 connection.close()
             thread.join(2)
 

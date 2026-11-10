@@ -81,53 +81,6 @@
   flex-wrap: wrap;
 }
 
-/* Audience segmented toggle (progressive enhancement chrome) */
-.audience-split {
-  display: grid;
-  gap: 1.5rem;
-}
-.audience-toggle {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.35rem;
-  background: var(--inset);
-  border: 1px solid var(--divider);
-  border-radius: var(--panel-radius);
-  width: fit-content;
-  max-width: 100%;
-  margin: 0;
-  min-inline-size: 0;
-}
-.audience-toggle button {
-  min-height: 44px;
-  min-width: 10.5rem;
-  border-color: var(--rule);
-  background: transparent;
-}
-.audience-toggle button[aria-pressed='true'] {
-  background: var(--raised);
-  border-color: var(--action);
-  color: var(--action);
-  font-weight: 650;
-}
-.audience-split.is-toggled .audience-grid {
-  grid-template-columns: minmax(0, 1fr);
-}
-.audience-card[data-entering='true'] {
-  animation: audience-in 200ms ease;
-}
-@keyframes audience-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 /* Live readings and historical totals share one quiet, scannable panel. */
 .ops-widget {
   display: grid;
@@ -290,9 +243,6 @@
   .pipeline-packet {
     transition: none;
   }
-  .audience-card[data-entering='true'] {
-    animation: none;
-  }
 }
 @keyframes status-pulse {
   0%,
@@ -369,13 +319,6 @@
   }
 }
 @media (max-width: 767px) {
-  .audience-toggle {
-    width: 100%;
-  }
-  .audience-toggle button {
-    flex: 1 1 10rem;
-    min-width: 0;
-  }
   .pipeline-selector button {
     flex: 1 1 6rem;
     min-width: 0;
@@ -389,7 +332,6 @@
     display: none !important;
   }
   .pipeline-selector button[aria-pressed='true'],
-  .audience-toggle button[aria-pressed='true'],
   .workflow-step[data-emphasis='true'] {
     outline: 3px solid Highlight;
     outline-offset: 2px;
@@ -399,8 +341,7 @@
     color: CanvasText;
   }
   .ops-widget,
-  .ops-widget .ops-card,
-  .audience-toggle {
+  .ops-widget .ops-card {
     border-color: CanvasText;
   }
   .ops-bar-track {

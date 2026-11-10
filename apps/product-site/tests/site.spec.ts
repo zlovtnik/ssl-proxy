@@ -27,7 +27,7 @@ const routes = [
   '/atheros-search/',
   '/schema-migrator/',
   '/octopus/',
-  '/demo/',
+  '/contact/',
   '/accessibility/',
   '/privacy/',
   '/guides/',
@@ -77,7 +77,11 @@ test('Octopus never publishes saved metrics without JavaScript', async ({
     await expect(evidence.locator('time')).toHaveCount(0);
     await expect(page.locator('#demo, .product-demo')).toHaveCount(0);
     await expect(page.locator('[data-ux="pipeline"]')).toHaveCount(1);
-    await expect(page.locator('[data-ux="audience-toggle"]')).toHaveCount(1);
+    await expect(page.locator('[data-ux="audience-toggle"]')).toHaveCount(0);
+    await expect(page.locator('#value-title')).toBeVisible();
+    await expect(page.locator('[aria-labelledby="value-title"]')).toContainText(
+      'partition',
+    );
     await expect(page.locator('.caveat')).toHaveText(octopusCaveat);
     expect(
       await page
@@ -433,14 +437,14 @@ test('Migrator steps are user controlled and accessible in the dark theme', asyn
   ).toBeVisible();
 });
 
-test('email requests have the recipient, product subjects, and honest scheduling copy', async ({
+test('project questions have the recipient and project context, and email can be copied', async ({
   page,
   context,
   browserName,
 }) => {
   if (browserName === 'chromium')
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await page.goto('/demo/');
+  await page.goto('/contact/');
   // Verify the success handler on engines without automatable clipboard permission.
   if (browserName !== 'chromium')
     await page.evaluate(() =>
@@ -457,10 +461,10 @@ test('email requests have the recipient, product subjects, and honest scheduling
     const url = new URL(href!);
     expect(url.pathname).toBe('rafael@rclabs.uk');
     expect(url.searchParams.get('subject')).toBe(
-      `Use-case discussion: ${subject}`,
+      `Engineering discussion: ${subject}`,
     );
-    expect(url.searchParams.get('body')).toContain(
-      'Preferred times and time zone:',
+    expect(url.searchParams.get('body')).toBe(
+      `Hello Rafael,\n\nI'd like to discuss the engineering behind ${subject}.\n\nRole or project context:\n\nQuestions:\n\nThank you.`,
     );
   }
   await page.getByRole('button', { name: 'Copy email address' }).click();
@@ -478,11 +482,11 @@ test('email requests have the recipient, product subjects, and honest scheduling
     page.getByText('Hosted product access is not provisioned here.', {
       exact: false,
     }),
-  ).toBeVisible();
+  ).toHaveCount(0);
 });
 
 test('clipboard failure gives a usable fallback', async ({ page }) => {
-  await page.goto('/demo/');
+  await page.goto('/contact/');
   await page.evaluate(() =>
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: () => Promise.reject(new Error('Unavailable')) },
@@ -494,37 +498,33 @@ test('clipboard failure gives a usable fallback', async ({ page }) => {
   );
 });
 
-test('every public route offers general Contact without the retired hiring label or subject', async ({
+test('every public route has consistent navigation and public contact details', async ({
   page,
 }) => {
   for (const route of routes) {
     await page.goto(route);
-    await expect(
-      page.getByRole('link', {
-        name: 'Contact for full-time roles',
-        exact: true,
-      }),
-      route,
-    ).toHaveCount(0);
     const navigation = page.getByRole('navigation', {
       name: 'Main navigation',
       exact: true,
     });
+    await expect(navigation.getByRole('link')).toHaveText([
+      'Work',
+      'Guides',
+      'About',
+      'Resume',
+      'Contact',
+    ]);
     await expect(
       navigation.getByRole('link', { name: 'Contact', exact: true }),
       route,
-    ).toHaveAttribute(
-      'href',
-      route === '/' ? '/#contact' : '/demo/#employment',
-    );
+    ).toHaveAttribute('href', '/contact/');
+    await expect(page.locator('a[href^="tel:"]'), route).toHaveCount(0);
     for (const href of await page
       .locator('a[href^="mailto:"]')
       .evaluateAll((links) =>
         links.map((link) => link.getAttribute('href')!),
       )) {
-      expect(new URL(href).searchParams.get('subject'), route).not.toBe(
-        'Full-time engineering role',
-      );
+      expect(new URL(href).pathname, route).toBe(email);
     }
     for (const link of await page
       .getByRole('link', { name: 'Contact', exact: true })
@@ -1096,6 +1096,41 @@ test('every route supports forced colours and reduced motion', async ({
   }
 });
 
+test('hosted console notices retain their copy and links without JavaScript', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  try {
+    const page = await context.newPage();
+    for (const [path, host] of [
+      ['/atheros-search/', 'search.rclabs.uk'],
+      ['/schema-migrator/', 'migrator.rclabs.uk'],
+    ]) {
+      await page.goto(`http://127.0.0.1:4323${path}`);
+      const notice = page.locator('.hero-copy p').filter({
+        hasText: 'The hosted console is temporarily unavailable:',
+      });
+      await expect(notice).toHaveText(
+        `The hosted console is temporarily unavailable: ${host}. The synthetic sample below remains available.`,
+      );
+      await expect(notice.getByRole('link', { name: host })).toHaveAttribute(
+        'href',
+        `https://${host}/`,
+      );
+    }
+    for (const path of ['/vpn-proxy/', '/octopus/']) {
+      await page.goto(`http://127.0.0.1:4323${path}`);
+      await expect(
+        page.getByText('The hosted console is temporarily unavailable:', {
+          exact: false,
+        }),
+      ).toHaveCount(0);
+    }
+  } finally {
+    await context.close();
+  }
+});
+
 test('sample caveats ship from the content model beside the content they qualify', async ({
   page,
 }) => {
@@ -1237,19 +1272,19 @@ test('hero calls to action keep their documented destinations', async ({
     search.getByRole('link', { name: 'Explore a sample site review' }),
   ).toHaveAttribute('href', '#demo');
   await expect(
-    search.getByRole('link', { name: 'Discuss your use case' }),
-  ).toHaveAttribute('href', '/demo/#search');
+    search.getByRole('link', { name: 'Source and regression tests' }),
+  ).toHaveAttribute('href', '/about/#case-search');
   await page.goto('/schema-migrator/');
   const migrator = page.locator('.product-hero');
   await expect(
     migrator.getByRole('link', { name: 'Explore a sample migration review' }),
   ).toHaveAttribute('href', '#demo');
   await expect(
-    migrator.getByRole('link', { name: 'Discuss your use case' }),
-  ).toHaveAttribute('href', '/demo/#migrator');
+    migrator.getByRole('link', { name: 'Source and regression tests' }),
+  ).toHaveAttribute('href', '/about/#case-migrator');
 });
 
-test('every route that offers a commercial action uses the shared contact pattern', async ({
+test('project pages and homepage offer a direct path to contact the author', async ({
   page,
 }) => {
   for (const product of [null, ...products]) {
@@ -1268,8 +1303,8 @@ test('every route that offers a commercial action uses the shared contact patter
         }),
       ).toHaveAttribute('href', /^mailto:rafael@rclabs\.uk\?subject=General/);
       await expect(
-        banner.getByRole('link', { name: 'Project questions', exact: true }),
-      ).toHaveAttribute('href', '/demo/#options-title');
+        banner.getByRole('link', { name: 'Contact Rafael', exact: true }),
+      ).toHaveAttribute('href', '/contact/');
       await expect(
         banner.getByRole('link', { name: email, exact: true }),
       ).toHaveAttribute('href', `mailto:${email}`);
@@ -1287,10 +1322,10 @@ test('every route that offers a commercial action uses the shared contact patter
     const request = new URL(href!, 'https://example.invalid');
     expect(request.pathname, route).toBe(email);
     expect(request.searchParams.get('subject'), route).toBe(
-      `Use-case discussion: ${product ? product.name : allProducts}`,
+      `Engineering discussion: ${product ? product.name : allProducts}`,
     );
     expect(request.searchParams.get('body'), route).toContain(
-      'Preferred times and time zone:',
+      'Role or project context:',
     );
     await expect(banner.getByRole('link', { name: email })).toHaveAttribute(
       'href',
@@ -1319,7 +1354,9 @@ test('the four product routes share the same section structure from the model', 
         `${product.name} ${section}`,
       ).toHaveCount(1);
     await expect(page.locator('.workflow-step')).toHaveCount(3);
-    await expect(page.locator('.audience-card')).toHaveCount(2);
+    await expect(
+      page.locator('[aria-labelledby="value-title"] article'),
+    ).toHaveCount(2);
     await expect(page.locator('.evidence-panel')).toHaveCount(1);
     await expect(page.locator('.contact-banner')).toHaveCount(1);
   }
@@ -1542,7 +1579,7 @@ test('GA4 waits for consent, tracks safe events, and stops on withdrawal', async
   expect(aboutPageView).toContain('http://127.0.0.1:4323/about/');
   await page.goto('http://127.0.0.1:4323/');
 
-  await page.goto('http://127.0.0.1:4323/demo/');
+  await page.goto('http://127.0.0.1:4323/contact/');
   await page.locator('a[href^="mailto:"]').first().click();
   const mailtoEvent = await inspectDataLayer();
   expect(mailtoEvent).toContain('mailto_click');

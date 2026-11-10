@@ -165,20 +165,48 @@ def read_connect(connection):
 
 def relay(left, right, idle_timeout=300):
     """Preserve TCP half-close so a peer can finish responding after request EOF."""
+    peers = {left: right, right: left}
+    buffers = {left: bytearray(), right: bytearray()}
+    reading = {left: True, right: True}
+    for connection in peers:
+        connection.setblocking(False)
     with selectors.DefaultSelector() as pending:
-        pending.register(left, selectors.EVENT_READ, right)
-        pending.register(right, selectors.EVENT_READ, left)
-        while pending.get_map():
+        while True:
+            for connection, peer in peers.items():
+                events = (selectors.EVENT_READ if reading[connection] and len(buffers[peer]) < 65536 else 0)
+                if buffers[connection]:
+                    events |= selectors.EVENT_WRITE
+                try:
+                    pending.get_key(connection)
+                except KeyError:
+                    if events:
+                        pending.register(connection, events)
+                else:
+                    if events:
+                        pending.modify(connection, events)
+                    else:
+                        pending.unregister(connection)
+            if not pending.get_map():
+                return
             ready = pending.select(idle_timeout)
             if not ready:
                 return
-            for entry, _ in ready:
-                data = entry.fileobj.recv(65536)
-                if data:
-                    entry.data.sendall(data)
-                else:
-                    pending.unregister(entry.fileobj)
-                    entry.data.shutdown(socket.SHUT_WR)
+            for entry, events in ready:
+                connection = entry.fileobj
+                peer = peers[connection]
+                if events & selectors.EVENT_WRITE:
+                    sent = connection.send(buffers[connection])
+                    del buffers[connection][:sent]
+                    if not buffers[connection] and not reading[peer]:
+                        connection.shutdown(socket.SHUT_WR)
+                if events & selectors.EVENT_READ:
+                    data = connection.recv(65536 - len(buffers[peer]))
+                    if data:
+                        buffers[peer].extend(data)
+                    else:
+                        reading[connection] = False
+                        if not buffers[peer]:
+                            peer.shutdown(socket.SHUT_WR)
 
 
 class EgressServer(socketserver.ThreadingTCPServer):
@@ -253,6 +281,7 @@ class ReverseWorkers:
 
     def run(self):
         while not self.stopped.is_set():
+            retry = False
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
                 with self.lock:
                     if self.stopped.is_set():
@@ -275,11 +304,12 @@ class ReverseWorkers:
                     EgressHandler(connection, self.address, SimpleNamespace(
                         interface_index=self.interface_index, dns=mode == b"D"))
                 except (OSError, ValueError):
-                    pass
+                    retry = True
                 finally:
                     with self.lock:
                         self.connections.discard(connection)
-            self.stopped.wait(1)
+            if retry:
+                self.stopped.wait(1)
 
     def stop(self):
         self.stopped.set()

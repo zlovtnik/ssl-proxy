@@ -1,12 +1,17 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { contactOptions, demoLink, email, hiring } from '../../data/products';
+import {
+  contactOptions,
+  discussionLink,
+  email,
+  hiring,
+} from '../../data/products';
 import HiringContact from '../../components/HiringContact.astro';
 ---
 
 <Layout
-  title="Contact Rafael - General inquiries and project discussions"
-  description="Contact Rafael with a general inquiry, or discuss Atheros Search, Schema Migrator, VPN / Proxy, or Octopus."
+  title="Contact Rafael - Backend engineering roles"
+  description="Contact Rafael Cardoso about senior backend, integration, and data-pipeline roles."
 >
   <section class="hero">
     <div class="hero-copy">
@@ -33,8 +38,8 @@ import HiringContact from '../../components/HiringContact.astro';
         <article id={option.id}>
           <h3>{option.label}</h3>
           <p>{option.text}</p>
-          <a class="button primary" href={demoLink(option.subject)}>
-            Discuss {option.label}
+          <a class="button primary" href={discussionLink(option.subject)}>
+            Ask about {option.label}
           </a>
         </article>
       ))}

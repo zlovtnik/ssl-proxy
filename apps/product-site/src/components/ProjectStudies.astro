@@ -1,6 +1,7 @@
 ---
 import { ArrowUpRight } from '@lucide/astro';
 import { portfolio } from '../data/products';
+import ProjectDecisions from './ProjectDecisions.astro';
 ---
 
 <section id="selected-work" class="section" aria-labelledby="work-title">
@@ -39,6 +40,7 @@ import { portfolio } from '../data/products';
               </div>
             ))}
           </dl>
+          <ProjectDecisions id={project.id} nested />
           <div class="about-case-links">
             {project.links.map((link) => (
               <a class="text-link" href={link.href}>

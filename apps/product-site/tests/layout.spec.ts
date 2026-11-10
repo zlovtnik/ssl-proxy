@@ -141,13 +141,15 @@ for (const route of [
   }
 }
 
-test('Octopus pipeline and audience toggle stay contained at every width', async ({
+test('Octopus pipeline and debugging notes stay contained at every width', async ({
   page,
 }) => {
   test.setTimeout(90_000);
   await page.goto('/octopus/');
   await expect(page.locator('.workflow-step')).toHaveCount(3);
-  await expect(page.locator('.audience-card')).toHaveCount(2);
+  await expect(
+    page.locator('[aria-labelledby="value-title"] article'),
+  ).toHaveCount(2);
   for (const width of [1440, 1024, 768, 375, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await expectContainedLayout(page);
@@ -160,25 +162,10 @@ test('Octopus pipeline and audience toggle stay contained at every width', async
       await expectContainedLayout(page);
       await expect(page.locator('.workflow-step')).toHaveCount(3);
     }
-    const toggleButtons = page.locator(
-      '[data-ux="audience-toggle"] .audience-toggle button',
-    );
-    await expect(toggleButtons).toHaveCount(2);
-    for (const button of await toggleButtons.all()) {
-      await button.click();
-      await expectContainedLayout(page);
-      await expect(page.locator('.audience-card')).toHaveCount(2);
-      const hidden = await page
-        .locator('.audience-card[hidden]')
-        .evaluateAll((cards) =>
-          cards.every(
-            (card) =>
-              card.getBoundingClientRect().height === 0 &&
-              card.hasAttribute('inert'),
-          ),
-        );
-      expect(hidden).toBe(true);
-    }
+    for (const note of await page
+      .locator('[aria-labelledby="value-title"] article')
+      .all())
+      await expect(note).toBeVisible();
   }
   await page.addStyleTag({
     content:
@@ -187,12 +174,6 @@ test('Octopus pipeline and audience toggle stay contained at every width', async
   await expectContainedLayout(page);
   for (const button of await page
     .locator('[data-ux="pipeline"] .pipeline-selector button')
-    .all()) {
-    await button.click();
-    await expectContainedLayout(page);
-  }
-  for (const button of await page
-    .locator('[data-ux="audience-toggle"] .audience-toggle button')
     .all()) {
     await button.click();
     await expectContainedLayout(page);

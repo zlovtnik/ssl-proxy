@@ -10,7 +10,7 @@ export const GET: APIRoute = ({ site }) => {
     '/atheros-search/',
     '/schema-migrator/',
     '/octopus/',
-    '/demo/',
+    '/contact/',
     '/accessibility/',
     '/privacy/',
     '/guides/',
