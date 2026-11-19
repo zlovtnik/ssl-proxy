@@ -16,6 +16,7 @@ services/dq/README.md
 services/dq/contracts/README.md
 services/dq/ui/README.md
 services/octopus/README.md
+services/octopus-rust/README.md
 services/octopus-metrics/README.md
 services/platform-sync/README.md
 services/stats-reader/README.md

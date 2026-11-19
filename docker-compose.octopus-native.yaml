@@ -1,0 +1,11 @@
+# Native candidate override for docker-compose.yaml.
+services:
+  octopus:
+    image: ssl-proxy-local-octopus-native:dev
+    build:
+      dockerfile: services/octopus-rs/templates/Dockerfile
+    command:
+      - |
+        export POSTGRES_SCHEMA_MANIFEST_SHA256="$$(awk '/^manifest_sha256:/ {print $$2}' /schema/manifest.yaml)"
+        test "$${#POSTGRES_SCHEMA_MANIFEST_SHA256}" -eq 64
+        exec /app/octopus

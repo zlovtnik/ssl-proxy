@@ -22,6 +22,7 @@ pipeline {
 
   parameters {
     booleanParam(name: 'FULL_BUILD', defaultValue: true, description: 'Validate and publish every image candidate. Uncheck only for changes since the last successful build. Production digest pins remain a reviewed Git change.')
+    booleanParam(name: 'RUN_OCTOPUS_NATIVE', defaultValue: false, description: 'Exercise the pinned Rust candidate alongside the Scala coordinator')
   }
 
   stages {
@@ -160,6 +161,23 @@ pipeline {
           steps {
             sh 'bash scripts/ci/octopus.sh'
             archiveArtifacts artifacts: 'artifacts/octopus-coverage/**', allowEmptyArchive: true, fingerprint: true
+          }
+        }
+        stage('Octopus native') {
+          when { expression { params.RUN_OCTOPUS_NATIVE } }
+          options { timeout(time: 90, unit: 'MINUTES') }
+          steps {
+            sh 'python3 scripts/octopus_image_contract.py source --native'
+            sh 'bash services/octopus-rs/scripts/ci/native.sh'
+            sh 'DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make octopus-native-image-check'
+          }
+          post {
+            success {
+              archiveArtifacts artifacts: 'services/octopus-rs/artifacts/octopus,services/octopus-rs/artifacts/octopus-coverage/**', fingerprint: true
+            }
+            unsuccessful {
+              archiveArtifacts artifacts: 'services/octopus-rs/artifacts/octopus-coverage/**,services/octopus-rs/artifacts/octopus', allowEmptyArchive: true, fingerprint: true
+            }
           }
         }
         stage('Sensor') {

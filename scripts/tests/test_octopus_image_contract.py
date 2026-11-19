@@ -4,6 +4,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+import json
 import zipfile
 from pathlib import Path
 
@@ -13,9 +15,11 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "scripts"))
 
 from octopus_image_contract import (  # noqa: E402
     ContractError,
+    NATIVE_PATH,
     OCTOPUS_REVISION_LABEL,
     PARENT_REVISION_LABEL,
     check_jar,
+    check_image,
     check_labels,
     source_revisions,
 )
@@ -74,6 +78,42 @@ class OctopusImageContractTest(unittest.TestCase):
 
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), parent)
         self.assertEqual(self.octopus_commit, octopus)
+
+    def test_native_source_requires_the_rust_gitlink(self) -> None:
+        with self.assertRaisesRegex(ContractError, "services/octopus-rs is not a pinned submodule"):
+            source_revisions(self.root, NATIVE_PATH)
+
+    def test_native_image_checks_pinned_labels_binary_and_entrypoint(self) -> None:
+        labels = {PARENT_REVISION_LABEL: "parent", OCTOPUS_REVISION_LABEL: "rust"}
+        config = {"Config": {"Entrypoint": ["/app/octopus"], "Labels": labels},
+                  "Architecture": "amd64", "Os": "linux", "Id": "image-id"}
+        header = bytearray(20)
+        header[:7] = b"\x7fELF\x02\x01\x01"
+        header[18:20] = b"\x3e\x00"
+
+        def docker(*args, **kwargs):
+            if args[:2] == ("image", "inspect"):
+                return json.dumps([config])
+            if args[0] == "cp":
+                Path(args[2]).write_bytes(header)
+            if args[0] == "run":
+                self.assertEqual(args[-1], "image-id")
+                return "PostgreSQL sink disabled (set POSTGRES_ENABLED=true to enable)"
+            return "container"
+
+        bad_checksum = "Octopus: Invalid Octopus configuration: postgres.manifest-sha-256 must be 64 lowercase hexadecimal characters"
+        with patch("octopus_image_contract.source_revisions", return_value=("parent", "rust")) as revisions, \
+             patch("octopus_image_contract._docker", side_effect=docker) as daemon, \
+             patch("octopus_image_contract.subprocess.run", return_value=subprocess.CompletedProcess([], 1, "", bad_checksum)):
+            self.assertEqual(check_image("tag", self.root, native=True), ("parent", "rust"))
+            revisions.assert_called_once_with(self.root, NATIVE_PATH)
+            header[18] = 0
+            with self.assertRaisesRegex(ContractError, "x86-64 ELF"):
+                check_image("tag", self.root, native=True)
+            daemon.assert_called_with("rm", "-f", "container", capture=False)
+            config["Config"]["Entrypoint"] = ["java"]
+            with self.assertRaisesRegex(ContractError, "entrypoint"):
+                check_image("tag", self.root, native=True)
 
     def test_source_integrity_rejects_dirty_parent_and_octopus(self) -> None:
         (self.root / "untracked.txt").write_text("dirty", encoding="utf-8")

@@ -33,7 +33,10 @@ services:
   java-coordinator:
     build:
       context: .
-      dockerfile: services/octopus/Dockerfile
+      dockerfile: ${OCTOPUS_BUILD_DOCKERFILE:-services/octopus/Dockerfile}
+      args:
+        PARENT_COMMIT: ${LOCAL_PARENT_COMMIT:-local}
+        OCTOPUS_COMMIT: ${LOCAL_OCTOPUS_COMMIT:-local}
 
   atheros-sensor:
     build:

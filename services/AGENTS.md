@@ -9,6 +9,8 @@ repository root instructions.
 - `atheros-sensor/` is a Rust host-side Wi-Fi sensor and sync-plane producer.
 - `octopus/` is the Scala 3 Cats Effect/FS2 coordinator and the sole owner of
   durable ingestion, leases, outbox, and maintained projections in PostgreSQL.
+- `octopus-rust/` holds the native migration library and delivery tooling;
+  active runtime ownership remains with `octopus/` until parity gates pass.
 - `dq/` dispatches versioned processor runs through Octopus and hosts
   isolated Go workers and their SolidJS UI. Its processes have no database access.
 - `octopus-metrics/` materializes snapshots through a read-only PostgreSQL role;

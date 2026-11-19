@@ -221,6 +221,15 @@ ci-publish-services:
 octopus-source-integrity:
 	python3 scripts/octopus_image_contract.py source
 
+.PHONY: octopus-native-image-check
+octopus-native-image-check:
+	python3 scripts/octopus_image_contract.py source --native
+	docker build --platform linux/amd64 -f services/octopus-rs/templates/Dockerfile \
+		--build-arg PARENT_COMMIT=$(PARENT_COMMIT) \
+		--build-arg OCTOPUS_COMMIT=$(shell git rev-parse HEAD:services/octopus-rs) \
+		-t octopus-native-check:$(PARENT_COMMIT) .
+	python3 scripts/octopus_image_contract.py image --native octopus-native-check:$(PARENT_COMMIT)
+
 check-java-coordinator-image:
 	@test -n "$(IMAGE)" || { echo "IMAGE is required" >&2; exit 2; }
 	python3 scripts/octopus_image_contract.py image "$(IMAGE)"

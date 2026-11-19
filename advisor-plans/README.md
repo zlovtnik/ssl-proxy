@@ -13,6 +13,7 @@ the in-progress Atheros reporting plans in [`plans/`](../plans/README.md).
 | P1 | [006: MASQUE CONNECT-UDP over HTTP/3](006-masque-connect-udp.md) | 005 containment contract; pinned API/dependency gate; UDP 443 ownership | TODO | Manual datagram adapter, independent interop, MTU and real WG validation |
 | P1 | [007: Genuine HTTPS fallback](007-https-transport-fallback.md) | 005 containment contract; shared packet boundary; tested HTTPS front | TODO | Normal website behavior, authenticated reliable carriage and loss/UDP-block tests |
 | P1 | [008: Authenticated transport selection](008-authenticated-transport-selection.md) | 005 plus proven manual 006/007 adapters for integrated release | TODO | Fresh candidate-bound health, bounded recovery, hysteresis and contained outage |
+| G1-G3 in progress | [010: Octopus Rust migration inventory and progress](010-octopus-rust-file-inventory.md) | Full runtime/coverage parity before artifact cutover | IN PROGRESS | G3 candidate delivery paths wired. Runtime build, Linux CI, image and DQ acceptance remain open. |
 
 ## Selected privacy execution notes
 
