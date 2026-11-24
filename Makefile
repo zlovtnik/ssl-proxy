@@ -28,6 +28,16 @@ MINIO_RELEASE ?= RELEASE.2025-09-07T16-13-09Z
 TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LOCAL_IMAGE_PREFIX ?= ssl-proxy-local
+LOCAL_COMPOSE_WAIT_TIMEOUT ?= 300
+LOCAL_MAC_EGRESS_INTERFACE ?= en0
+LOCAL_LOG_LEVEL ?= info
+LOCAL_COMPOSE := docker compose -f docker-compose.yaml
+LOCAL_EGRESS_COMPOSE := $(LOCAL_COMPOSE) -f docker-compose.mac-egress.yaml
+LOCAL_OCTOPUS_CHECK := exec -T octopus sh -ec '\
+	if [ "$$(readlink /proc/1/exe)" != /app/octopus ]; then \
+		echo "Expected Rust Octopus at /app/octopus" >&2; exit 1; \
+	fi; \
+	echo "Octopus is running /app/octopus"'
 KUSTOMIZE ?= kubectl
 KUSTOMIZE_EDITOR ?= kustomize
 PUBLISH_REPOSITORY ?=
@@ -62,6 +72,35 @@ KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",
 .PHONY: build build-all publish publish-all prep-ath kube-context-check recover-stack production-gate stack-health pvc-audit argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry registry-clean-plan registry-clean registry-recreate registry-gc mirror-minio octopus-source-integrity check-java-coordinator-image jenkins-plugin-lock jenkins-plugin-audit docs-check theme-check theme-sync gitops-check topics-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
+
+.PHONY: local-up local-check local-egress-up local-egress local-egress-check
+local-up:
+	$(LOCAL_COMPOSE) up -d --build --wait --wait-timeout "$(LOCAL_COMPOSE_WAIT_TIMEOUT)"
+	@$(LOCAL_COMPOSE) $(LOCAL_OCTOPUS_CHECK)
+
+local-check:
+	python3 scripts/local_octopus_cutover.py
+
+local-egress-up:
+	$(LOCAL_EGRESS_COMPOSE) up -d --build --wait --wait-timeout "$(LOCAL_COMPOSE_WAIT_TIMEOUT)"
+	@$(LOCAL_EGRESS_COMPOSE) $(LOCAL_OCTOPUS_CHECK)
+
+local-egress:
+	@bridge="$$( $(LOCAL_EGRESS_COMPOSE) ps -q --status running mac-egress-bridge )"; \
+	if [ -z "$$bridge" ]; then \
+		echo 'The Mac egress bridge is stopped. Run make local-egress-up first.' >&2; \
+		exit 1; \
+	fi; \
+	endpoint="$$( $(LOCAL_EGRESS_COMPOSE) port ssl-proxy 18081 )"; \
+	umask 077; \
+	token_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/ssl-proxy-egress.XXXXXX")"; \
+	trap 'rm -f "$$token_dir/token"; rmdir "$$token_dir"' EXIT; \
+	$(LOCAL_EGRESS_COMPOSE) exec -T ssl-proxy cat /run/local-secrets/admin_api_key > "$$token_dir/token"; \
+	python3 scripts/local-mac-egress.py --interface "$(LOCAL_MAC_EGRESS_INTERFACE)" \
+		--reverse-port "$${endpoint##*:}" --token-file "$$token_dir/token" --log-level "$(LOCAL_LOG_LEVEL)"
+
+local-egress-check:
+	python3 scripts/local_octopus_cutover.py --vpn
 
 .PHONY: pages-watch-paths pages-fix-watch-paths
 pages-watch-paths:

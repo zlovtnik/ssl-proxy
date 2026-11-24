@@ -99,7 +99,7 @@ impl CaptureStats {
     pub(crate) fn observe_publish_lag_ms(&self, lag_ms: u64) {
         let _ = self
             .lag_total_ms
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 Some(current.saturating_add(lag_ms))
             });
         self.lag_count.fetch_add(1, Ordering::Relaxed);

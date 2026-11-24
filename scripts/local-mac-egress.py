@@ -7,6 +7,7 @@ carries CoreDNS's end-to-end DNS-over-TLS connection without terminating TLS.
 
 import argparse
 import ipaddress
+import logging
 import os
 from pathlib import Path
 import selectors
@@ -26,6 +27,7 @@ IP_BOUND_IF = getattr(socket, "IP_BOUND_IF", 25)  # Darwin netinet/in.h
 HEADER_LIMIT = 8192
 CONNECT_TIMEOUT = 10
 DNS_UPSTREAM = ("1.1.1.1", 853)
+LOGGER = logging.getLogger("mac-egress")
 
 
 def connect_bound(address, interface_index):
@@ -126,10 +128,16 @@ def resolve_ipv4(hostname, interface_index):
 def connect_target(target, interface_index):
     hostname, port = target
     last_error = OSError("no upstream address")
-    for address in resolve_ipv4(hostname, interface_index):
+    try:
+        addresses = resolve_ipv4(hostname, interface_index)
+    except OSError as error:
+        raise OSError(f"DNS lookup via {DNS_UPSTREAM[0]}:{DNS_UPSTREAM[1]} failed: {error}") from error
+    LOGGER.debug("resolved host=%s addresses=%d interface_index=%d", hostname, len(addresses), interface_index)
+    for address in addresses:
         try:
             return connect_bound((address, port), interface_index)
         except OSError as error:
+            LOGGER.debug("upstream TCP dial failed host=%s address=%s port=%d error=%s", hostname, address, port, error)
             last_error = error
     raise last_error
 
@@ -229,6 +237,9 @@ class EgressHandler(socketserver.BaseRequestHandler):
     def handle(self):
         self.request.settimeout(CONNECT_TIMEOUT)
         established = False
+        mode = "dns-tls" if self.server.dns else "connect"
+        target = DNS_UPSTREAM if self.server.dns else None
+        started = time.monotonic()
         try:
             if self.server.dns:
                 upstream = connect_bound(DNS_UPSTREAM, self.server.interface_index)
@@ -239,13 +250,18 @@ class EgressHandler(socketserver.BaseRequestHandler):
                 if not self.server.dns:
                     self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 established = True
+                LOGGER.debug("upstream connected mode=%s target=%s interface_index=%d elapsed=%.3fs",
+                             mode, target, self.server.interface_index, time.monotonic() - started)
                 relay(self.request, upstream)
-        except ssl.SSLCertVerificationError:
-            if not established and not self.server.dns:
-                self.respond(502)
+                LOGGER.debug("relay closed mode=%s target=%s elapsed=%.3fs",
+                             mode, target, time.monotonic() - started)
         except (ValueError, UnicodeError):
+            LOGGER.debug("invalid CONNECT request")
             self.respond(400)
-        except OSError:
+        except OSError as error:
+            LOGGER.debug("egress failed mode=%s target=%s interface_index=%d stage=%s elapsed=%.3fs error=%s",
+                         mode, target, self.server.interface_index, "relay" if established else "connect",
+                         time.monotonic() - started, error)
             if not established and not self.server.dns:
                 self.respond(502)
 
@@ -266,23 +282,26 @@ def read_reverse_token(path):
 class ReverseWorkers:
     """Carry Docker requests over authenticated, Mac-initiated connections."""
 
-    def __init__(self, port, token, interface_index, stopped, workers):
+    def __init__(self, port, token, interface_index, stopped, workers, dns_workers=0):
         self.address = ("127.0.0.1", port)
         self.token = token
         self.interface_index = interface_index
         self.stopped = stopped
         self.connections = set()
         self.lock = threading.Lock()
-        self.threads = [threading.Thread(target=self.run, daemon=True) for _ in range(workers)]
+        self.threads = [threading.Thread(target=self.run, args=(mode,), daemon=True)
+                        for mode in [b"P"] * workers + [b"D"] * dns_workers]
 
     def start(self):
         for thread in self.threads:
             thread.start()
 
-    def run(self):
+    def run(self, mode=b"P"):
+        protocol = "dns-tls" if mode == b"D" else "connect"
         while not self.stopped.is_set():
             retry = False
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
+                stage = "connect-bridge"
                 with self.lock:
                     if self.stopped.is_set():
                         return
@@ -290,20 +309,23 @@ class ReverseWorkers:
                 try:
                     connection.settimeout(CONNECT_TIMEOUT)
                     connection.connect(self.address)
-                    connection.sendall(self.token + b"\n")
+                    connection.sendall(mode + self.token + b"\n")
                     # Keep unused workers parked instead of filling the
                     # bridge queue with expired connections. EOF or stop()
                     # wakes this read when the bridge exits or we shut down.
                     connection.settimeout(None)
-                    mode = receive_exact(connection, 1)
-                    if mode not in (b"P", b"D"):
+                    stage = "wait-assignment"
+                    if receive_exact(connection, 1) != mode:
                         raise ValueError("invalid reverse relay assignment")
                     # ACK only the assignment byte. The existing handler reads
                     # the original CONNECT header or raw DNS TLS stream next.
                     connection.sendall(b"A")
                     EgressHandler(connection, self.address, SimpleNamespace(
                         interface_index=self.interface_index, dns=mode == b"D"))
-                except (OSError, ValueError):
+                except (OSError, ValueError) as error:
+                    if not self.stopped.is_set():
+                        LOGGER.debug("reverse worker retry bridge=%s protocol=%s stage=%s error=%s",
+                                     self.address, protocol, stage, error)
                     retry = True
                 finally:
                     with self.lock:
@@ -336,13 +358,17 @@ def main():
     parser.add_argument("--dns-port", type=int, default=1853, help="raw DNS-over-TLS relay port (default: 1853)")
     parser.add_argument("--reverse-port", type=int, help="connect workers to Docker's published loopback bridge port (usually 18081)")
     parser.add_argument("--token-file", type=Path, help="local admin_api_key export for reverse bridge authentication")
-    parser.add_argument("--workers", type=int, default=32, help="reverse worker count, 1-128 (default: 32)")
+    parser.add_argument("--workers", type=int, default=96, help="reverse HTTPS workers (default: 96)")
+    parser.add_argument("--dns-workers", type=int, default=24, help="reserved DNS-over-TLS workers (default: 24)")
+    parser.add_argument("--log-level", type=str.lower, choices=("debug", "info", "warn", "warning", "error"),
+                        default="info")
     args = parser.parse_args()
+    logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
     if sys.platform != "darwin":
         parser.error("run this helper on the macOS Docker host")
     try:
-        if not 1 <= args.workers <= 128:
-            raise ValueError("workers must be between 1 and 128")
+        if min(args.workers, args.dns_workers) < 1 or args.workers + args.dns_workers > 128:
+            raise ValueError("both worker counts must be positive, with at most 128 workers total")
         if args.reverse_port is not None and not 1 <= args.reverse_port <= 65535:
             raise ValueError("reverse port must be between 1 and 65535")
         if args.reverse_port is not None and args.token_file is None:
@@ -353,9 +379,10 @@ def main():
             signal.signal(event, lambda *_: stopped.set())
         if args.reverse_port is not None:
             workers = ReverseWorkers(args.reverse_port, read_reverse_token(args.token_file),
-                                     interface_index, stopped, args.workers)
+                                     interface_index, stopped, args.workers, args.dns_workers)
             workers.start()
-            print(f"macOS reverse egress: {args.workers} workers connecting to 127.0.0.1:{args.reverse_port}, interface {args.interface}", flush=True)
+            print(f"macOS reverse egress: {args.workers} CONNECT and {args.dns_workers} DNS workers "
+                  f"connecting to 127.0.0.1:{args.reverse_port}, interface {args.interface}", flush=True)
             try:
                 stopped.wait()
             finally:

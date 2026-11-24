@@ -55,13 +55,14 @@ class LocalReverseBridgeTests(unittest.TestCase):
         self.addCleanup(connection.close)
         return connection
 
-    def worker(self):
+    def worker(self, mode=b"P"):
         worker = self.connect("worker")
-        worker.sendall(TOKEN + b"\n")
+        worker.sendall(mode + TOKEN + b"\n")
         return worker
 
     def test_wrong_and_unbounded_authentication_is_rejected(self):
-        for token in (b"b" * 64 + b"\n", TOKEN + b"extra\n", b"a" * 128):
+        for token in (b"P" + b"b" * 64 + b"\n", b"D" + TOKEN + b"extra\n",
+                      b"X" + TOKEN + b"\n", TOKEN + b"\n", b"a" * 128):
             worker = self.connect("worker")
             worker.sendall(token)
             self.assertEqual(worker.recv(1), b"")
@@ -69,7 +70,7 @@ class LocalReverseBridgeTests(unittest.TestCase):
     def test_both_listener_types_preserve_bytes_and_half_close(self):
         for service, expected in (("proxy", b"P"), ("dns", b"D")):
             with self.subTest(service=service):
-                worker = self.worker()
+                worker = self.worker(expected)
                 client = self.connect(service)
                 client.sendall(b"request\0payload")
                 client.shutdown(socket.SHUT_WR)
@@ -100,16 +101,45 @@ class LocalReverseBridgeTests(unittest.TestCase):
         self.assertEqual(client.recv(5), b"reply")
 
     def test_silent_worker_retried_after_ack_deadline(self):
-        stale = self.worker()
+        stale = self.worker(b"D")
         client = self.connect("dns")
         self.assertEqual(stale.recv(1), b"D")
-        healthy = self.worker()
+        healthy = self.worker(b"D")
         start = time.monotonic()
         self.assertEqual(healthy.recv(1), b"D")
         self.assertLess(time.monotonic() - start, 4)
         healthy.sendall(b"A")
         client.sendall(b"dns")
         self.assertEqual(healthy.recv(3), b"dns")
+
+    def test_dns_worker_stays_available_when_connect_worker_is_busy(self):
+        busy = self.worker()
+        self.connect("proxy")
+        self.assertEqual(busy.recv(1), b"P")
+        busy.sendall(b"A")
+        self.connect("proxy")
+        worker = self.worker(b"D")
+        self.assertFalse(select.select([worker], [], [], 0.25)[0])
+
+        dns = self.connect("dns")
+        worker.settimeout(2)
+        self.assertEqual(worker.recv(1), b"D")
+        worker.sendall(b"A")
+        dns.sendall(b"query")
+        self.assertEqual(worker.recv(5), b"query")
+        worker.sendall(b"answer")
+        self.assertEqual(dns.recv(6), b"answer")
+
+    def test_dns_pool_accepts_concurrent_streams(self):
+        workers = [self.worker(b"D") for _ in range(24)]
+        clients = [self.connect("dns") for _ in workers]
+        for worker in workers:
+            self.assertEqual(worker.recv(1), b"D")
+            worker.sendall(b"A")
+        for client in clients:
+            client.sendall(b"query")
+        for worker in workers:
+            self.assertEqual(worker.recv(5), b"query")
 
     def test_absent_worker_closes_client_within_bounded_wait(self):
         client = self.connect("proxy")

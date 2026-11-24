@@ -36,7 +36,7 @@ class LocalMacEgressTests(unittest.TestCase):
         for failure in ("connect", "assignment"):
             with self.subTest(failure=failure):
                 stopped = Mock()
-                stopped.is_set.side_effect = [False, False, True]
+                stopped.is_set.return_value = False
                 connection = MagicMock()
                 connection.__enter__.return_value = connection
                 if failure == "connect":
@@ -46,6 +46,7 @@ class LocalMacEgressTests(unittest.TestCase):
                 def wait_after_cleanup(seconds):
                     self.assertFalse(workers.connections)
                     connection.__exit__.assert_called_once()
+                    stopped.is_set.return_value = True
 
                 stopped.wait.side_effect = wait_after_cleanup
                 with patch.object(egress.socket, "socket", return_value=connection), \
@@ -72,7 +73,8 @@ class LocalMacEgressTests(unittest.TestCase):
                 listener.listen()
                 listener.settimeout(3)
                 stopped = threading.Event()
-                workers = egress.ReverseWorkers(listener.getsockname()[1], b"a" * 64, 15, stopped, 1)
+                workers = egress.ReverseWorkers(listener.getsockname()[1], b"a" * 64, 15, stopped,
+                                                int(mode == b"P"), int(mode == b"D"))
                 calls = []
 
                 def handle(connection, address, server):
@@ -85,7 +87,7 @@ class LocalMacEgressTests(unittest.TestCase):
                     try:
                         with listener.accept()[0] as bridge:
                             bridge.settimeout(3)
-                            self.assertEqual(egress.receive_exact(bridge, 65), b"a" * 64 + b"\n")
+                            self.assertEqual(egress.receive_exact(bridge, 66), mode + b"a" * 64 + b"\n")
                             # Assignment and tunnel bytes may arrive together;
                             # reading the assignment must not consume the payload.
                             bridge.sendall(mode + b"payload")
@@ -108,12 +110,12 @@ class LocalMacEgressTests(unittest.TestCase):
                 try:
                     with listener.accept()[0] as bridge:
                         bridge.settimeout(3)
-                        self.assertEqual(egress.receive_exact(bridge, 65), b"b" * 64 + b"\n")
+                        self.assertEqual(egress.receive_exact(bridge, 66), b"P" + b"b" * 64 + b"\n")
                         bridge.sendall(b"X")
                         self.assertEqual(bridge.recv(1), b"")
                     with listener.accept()[0] as bridge:
                         bridge.settimeout(3)
-                        self.assertEqual(egress.receive_exact(bridge, 65), b"b" * 64 + b"\n")
+                        self.assertEqual(egress.receive_exact(bridge, 66), b"P" + b"b" * 64 + b"\n")
                         workers.stop()
                         self.assertEqual(bridge.recv(1), b"")
                 finally:

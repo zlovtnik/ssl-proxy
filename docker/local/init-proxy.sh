@@ -31,6 +31,11 @@ else
     cp /bootstrap/Corefile /config/coredns/Corefile
 fi
 
+if [ "${LOCAL_COREDNS_DEBUG:-false}" = "true" ]; then
+    sed -i '/^\. {/a\    debug\n    log' /config/coredns/Corefile
+    echo "Local CoreDNS debug and query logging enabled."
+fi
+
 if [ ! -s /run/local-secrets/admin_api_key ]; then
     admin_key_tmp=$(mktemp /run/local-secrets/.admin_api_key.XXXXXX)
     if ! openssl rand -hex 32 > "$admin_key_tmp"; then

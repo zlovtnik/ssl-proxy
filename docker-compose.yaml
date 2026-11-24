@@ -40,6 +40,8 @@ services:
       - ssl_key_file=/run/postgres-tls/server.key
       - -c
       - shared_preload_libraries=pg_stat_statements
+      - -c
+      - log_min_messages=${LOCAL_POSTGRES_LOG_LEVEL:-debug1}
     ports:
       - "127.0.0.1:${LOCAL_POSTGRES_PORT:-5432}:5432"
     shm_size: 256m
@@ -96,6 +98,7 @@ services:
       - --reserve-memory=0M
       - --node-id=0
       - --check=false
+      - --default-log-level=${LOCAL_REDPANDA_LOG_LEVEL:-info}
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:${LOCAL_KAFKA_PORT:-19092}
       - --rpc-addr=0.0.0.0:33145
@@ -137,6 +140,7 @@ services:
     environment:
       LOCAL_VPN_ENDPOINT: ${LOCAL_VPN_ENDPOINT:-127.0.0.1}
       LOCAL_VPN_PORT: ${LOCAL_VPN_PORT:-51820}
+      LOCAL_COREDNS_DEBUG: ${LOCAL_COREDNS_DEBUG:-true}
     volumes:
       - wireguard-config:/config
       - proxy-secrets:/run/local-secrets
@@ -172,13 +176,14 @@ services:
       WG_OBFUSCATION_ENABLED: "false"
       WG_RUNTIME_SYSCTLS: "0"
       WG_DROP_UDP_443: "1"
+      WG_LOG_LEVEL: ${LOCAL_WG_LOG_LEVEL:-info}
       EXPLICIT_PROXY_ENABLED: "false"
       ADMIN_API_KEY_FILE: /run/local-secrets/admin_api_key
       ADMIN_BIND_ADDR: 127.0.0.1
       SYNC_REDPANDA_BOOTSTRAP_SERVERS: redpanda:9092
       SYNC_REDPANDA_SECURITY_PROTOCOL: plaintext
       SYNC_OUTBOX_DIR: /var/lib/sync/outbox
-      RUST_LOG: ssl_proxy=info,sync_plane=info
+      RUST_LOG: ${LOCAL_LOG_LEVEL:-info},ssl_proxy=${LOCAL_LOG_LEVEL:-info},sync_plane=${LOCAL_LOG_LEVEL:-info},sync=${LOCAL_LOG_LEVEL:-info},boringtun=${LOCAL_LOG_LEVEL:-info}
     ports:
       - "${LOCAL_VPN_BIND_ADDRESS:-127.0.0.1}:${LOCAL_VPN_PORT:-51820}:51820/udp"
       - "127.0.0.1:${LOCAL_PROXY_METRICS_PORT:-9098}:9098"
@@ -195,10 +200,10 @@ services:
     stop_grace_period: 30s
 
   octopus:
-    image: ssl-proxy-local-octopus:dev
+    image: ssl-proxy-local-octopus-native:dev
     build:
       context: .
-      dockerfile: services/octopus/Dockerfile
+      dockerfile: services/octopus-rs/templates/Dockerfile
       args:
         PARENT_COMMIT: ${LOCAL_PARENT_COMMIT:-local}
         OCTOPUS_COMMIT: ${LOCAL_OCTOPUS_COMMIT:-local}
@@ -210,7 +215,7 @@ services:
       - |
         export POSTGRES_SCHEMA_MANIFEST_SHA256="$$(awk '/^manifest_sha256:/ {print $$2}' /schema/manifest.yaml)"
         test "$${#POSTGRES_SCHEMA_MANIFEST_SHA256}" -eq 64
-        exec java -jar /app/octopus.jar
+        exec /app/octopus
     depends_on:
       postgres-schema:
         condition: service_completed_successfully
@@ -237,6 +242,7 @@ services:
       OCTOPUS_DQ_ENABLED: "false"
       OCTOPUS_PUBLIC_STATS_ENABLED: "false"
       OTEL_SDK_DISABLED: "true"
+      RUST_LOG: ${LOCAL_LOG_LEVEL:-info}
       SYNC_OUTBOX_DIR: /var/lib/sync/outbox
     ports:
       - "127.0.0.1:${LOCAL_OCTOPUS_PORT:-8081}:8081"
@@ -252,7 +258,55 @@ services:
       start_period: 40s
     stop_grace_period: 30s
 
+  atheros-search-init:
+    build:
+      context: .
+      dockerfile: docker/local/Dockerfile
+    depends_on:
+      local-init:
+        condition: service_completed_successfully
+    entrypoint: [/bin/sh, /bootstrap/init-search.sh]
+    volumes:
+      - local-secrets:/platform:ro
+      - search-config:/search
+      - ./docker/local/init-search.sh:/bootstrap/init-search.sh:ro
+      - ./sql/postgres/atheros_search/manifest.yaml:/schema/manifest.yaml:ro
+
+  atheros-search:
+    image: ssl-proxy-local-atheros-search:dev
+    build:
+      context: .
+      dockerfile: apps/integration-console/atheros-search/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-schema:
+        condition: service_completed_successfully
+      atheros-search-init:
+        condition: service_completed_successfully
+    environment:
+      ATHSEARCH_POSTGRES_HOST: postgres
+      ATHSEARCH_POSTGRES_DATABASE: sync
+      ATHSEARCH_POSTGRES_USER: atheros_search_runtime
+      ATHSEARCH_POSTGRES_PASSWORD_FILE: /search/password
+      ATHSEARCH_POSTGRES_TLS_CA_FILE: /search/ca.crt
+      ATHSEARCH_POSTGRES_TLS_SERVER_NAME: postgres
+      ATHSEARCH_SCHEMA_MANIFEST_SHA256_FILE: /search/manifest.sha256
+      ATHSEARCH_API_TOKEN_SHA256_FILE: /search/api.sha256
+      ATHSEARCH_WORKER_ENABLED: "false"
+      ATHSEARCH_LOG_LEVEL: ${LOCAL_LOG_LEVEL:-debug}
+      OTEL_SDK_DISABLED: "true"
+    ports:
+      - "127.0.0.1:${LOCAL_ATHEROS_SEARCH_PORT:-8082}:8080"
+    volumes:
+      - search-config:/search:ro
+    healthcheck:
+      test: [CMD, /usr/local/bin/atheros-search, healthcheck]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
 volumes:
+  search-config:
   local-secrets:
   postgres-tls:
   octopus-secrets:

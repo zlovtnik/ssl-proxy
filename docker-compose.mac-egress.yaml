@@ -24,10 +24,13 @@ services:
       context: .
       dockerfile: docker/local/Dockerfile.mac-egress-bridge
     image: ssl-proxy-local-mac-egress:dev
+    environment:
+      MAC_BRIDGE_LOG_LEVEL: ${LOCAL_LOG_LEVEL:-info}
     network_mode: service:ssl-proxy
     depends_on:
       ssl-proxy:
         condition: service_healthy
+        restart: true
     restart: unless-stopped
     volumes:
       - proxy-secrets:/run/local-secrets:ro
